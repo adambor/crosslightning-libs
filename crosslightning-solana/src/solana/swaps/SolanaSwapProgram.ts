@@ -766,7 +766,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         const tx = new Transaction();
 
         if(swapData.isPayOut()) {
-            const account = await SplToken.getAccount(this.signer.connection, swapData.claimerTokenAccount);
+            const account = await SplToken.getAccount(this.signer.connection, swapData.claimerTokenAccount).catch(e => console.error(e));
             if(account==null) {
                 if(!initAta) throw new SwapDataVerificationError("ATA not initialized");
 
@@ -865,7 +865,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         let ataInitIx: TransactionInstruction;
         if(swapData.isPayOut()) {
-            const account = await SplToken.getAccount(this.signer.connection, swapData.claimerTokenAccount);
+            const account = await SplToken.getAccount(this.signer.connection, swapData.claimerTokenAccount).catch(e => console.error(e));
             if(account==null) {
                 if(!initAta) throw new SwapDataVerificationError("ATA not initialized");
 
@@ -1085,7 +1085,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
             const ata = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
 
-            const ataAccount = await SplToken.getAccount(this.signer.connection, ata);
+            const ataAccount = await SplToken.getAccount(this.signer.connection, ata).catch(e => console.error(e));
 
             if(ataAccount==null) {
                 if(!initAta) throw new SwapDataVerificationError("ATA is not initialized!");
@@ -1179,7 +1179,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
             const ata = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
 
-            const ataAccount = await SplToken.getAccount(this.signer.connection, ata);
+            const ataAccount = await SplToken.getAccount(this.signer.connection, ata).catch(e => console.error(e));
 
             if(ataAccount==null) {
                 if(!initAta) throw new SwapDataVerificationError("ATA is not initialized!");
