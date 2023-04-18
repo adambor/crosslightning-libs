@@ -1,0 +1,34 @@
+{
+  "name": "crosslightning-solana",
+  "version": "1.0.0",
+  "description": "Solana specific base implementation",
+  "main": "./dist/index.js",
+  "types:": "./dist/index.d.ts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "files": [
+    "/dist",
+    "/src"
+  ],
+  "keywords": [
+    "Solana",
+    "Bitcoin",
+    "Cross-chain",
+    "Cryptocurrency",
+    "Bridge",
+    "Trustless"
+  ],
+  "author": "adambor",
+  "license": "ISC",
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.27.0",
+    "@solana/spl-token": "^0.3.7",
+    "@solana/web3.js": "^1.75.0",
+    "@types/node": "^18.15.11",
+    "bn.js": "^5.2.1",
+    "crosslightning-base": "^1.0.0",
+    "tweetnacl": "^1.0.3",
+    "typescript": "^4.9.5"
+  }
+}

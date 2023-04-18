@@ -1,0 +1,34 @@
+{
+  "name": "crosslightning-sdk-base",
+  "version": "1.0.0",
+  "description": "CrossLightning SDK chain-agnostic base",
+  "main": "./dist/index.js",
+  "types:": "./dist/index.d.ts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "files": [
+    "/dist",
+    "/src"
+  ],
+  "keywords": [
+    "Solana",
+    "Bitcoin",
+    "Cross-chain",
+    "Cryptocurrency",
+    "Bridge",
+    "Trustless"
+  ],
+  "author": "adambor",
+  "license": "ISC",
+  "dependencies": {
+    "bitcoinjs-lib": "^6.1.0",
+    "bolt11": "^1.4.0",
+    "buffer": "^6.0.3",
+    "cross-fetch": "^3.1.5",
+    "crosslightning-base": "^1.0.0",
+    "crypto-browserify": "^3.12.0",
+    "tweetnacl": "^1.0.3",
+    "typescript": "^4.9.5"
+  }
+}

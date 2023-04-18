@@ -1,0 +1,37 @@
+{
+  "name": "crosslightning-intermediary",
+  "version": "1.0.0",
+  "description": "Main functionality implementation for intermediary node, easily extensible to any chain",
+  "main": "./dist/index.js",
+  "types:": "./dist/index.d.ts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "files": [
+    "/dist",
+    "/src"
+  ],
+  "keywords": [
+    "Solana",
+    "Bitcoin",
+    "Cross-chain",
+    "Cryptocurrency",
+    "Bridge",
+    "Trustless"
+  ],
+  "author": "adambor",
+  "license": "ISC",
+  "dependencies": {
+    "@types/node": "^18.15.11",
+    "bitcoinjs-lib": "^6.1.0",
+    "bn.js": "^5.2.1",
+    "bolt11": "^1.4.1",
+    "cross-fetch": "^3.1.5",
+    "crosslightning-base": "^1.0.0",
+    "crypto": "^1.0.1",
+    "express": "^4.18.2",
+    "lightning": "^8.0.0",
+    "ln-service": "^55.0.0",
+    "typescript": "^4.9.5"
+  }
+}
