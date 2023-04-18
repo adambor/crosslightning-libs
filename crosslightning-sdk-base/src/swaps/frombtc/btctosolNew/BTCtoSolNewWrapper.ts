@@ -5,8 +5,7 @@ import {ChainUtils} from "../../../btc/ChainUtils";
 import {ClientSwapContract} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {SignatureVerificationError, SwapCommitStatus, SwapData, TokenAddress, ClaimEvent, InitializeEvent,
-    RefundEvent, SwapEvent, ChainEvents} from "crosslightning-base";
-import {RelaySynchronizer} from "crosslightning-base/dist";
+    RefundEvent, SwapEvent, ChainEvents, RelaySynchronizer} from "crosslightning-base";
 
 export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> {
 
@@ -17,10 +16,11 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
      * @param storage           Storage interface for the current environment
      * @param contract          Underlying contract handling the swaps
      * @param chainEvents       On-chain event emitter
+     * @param swapDataDeserializer      Deserializer for SwapData
      * @param synchronizer      Btc relay synchronizer
      */
-    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, synchronizer: RelaySynchronizer<any,any,any>) {
-        super(storage, contract, chainEvents);
+    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T, synchronizer: RelaySynchronizer<any,any,any>) {
+        super(storage, contract, chainEvents, swapDataDeserializer);
         this.synchronizer = synchronizer;
     }
 

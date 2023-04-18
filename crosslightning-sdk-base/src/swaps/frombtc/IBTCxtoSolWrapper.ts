@@ -9,6 +9,7 @@ export abstract class IBTCxtoSolWrapper<T extends SwapData> {
     readonly storage: IWrapperStorage;
     readonly contract: ClientSwapContract<T>;
     readonly chainEvents: ChainEvents<T>;
+    readonly swapDataDeserializer: new (data: any) => T;
 
     /**
      * Event emitter for all the swaps
@@ -23,14 +24,16 @@ export abstract class IBTCxtoSolWrapper<T extends SwapData> {
     isInitialized: boolean = false;
 
     /**
-     * @param storage           Storage interface for the current environment
-     * @param contract          Underlying contract handling the swaps
-     * @param chainEvents       On-chain event emitter
+     * @param storage                   Storage interface for the current environment
+     * @param contract                  Underlying contract handling the swaps
+     * @param chainEvents               On-chain event emitter
+     * @param swapDataDeserializer      Deserializer for SwapData
      */
-    protected constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>) {
+    protected constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T) {
         this.storage = storage;
         this.contract = contract;
         this.chainEvents = chainEvents;
+        this.swapDataDeserializer = swapDataDeserializer;
         this.events = new EventEmitter();
     }
 

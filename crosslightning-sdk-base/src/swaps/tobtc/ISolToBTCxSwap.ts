@@ -63,7 +63,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
 
             this.secret = prOrObject.secret;
 
-            this.data = prOrObject.data!=null ? SwapData.deserialize<T>(prOrObject.data) : null;
+            this.data = prOrObject.data!=null ? new wrapper.swapDataDeserializer(prOrObject.data) : null;
 
             this.swapFee = prOrObject.swapFee==null ? null : new BN(prOrObject.swapFee);
             this.prefix = prOrObject.prefix;

@@ -18,9 +18,10 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
      * @param storage           Storage interface for the current environment
      * @param contract          Underlying contract handling the swaps
      * @param chainEvents       On-chain event emitter
+     * @param swapDataDeserializer      Deserializer for SwapData
      */
-    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>) {
-        super(storage, contract, chainEvents);
+    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T) {
+        super(storage, contract, chainEvents, swapDataDeserializer);
     }
 
     /**
@@ -70,12 +71,15 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
 
         if(this.isInitialized) return;
 
+        console.log("Deserializers: ", SwapData.deserializers);
+
         let eventQueue: SwapEvent<T>[] = [];
         this.swapData = await this.storage.loadSwapData<BTCLNtoSolSwap<T>>(this, BTCLNtoSolSwap);
 
         console.log("Swap data loaded");
 
         const processEvent = async (events: SwapEvent<T>[]) => {
+
 
             for(let event of events) {
                 const paymentHash = event.paymentHash;
@@ -140,6 +144,8 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
 
         const changedSwaps = {};
 
+        console.log("Loaded FromBTCLN: ", this.swapData);
+
         for(let paymentHash in this.swapData) {
             const swap: BTCLNtoSolSwap<T> = this.swapData[paymentHash] as BTCLNtoSolSwap<T>;
 
@@ -165,19 +171,25 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
                         changedSwaps[paymentHash] = swap;
                     }
                 }
+                continue;
             }
 
             if(swap.state===BTCxtoSolSwapState.PR_PAID) {
                 //Check if it's already committed
-                if(this.contract.swapContract.isExpired(swap.data)) {
-                    //Already expired, we can remove it
+                const status = await this.contract.swapContract.getCommitStatus(swap.data);
+                if(status===SwapCommitStatus.PAID) {
+                    swap.state = BTCxtoSolSwapState.CLAIM_CLAIMED;
+                    changedSwaps[paymentHash] = swap;
+                }
+                if(status===SwapCommitStatus.EXPIRED) {
                     swap.state = BTCxtoSolSwapState.FAILED;
                     changedSwaps[paymentHash] = swap;
-                } else if(await this.contract.swapContract.isClaimable(swap.data)) {
-                    //Already committed
+                }
+                if(status===SwapCommitStatus.COMMITED) {
                     swap.state = BTCxtoSolSwapState.CLAIM_COMMITED;
                     changedSwaps[paymentHash] = swap;
                 }
+                continue;
             }
 
             if(swap.state===BTCxtoSolSwapState.CLAIM_COMMITED) {
@@ -191,6 +203,7 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
                     swap.state = BTCxtoSolSwapState.FAILED;
                     changedSwaps[paymentHash] = swap;
                 }
+                continue;
             }
         }
 

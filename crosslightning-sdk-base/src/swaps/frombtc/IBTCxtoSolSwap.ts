@@ -53,7 +53,7 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
         } else {
             this.url = urlOrObject.url;
 
-            this.data = urlOrObject.data !=null ? SwapData.deserialize<T>(urlOrObject.data) : null;
+            this.data = urlOrObject.data !=null ? new wrapper.swapDataDeserializer(urlOrObject.data) : null;
             this.swapFee = urlOrObject.swapFee==null ? null : new BN(urlOrObject.swapFee);
             this.prefix = urlOrObject.prefix;
             this.timeout = urlOrObject.timeout;

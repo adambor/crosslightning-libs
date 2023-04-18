@@ -740,7 +740,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     async claimWithSecret(swapData: SolanaSwapData, secret: string, checkExpiry?: boolean, initAta?: boolean, waitForConfirmation?, abortSignal?: AbortSignal): Promise<string> {
 
-        const result = await this.txsClaimWithSecret(swapData, secret);
+        const result = await this.txsClaimWithSecret(swapData, secret, checkExpiry, initAta);
 
         const [signature] = await this.sendAndConfirm(result, waitForConfirmation, abortSignal);
 
@@ -775,7 +775,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                     throw new SwapDataVerificationError("Invalid claimer token account address");
                 }
                 tx.add(
-                    SplToken.createAssociatedTokenAccountInstruction(this.signer.publicKey, generatedAtaAddress, swapData.claimerTokenAccount, swapData.token)
+                    SplToken.createAssociatedTokenAccountInstruction(this.signer.publicKey, generatedAtaAddress, swapData.intermediary, swapData.token)
                 );
             }
         }
@@ -873,7 +873,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 if(!generatedAtaAddress.equals(swapData.claimerTokenAccount)) {
                     throw new SwapDataVerificationError("Invalid claimer token account address");
                 }
-                ataInitIx = SplToken.createAssociatedTokenAccountInstruction(this.signer.publicKey, generatedAtaAddress, swapData.claimerTokenAccount, swapData.token);
+                ataInitIx = SplToken.createAssociatedTokenAccountInstruction(this.signer.publicKey, generatedAtaAddress, swapData.intermediary, swapData.token);
             }
         }
 
@@ -1402,7 +1402,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     async initAndClaimWithSecret(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, secret: string, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string[]> {
 
         const [txCommit] = await this.txsInit(swapData, timeout, prefix, signature, nonce);
-        const [txClaim] = await this.txsClaimWithSecret(swapData, secret, true);
+        const [txClaim] = await this.txsClaimWithSecret(swapData, secret, true, true);
 
         return await this.sendAndConfirm([txCommit, txClaim], waitForConfirmation, abortSignal);
 

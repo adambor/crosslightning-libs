@@ -13,9 +13,10 @@ export class SoltoBTCLNWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> 
      * @param storage           Storage interface for the current environment
      * @param contract          Underlying contract handling the swaps
      * @param chainEvents       On-chain event emitter
+     * @param swapDataDeserializer      Deserializer for SwapData
      */
-    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>) {
-        super(storage, contract, chainEvents);
+    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T) {
+        super(storage, contract, chainEvents, swapDataDeserializer);
     }
 
     private calculateFeeForAmount(amount: BN) : BN {

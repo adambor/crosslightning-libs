@@ -53,19 +53,22 @@ const BITCOIN_BLOCKTIME = 10*60;
 
 export class ClientSwapContract<T extends SwapData> {
 
-    swapContract: SwapContract<T, any>;
-    WBTC_ADDRESS: TokenAddress;
-    swapPrice: ISwapPrice;
+    readonly swapDataDeserializer: new (data: any) => T;
+    readonly swapContract: SwapContract<T, any>;
+    readonly WBTC_ADDRESS: TokenAddress;
+    readonly swapPrice: ISwapPrice;
 
-    options: ClientSwapContractOptions;
+    readonly options: ClientSwapContractOptions;
 
     constructor(
         swapContract: SwapContract<T, any>,
+        swapDataDeserializer: new (data: any) => T,
         wbtcAddress?: TokenAddress,
         swapPrice?: ISwapPrice,
         options?: ClientSwapContractOptions
     ) {
         this.swapContract = swapContract;
+        this.swapDataDeserializer = swapDataDeserializer;
         this.WBTC_ADDRESS = wbtcAddress;
         this.swapPrice = swapPrice;
 
@@ -173,7 +176,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         const total = new BN(jsonBody.data.total);
 
-        const data: T = SwapData.deserialize<T>(jsonBody.data.data);
+        const data: T = new this.swapDataDeserializer(jsonBody.data.data);
         this.swapContract.setUsAsOfferer(data);
 
         if(this.WBTC_ADDRESS!=null) {
@@ -284,7 +287,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         const total = new BN(jsonBody.data.total);
 
-        const data: T = SwapData.deserialize<T>(jsonBody.data.data);
+        const data: T = new this.swapDataDeserializer(jsonBody.data.data);
         this.swapContract.setUsAsOfferer(data);
 
         console.log("Parsed data: ", data);
@@ -510,7 +513,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         let jsonBody: any = await response.json();
 
-        const data: T = SwapData.deserialize<T>(jsonBody.data.data);
+        const data: T = new this.swapDataDeserializer(jsonBody.data.data);
         this.swapContract.setUsAsClaimer(data);
 
         if(data.getConfirmations()>this.options.maxConfirmations) {
@@ -693,7 +696,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         if(jsonBody.code===10000) {
             //Authorization returned
-            const data: T = SwapData.deserialize<T>(jsonBody.data.data);
+            const data: T = new this.swapDataDeserializer(jsonBody.data.data);
             this.swapContract.setUsAsClaimer(data);
 
             if(requiredOffererKey!=null) {
