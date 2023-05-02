@@ -74,18 +74,4 @@ export class ToBtcSwapAbs<T extends SwapData> extends Lockable implements Storag
         }
     }
 
-    getHash(bitcoinNetwork: bitcoin.networks.Network): Buffer {
-        return ToBtcSwapAbs.getHash(this.address, this.nonce, this.amount, bitcoinNetwork);
-    }
-
-    static getHash(address: string, nonce: BN, amount: BN, bitcoinNetwork: bitcoin.networks.Network): Buffer {
-        const parsedOutputScript = bitcoin.address.toOutputScript(address, bitcoinNetwork);
-
-        return createHash("sha256").update(Buffer.concat([
-            Buffer.from(nonce.toArray("le", 8)),
-            Buffer.from(amount.toArray("le", 8)),
-            parsedOutputScript
-        ])).digest();
-    }
-
 }

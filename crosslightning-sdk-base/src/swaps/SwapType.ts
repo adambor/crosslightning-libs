@@ -1,7 +1,7 @@
 
 export enum SwapType {
-    BTC_TO_SOL=0,
-    BTCLN_TO_SOL=1,
-    SOL_TO_BTC=2,
-    SOL_TO_BTCLN=3,
+    FROM_BTC=0,
+    FROM_BTCLN=1,
+    TO_BTC=2,
+    TO_BTCLN=3,
 };

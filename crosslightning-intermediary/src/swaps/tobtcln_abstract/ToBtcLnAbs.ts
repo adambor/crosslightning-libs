@@ -349,6 +349,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
              * maxFee: string               maximum routing fee
              * expiryTimestamp: string      expiry timestamp of the to be created HTLC, determines how many LN paths can be considered
              * token: string                Desired token to use
+             * offerer: string              Address of the caller
              */
             try {
                 if (
@@ -364,10 +365,20 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     typeof(req.body.expiryTimestamp) !== "string" ||
 
                     req.body.token == null ||
-                    typeof(req.body.token) !== "string"
+                    typeof(req.body.token) !== "string" ||
+
+                    req.body.offerer == null ||
+                    typeof(req.body.offerer) !== "string"
                 ) {
                     res.status(400).json({
                         msg: "Invalid request body (pr/maxFee/expiryTimestamp/token)"
+                    });
+                    return;
+                }
+
+                if(!this.swapContract.isValidAddress(req.body.offerer)) {
+                    res.status(400).json({
+                        msg: "Invalid request body (offerer)"
                     });
                     return;
                 }
@@ -520,9 +531,9 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
                 const total = amountInToken.add(maxFeeInToken).add(swapFeeInToken);
 
-                const payObject: T = this.swapContract.createSwapData(
+                const payObject: T = await this.swapContract.createSwapData(
                     ChainSwapType.HTLC,
-                    null,
+                    req.body.offerer,
                     this.swapContract.getAddress(),
                     useToken,
                     total,
@@ -530,6 +541,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     expiryTimestamp,
                     new BN(0),
                     0,
+                    true,
                     false
                 );
 

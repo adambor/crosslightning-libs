@@ -37,7 +37,7 @@ export interface ISwap {
     /**
      * Get the estimated solana fee of the commit transaction
      */
-    getCommitFee(): BN;
+    getCommitFee(): Promise<BN>;
 
     /**
      * Event emitter emitting "swapState" event when swap's state changes

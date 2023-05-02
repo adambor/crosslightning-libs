@@ -333,14 +333,16 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
     }
 
     getType(): SwapType {
-        return SwapType.BTCLN_TO_SOL;
+        return SwapType.FROM_BTCLN;
     }
 
     /**
      * Estimated transaction fee for commitAndClaim tx
      */
-    getCommitAndClaimFee(): BN {
-        return this.getCommitFee().add(this.getClaimFee());
+    async getCommitAndClaimFee(): Promise<BN> {
+        const commitFee = await this.getCommitFee();
+        const claimFee = await this.getClaimFee();
+        return commitFee.add(claimFee);
     }
 
 }

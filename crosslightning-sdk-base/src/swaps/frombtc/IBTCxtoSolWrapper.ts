@@ -6,6 +6,8 @@ import {SwapData, ChainEvents} from "crosslightning-base";
 
 export abstract class IBTCxtoSolWrapper<T extends SwapData> {
 
+    readonly MAX_CONCURRENT_REQUESTS: number = 10;
+
     readonly storage: IWrapperStorage;
     readonly contract: ClientSwapContract<T>;
     readonly chainEvents: ChainEvents<T>;

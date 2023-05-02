@@ -142,7 +142,7 @@ export class SoltoBTCSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
     }
 
     getType(): SwapType {
-        return SwapType.SOL_TO_BTC;
+        return SwapType.TO_BTC;
     }
 
     getState(): SolToBTCxSwapState {

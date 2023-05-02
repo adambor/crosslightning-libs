@@ -7,22 +7,22 @@ export interface BtcRelay<V extends BtcStoredHeader<any>, T, B extends BtcBlock>
     maxForkHeadersPerTx: number;
 
     getTipData(): Promise<{
+        blockheight: number,
         commitHash: string,
-        blockhash: string,
         chainWork: Buffer
     }>;
 
-    retrieveLogAndBlockheight(blockhash: string, requiredBlockheight?: number): Promise<{
+    retrieveLogAndBlockheight(blockData: {blockhash: string, height: number}, requiredBlockheight?: number): Promise<{
         header: V,
         height: number
     }>;
-    retrieveLogByCommitHash(commitHash: string, blockHash: string): Promise<V>;
+    retrieveLogByCommitHash(commitHash: string, blockData: {blockhash: string, height: number}): Promise<V>;
 
     retrieveLatestKnownBlockLog(): Promise<{
         resultStoredHeader: V,
         resultBitcoinHeader: B
     }>;
-    retrieveOnchainTip(): Promise<B>;
+    //retrieveOnchainTip(): Promise<B>;
 
 
     saveMainHeaders(mainHeaders: B[], storedHeader: V): Promise<{

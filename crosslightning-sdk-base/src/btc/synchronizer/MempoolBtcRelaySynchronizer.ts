@@ -37,29 +37,17 @@ export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> imp
             computedCommitedHeaders: null
         };
 
-        let btcRelayTipBlockHash: string;
 
-        let spvTipBlockHeader: MempoolBitcoinBlock;
-        try {
-            console.log("Stored tip hash: ", tipData.blockhash);
-            const blockStatus = await ChainUtils.getBlockStatus(tipData.blockhash);
-            if(!blockStatus.in_best_chain) throw new Error("Block not in main chain");
-            spvTipBlockHeader = await this.bitcoinRpc.getBlockHeader(tipData.blockhash);
-            cacheData.lastStoredHeader = await this.btcRelay.retrieveLogByCommitHash(tipData.commitHash, tipData.blockhash);
-            btcRelayTipBlockHash = spvTipBlockHeader.getHash();
-        } catch (e) {
-            console.error(e);
-            //Block not found, therefore relay tip is probably in a fork
-            const {resultStoredHeader, resultBitcoinHeader} = await this.btcRelay.retrieveLatestKnownBlockLog();
-            cacheData.lastStoredHeader = resultStoredHeader;
+        const {resultStoredHeader, resultBitcoinHeader} = await this.btcRelay.retrieveLatestKnownBlockLog();
+        cacheData.lastStoredHeader = resultStoredHeader;
+        if(resultStoredHeader.getBlockheight()<tipData.blockheight) {
             cacheData.forkId = -1; //Indicate that we will be submitting blocks to fork
-            spvTipBlockHeader = resultBitcoinHeader;
-            btcRelayTipBlockHash = spvTipBlockHeader.getHash();
         }
+        let spvTipBlockHeader = resultBitcoinHeader;
+        const btcRelayTipBlockHash = spvTipBlockHeader.getHash();
 
         console.log("Retrieved stored header with commitment: ", cacheData.lastStoredHeader);
 
-        console.log("SPV tip hash: ", tipData.blockhash);
         console.log("SPV tip header: ", spvTipBlockHeader);
 
         let spvTipBlockHeight = spvTipBlockHeader.height;

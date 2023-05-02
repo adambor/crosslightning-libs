@@ -52,16 +52,6 @@ export class FromBtcSwapAbs<T extends SwapData> extends Lockable implements Stor
         }
     }
 
-    getHash(bitcoinNetwork: bitcoin.networks.Network): Buffer {
-        const parsedOutputScript = bitcoin.address.toOutputScript(this.address, bitcoinNetwork);
-
-        return createHash("sha256").update(Buffer.concat([
-            Buffer.from(new BN(0).toArray("le", 8)),
-            Buffer.from(this.amount.toArray("le", 8)),
-            parsedOutputScript
-        ])).digest();
-    }
-
     getTxoHash(bitcoinNetwork: bitcoin.networks.Network): Buffer {
         const parsedOutputScript = bitcoin.address.toOutputScript(this.address, bitcoinNetwork);
 

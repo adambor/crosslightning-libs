@@ -22,9 +22,13 @@ export class CoinGeckoSwapPrice implements ISwapPrice {
         }
     } = {};
 
-    constructor(url?: string, usdcAddress?: string, usdtAddress?: string, solAddress?: string, wbtcAddress?: string) {
-        this.url = url || "https://api.coingecko.com/api/v3";
-        this.COINS_MAP = {
+    static generateCoinMap(usdcAddress?: string, usdtAddress?: string, wbtcAddress?: string): {
+        [address: string]: {
+            coinId: string,
+            decimals: number
+        }
+    } {
+        return {
             [usdcAddress]: {
                 coinId: "usd-coin",
                 decimals: 6
@@ -33,15 +37,50 @@ export class CoinGeckoSwapPrice implements ISwapPrice {
                 coinId: "tether",
                 decimals: 6
             },
-            [solAddress]: {
-                coinId: "solana",
-                decimals: 9
-            },
             [wbtcAddress]: {
                 coinId: "wrapped-bitcoin",
                 decimals: 8
             }
         };
+    }
+
+    constructor(url: string, coinmap: {
+        [address: string]: {
+            coinId: string,
+            decimals: number
+        }
+    });
+    constructor(url: string, usdcAddress?: string, usdtAddress?: string, solAddress?: string, wbtcAddress?: string)
+
+    constructor(url: string, usdcAddressOrCoinmap?: string | {
+        [address: string]: {
+            coinId: string,
+            decimals: number
+        }
+    }, usdtAddress?: string, solAddress?: string, wbtcAddress?: string) {
+        this.url = url || "https://api.coingecko.com/api/v3";
+        if(usdcAddressOrCoinmap==null || typeof(usdcAddressOrCoinmap)==="string") {
+            this.COINS_MAP = {
+                [usdcAddressOrCoinmap as string]: {
+                    coinId: "usd-coin",
+                    decimals: 6
+                },
+                [usdtAddress]: {
+                    coinId: "tether",
+                    decimals: 6
+                },
+                [solAddress]: {
+                    coinId: "solana",
+                    decimals: 9
+                },
+                [wbtcAddress]: {
+                    coinId: "wrapped-bitcoin",
+                    decimals: 8
+                }
+            };
+        } else {
+            this.COINS_MAP = usdcAddressOrCoinmap;
+        }
     }
 
     /**

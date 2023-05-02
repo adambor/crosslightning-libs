@@ -345,7 +345,7 @@ export class BTCtoSolNewSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
     }
 
     getType(): SwapType {
-        return SwapType.BTC_TO_SOL;
+        return SwapType.FROM_BTC;
     }
 
     getTimeoutTime(): number {

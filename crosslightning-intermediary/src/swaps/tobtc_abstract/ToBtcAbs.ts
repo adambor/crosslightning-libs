@@ -14,6 +14,7 @@ import {
 import {BitcoinRpc, BtcBlock} from "crosslightning-base/dist";
 import {AuthenticatedLnd} from "lightning";
 import {ToBtcLnSwapAbs} from "../..";
+import {createHash} from "crypto";
 
 const OUTPUT_SCRIPT_MAX_LENGTH = 200;
 
@@ -69,6 +70,15 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         this.config = config;
     }
 
+    getHash(address: string, nonce: BN, amount: BN, bitcoinNetwork: bitcoin.networks.Network): Buffer {
+        const parsedOutputScript = bitcoin.address.toOutputScript(address, bitcoinNetwork);
+        return this.swapContract.getHashForOnchain(parsedOutputScript, amount, nonce);
+    }
+
+    getChainHash(swap: ToBtcSwapAbs<T>): Buffer {
+        return this.getHash(swap.address, swap.nonce, swap.amount, this.config.bitcoinNetwork);
+    }
+
     async processPaymentResult(tx: {blockhash: string, confirmations: number, txid: string, hex: string}, payment: ToBtcSwapAbs<T>, vout: number): Promise<boolean> {
         //Set flag that we are sending the transaction already, so we don't end up with race condition
         const blockHeader = await this.bitcoinRpc.getBlockHeader(tx.blockhash);
@@ -94,7 +104,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             if(payment.state===ToBtcSwapState.SAVED && payment.signatureExpiry!=null) {
                 if(payment.signatureExpiry.lt(timestamp)) {
                     //Signature expired
-                    await this.storageManager.removeData(payment.getHash(this.config.bitcoinNetwork).toString("hex"));
+                    await this.storageManager.removeData(this.getChainHash(payment).toString("hex"));
                     continue;
                 }
             }
@@ -102,7 +112,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             if(payment.state===ToBtcSwapState.NON_PAYABLE || payment.state===ToBtcSwapState.SAVED) {
                 if(payment.data.getExpiry().lt(timestamp)) {
                     //Expired
-                    await this.storageManager.removeData(payment.getHash(this.config.bitcoinNetwork).toString("hex"));
+                    await this.storageManager.removeData(this.getChainHash(payment).toString("hex"));
                     continue;
                 }
             }
@@ -192,14 +202,14 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 payment.state = ToBtcSwapState.COMMITED;
             } else {
                 payment.state = ToBtcSwapState.BTC_SENT;
-                await this.storageManager.saveData(payment.getHash(this.config.bitcoinNetwork).toString("hex"), payment);
+                await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
             }
         }
 
         const setNonPayableAndSave = async() => {
             payment.state = ToBtcSwapState.NON_PAYABLE;
             payment.data = data;
-            await this.storageManager.saveData(payment.getHash(this.config.bitcoinNetwork).toString("hex"), payment);
+            await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
         };
 
         if(payment.state===ToBtcSwapState.SAVED) {
@@ -211,7 +221,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             payment.state = ToBtcSwapState.COMMITED;
             payment.data = data;
-            await this.storageManager.saveData(payment.getHash(this.config.bitcoinNetwork).toString("hex"), payment);
+            await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
         }
 
         if(payment.state===ToBtcSwapState.COMMITED) {
@@ -327,7 +337,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             payment.state = ToBtcSwapState.BTC_SENDING;
             payment.data = data;
             payment.txId = txId;
-            await this.storageManager.saveData(payment.getHash(this.config.bitcoinNetwork).toString("hex"), payment);
+            await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
 
             let txSendResult;
             try {
@@ -346,7 +356,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             }
 
             payment.state = ToBtcSwapState.BTC_SENT;
-            await this.storageManager.saveData(payment.getHash(this.config.bitcoinNetwork).toString("hex"), payment);
+            await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
         }
 
         if(payment.state===ToBtcSwapState.NON_PAYABLE) return;
@@ -456,6 +466,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
              * confirmations: number                Required number of confirmations for us to claim the swap
              * nonce: string                        Nonce for the swap (used for replay protection)
              * token: string                        Desired token to use
+             * offerer: string                      Address of the caller
              */
             if (
                 req.body == null ||
@@ -476,10 +487,20 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 typeof(req.body.nonce) !== "string" ||
 
                 req.body.token == null ||
-                typeof(req.body.token) !== "string"
+                typeof(req.body.token) !== "string" ||
+
+                req.body.offerer == null ||
+                typeof(req.body.offerer) !== "string"
             ) {
                 res.status(400).json({
-                    msg: "Invalid request body (address/amount/confirmationTarget/confirmations/nonce/token)"
+                    msg: "Invalid request body (address/amount/confirmationTarget/confirmations/nonce/token/offerer)"
+                });
+                return;
+            }
+
+            if(!this.swapContract.isValidAddress(req.body.offerer)) {
+                res.status(400).json({
+                    msg: "Invalid request body (offerer)"
                 });
                 return;
             }
@@ -642,23 +663,24 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             const currentTimestamp = new BN(Math.floor(Date.now()/1000));
             const minRequiredExpiry = currentTimestamp.add(expirySeconds);
 
-            const payObject: T = this.swapContract.createSwapData(
+            const payObject: T = await this.swapContract.createSwapData(
                 ChainSwapType.CHAIN_NONCED,
-                null,
+                req.body.offerer,
                 this.swapContract.getAddress(),
                 useToken,
                 total,
-                ToBtcSwapAbs.getHash(req.body.address, nonce, amountBD, this.config.bitcoinNetwork).toString("hex"),
+                this.getHash(req.body.address, nonce, amountBD, this.config.bitcoinNetwork).toString("hex"),
                 minRequiredExpiry,
                 nonce,
                 req.body.confirmations,
+                true,
                 false
             );
 
             const sigData = await this.swapContract.getClaimInitSignature(payObject, this.nonce, this.config.authorizationTimeout);
 
             const createdSwap = new ToBtcSwapAbs<T>(req.body.address, amountBD, swapFee, networkFeeAdjusted, nonce, req.body.confirmationTarget, new BN(sigData.timeout));
-            const paymentHash = createdSwap.getHash(this.config.bitcoinNetwork);
+            const paymentHash = this.getChainHash(createdSwap);
             createdSwap.data = payObject;
 
             await this.storageManager.saveData(paymentHash.toString("hex"), createdSwap);

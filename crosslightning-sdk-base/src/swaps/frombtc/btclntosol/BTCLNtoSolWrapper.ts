@@ -43,7 +43,19 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
 
         const parsed = bolt11.decode(result.pr);
 
-        const swapData: T = this.contract.swapContract.createSwapData(ChainSwapType.HTLC, requiredKey, this.contract.swapContract.getAddress(), requiredToken, null, parsed.tagsObject.payment_hash, null, null, null, null);
+        const swapData: T = await this.contract.swapContract.createSwapData(
+            ChainSwapType.HTLC,
+            requiredKey,
+            this.contract.swapContract.getAddress(),
+            requiredToken,
+            null,
+            parsed.tagsObject.payment_hash,
+            null,
+            null,
+            null,
+            false,
+            true
+        );
 
         const total = result.total;
 
@@ -146,10 +158,7 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
 
         console.log("Loaded FromBTCLN: ", this.swapData);
 
-        for(let paymentHash in this.swapData) {
-            const swap: BTCLNtoSolSwap<T> = this.swapData[paymentHash] as BTCLNtoSolSwap<T>;
-
-
+        const processSwap: (swap: BTCLNtoSolSwap<T>) => Promise<boolean> = async (swap: BTCLNtoSolSwap<T>) => {
             if(swap.state===BTCxtoSolSwapState.PR_CREATED) {
                 //Check if it's maybe already paid
                 try {
@@ -162,50 +171,72 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
                         swap.timeout = res.timeout;
                         swap.signature = res.signature;
 
-                        changedSwaps[paymentHash] = swap;
+                        return true;
                     }
                 } catch (e) {
                     console.error(e);
                     if(e instanceof PaymentAuthError) {
                         swap.state = BTCxtoSolSwapState.FAILED;
-                        changedSwaps[paymentHash] = swap;
+                        return true;
                     }
                 }
-                continue;
+                return false;
             }
 
             if(swap.state===BTCxtoSolSwapState.PR_PAID) {
                 //Check if it's already committed
-                const status = await this.contract.swapContract.getCommitStatus(swap.data);
-                if(status===SwapCommitStatus.PAID) {
-                    swap.state = BTCxtoSolSwapState.CLAIM_CLAIMED;
-                    changedSwaps[paymentHash] = swap;
+                try {
+                    const status = await this.contract.swapContract.getCommitStatus(swap.data);
+                    if(status===SwapCommitStatus.PAID) {
+                        swap.state = BTCxtoSolSwapState.CLAIM_CLAIMED;
+                        return true;
+                    }
+                    if(status===SwapCommitStatus.EXPIRED) {
+                        swap.state = BTCxtoSolSwapState.FAILED;
+                        return true;
+                    }
+                    if(status===SwapCommitStatus.COMMITED) {
+                        swap.state = BTCxtoSolSwapState.CLAIM_COMMITED;
+                        return true;
+                    }
+                } catch (e) {
+                    console.error(e);
                 }
-                if(status===SwapCommitStatus.EXPIRED) {
-                    swap.state = BTCxtoSolSwapState.FAILED;
-                    changedSwaps[paymentHash] = swap;
-                }
-                if(status===SwapCommitStatus.COMMITED) {
-                    swap.state = BTCxtoSolSwapState.CLAIM_COMMITED;
-                    changedSwaps[paymentHash] = swap;
-                }
-                continue;
+                return false;
             }
 
             if(swap.state===BTCxtoSolSwapState.CLAIM_COMMITED) {
                 //Check if it's already successfully paid
-                const commitStatus = await this.contract.swapContract.getCommitStatus(swap.data);
-                if(commitStatus===SwapCommitStatus.PAID) {
-                    swap.state = BTCxtoSolSwapState.CLAIM_CLAIMED;
-                    changedSwaps[paymentHash] = swap;
+                try {
+                    const commitStatus = await this.contract.swapContract.getCommitStatus(swap.data);
+                    if(commitStatus===SwapCommitStatus.PAID) {
+                        swap.state = BTCxtoSolSwapState.CLAIM_CLAIMED;
+                        return true;
+                    }
+                    if(commitStatus===SwapCommitStatus.NOT_COMMITED || commitStatus===SwapCommitStatus.EXPIRED) {
+                        swap.state = BTCxtoSolSwapState.FAILED;
+                        return true;
+                    }
+                } catch (e) {
+                    console.error(e);
                 }
-                if(commitStatus===SwapCommitStatus.NOT_COMMITED || commitStatus===SwapCommitStatus.EXPIRED) {
-                    swap.state = BTCxtoSolSwapState.FAILED;
-                    changedSwaps[paymentHash] = swap;
-                }
-                continue;
+                return false;
+            }
+        };
+
+        let promises = [];
+        for(let paymentHash in this.swapData) {
+            const swap: BTCLNtoSolSwap<T> = this.swapData[paymentHash] as BTCLNtoSolSwap<T>;
+
+            promises.push(processSwap(swap).then(changed => {
+                if(changed) changedSwaps[paymentHash] = true;
+            }));
+            if(promises.length>=this.MAX_CONCURRENT_REQUESTS) {
+                await Promise.all(promises);
+                promises = [];
             }
         }
+        if(promises.length>0) await Promise.all(promises);
 
         console.log("Swap data checked");
 

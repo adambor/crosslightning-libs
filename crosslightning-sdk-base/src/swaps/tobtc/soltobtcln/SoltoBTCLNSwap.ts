@@ -93,7 +93,7 @@ export class SoltoBTCLNSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
     }
 
     getType(): SwapType {
-        return SwapType.SOL_TO_BTCLN;
+        return SwapType.TO_BTCLN;
     }
 
 }

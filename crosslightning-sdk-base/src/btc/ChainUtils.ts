@@ -3,7 +3,7 @@ import * as bitcoin from "bitcoinjs-lib";
 import {createHash} from "crypto-browserify";
 import * as BN from "bn.js";
 
-const url = "https://mempool.space/testnet/api/";
+let url = "https://mempool.space/testnet/api/";
 
 const timeoutPromise = (timeoutSeconds) => {
     return new Promise(resolve => {
@@ -105,6 +105,10 @@ export type BitcoinBlockHeader = {
 };
 
 export class ChainUtils {
+
+    static async setMempoolUrl(_url: string) {
+        url = _url;
+    }
 
     static async getTransaction(txId: string): Promise<BitcoinTransaction> {
 

@@ -10,7 +10,7 @@ import {ChainEvents, ClaimEvent, InitializeEvent,
     RefundEvent, SwapContract, SwapData, SwapEvent, ChainSwapType, TokenAddress} from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
 import * as bitcoin from "bitcoinjs-lib";
-import {FromBtcLnSwapAbs} from "../..";
+import {FromBtcLnSwapAbs, ToBtcSwapAbs} from "../..";
 
 
 export type FromBtcConfig = {
@@ -53,6 +53,16 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
         this.config = anyConfig;
     }
 
+
+    getHash(address: string, nonce: BN, amount: BN, bitcoinNetwork: bitcoin.networks.Network): Buffer {
+        const parsedOutputScript = bitcoin.address.toOutputScript(address, bitcoinNetwork);
+        return this.swapContract.getHashForOnchain(parsedOutputScript, amount, nonce);
+    }
+
+    getChainHash(swap: FromBtcSwapAbs<T>): Buffer {
+        return this.getHash(swap.address, new BN(0), swap.amount, this.config.bitcoinNetwork);
+    }
+
     async checkPastSwaps() {
 
         const removeSwaps: Buffer[] = [];
@@ -66,7 +76,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
             if(swap.state===FromBtcSwapState.CREATED) {
                 //Invoice is expired
                 if(swap.authorizationExpiry.lt(currentTime)) {
-                    removeSwaps.push(swap.getHash(this.config.bitcoinNetwork));
+                    removeSwaps.push(this.getChainHash(swap));
                 }
                 continue;
             }
@@ -264,12 +274,12 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
             const createdSwap: FromBtcSwapAbs<T> = new FromBtcSwapAbs<T>(receiveAddress, amountBD, swapFee);
 
-            const paymentHash = createdSwap.getHash(this.config.bitcoinNetwork);
+            const paymentHash = this.getChainHash(createdSwap);
 
             const currentTimestamp = new BN(Math.floor(Date.now()/1000));
             const expiryTimeout = this.config.swapTsCsvDelta;
 
-            const data: T = this.swapContract.createSwapData(
+            const data: T = await this.swapContract.createSwapData(
                 ChainSwapType.CHAIN,
                 this.swapContract.getAddress(),
                 req.body.address,
@@ -279,7 +289,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 currentTimestamp.add(expiryTimeout),
                 new BN(0),
                 this.config.confirmations,
-                null
+                false,
+                true
             );
 
             createdSwap.data = data;
@@ -288,7 +299,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
             createdSwap.authorizationExpiry = new BN(sigData.timeout);
 
-            await this.storageManager.saveData(createdSwap.getHash(this.config.bitcoinNetwork).toString("hex"), createdSwap);
+            await this.storageManager.saveData(this.getChainHash(createdSwap).toString("hex"), createdSwap);
 
             res.status(200).json({
                 code: 10000,

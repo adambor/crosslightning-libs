@@ -314,14 +314,14 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
     /**
      * Get the estimated solana fee of the commit transaction
      */
-    getCommitFee(): BN {
+    getCommitFee(): Promise<BN> {
         return this.getWrapper().contract.swapContract.getCommitFee();
     }
 
     /**
      * Get the estimated solana transaction fee of the refund transaction
      */
-    getRefundFee(): BN {
+    getRefundFee(): Promise<BN> {
         return this.getWrapper().contract.swapContract.getRefundFee();
     }
 

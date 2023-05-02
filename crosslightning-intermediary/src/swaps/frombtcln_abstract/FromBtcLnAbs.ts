@@ -395,7 +395,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             const paymentHash = Buffer.from(req.body.paymentHash, "hex");
             const createdSwap = new FromBtcLnSwapAbs<T>(hodlInvoice.request, swapFee);
 
-            createdSwap.data = this.swapContract.createSwapData(ChainSwapType.HTLC, this.swapContract.getAddress(), req.body.address, useToken, null, req.body.paymentHash, null, null, 0, null);
+            createdSwap.data = await this.swapContract.createSwapData(ChainSwapType.HTLC, this.swapContract.getAddress(), req.body.address, useToken, null, req.body.paymentHash, null, null, 0, false, true);
 
             await this.storageManager.saveData(req.body.paymentHash, createdSwap);
 
@@ -627,7 +627,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                         expiry: new BN(Math.floor(Date.now() / 1000)).add(expiryTimeout)
                     }
                      */
-                    const payInvoiceObject: T = this.swapContract.createSwapData(
+                    const payInvoiceObject: T = await this.swapContract.createSwapData(
                         ChainSwapType.HTLC,
                         this.swapContract.getAddress(),
                         invoice.description,
@@ -637,7 +637,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                         new BN(Math.floor(Date.now() / 1000)).add(expiryTimeout),
                         new BN(0),
                         0,
-                        null
+                        false,
+                        true
                     );
 
                     invoiceData.data = payInvoiceObject;

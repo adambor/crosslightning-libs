@@ -192,11 +192,11 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
         };
     }
 
-    getCommitFee(): BN {
+    getCommitFee(): Promise<BN> {
         return this.getWrapper().contract.swapContract.getCommitFee();
     }
 
-    getClaimFee(): BN {
+    getClaimFee(): Promise<BN> {
         return this.getWrapper().contract.swapContract.getClaimFee();
     }
 

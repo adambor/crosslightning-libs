@@ -39,19 +39,19 @@ function swapHandlerTypeToSwapType(swapHandlerType: SwapHandlerType): SwapType {
 
     switch (swapHandlerType) {
         case SwapHandlerType.FROM_BTC:
-            return SwapType.BTC_TO_SOL;
+            return SwapType.FROM_BTC;
         case SwapHandlerType.TO_BTC:
-            return SwapType.SOL_TO_BTC;
+            return SwapType.TO_BTC;
         case SwapHandlerType.FROM_BTCLN:
-            return SwapType.BTCLN_TO_SOL;
+            return SwapType.FROM_BTCLN;
         case SwapHandlerType.TO_BTCLN:
-            return SwapType.SOL_TO_BTCLN;
+            return SwapType.TO_BTCLN;
     }
 
 }
 function getIntermediaryComparator(swapType: SwapType, swapAmount: BN, tokenAddress: TokenAddress) {
 
-    if(swapType===SwapType.SOL_TO_BTC) {
+    if(swapType===SwapType.TO_BTC) {
         //TODO: Also take reputation into account
     }
 
@@ -73,14 +73,16 @@ export class IntermediaryDiscovery<T extends SwapData> {
     intermediaries: Intermediary[];
 
     swapContract: SwapContract<T, any>;
+    registryUrl: string;
 
-    constructor(swapContract: SwapContract<T, any>) {
+    constructor(swapContract: SwapContract<T, any>, registryUrl?: string) {
         this.swapContract = swapContract;
+        this.registryUrl = registryUrl || REGISTRY_URL;
     }
 
     async getIntermediaryUrls(abortSignal?: AbortSignal): Promise<string[]> {
 
-        const response: Response = await fetch(REGISTRY_URL, {
+        const response: Response = await fetch(this.registryUrl, {
             method: "GET",
             headers: {'Content-Type': 'application/json'}
         });

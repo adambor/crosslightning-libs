@@ -86,8 +86,9 @@ export interface SwapContract<T extends SwapData, TX> {
         expiry: BN,
         escrowNonce: BN,
         confirmations: number,
+        payIn: boolean,
         payOut: boolean
-    ): T;
+    ): Promise<T>;
 
     areWeClaimer(swapData: T): boolean;
     areWeOfferer(swapData: T): boolean;
@@ -99,11 +100,13 @@ export interface SwapContract<T extends SwapData, TX> {
     getIntermediaryBalance(address: string, token?: TokenAddress): Promise<BN>;
     toTokenAddress(address: string): TokenAddress;
 
-    getCommitFee(): BN;
-    getClaimFee(): BN;
-    getRefundFee(): BN;
+    getCommitFee(): Promise<BN>;
+    getClaimFee(): Promise<BN>;
+    getRefundFee(): Promise<BN>;
 
     setUsAsClaimer(swapData: T);
     setUsAsOfferer(swapData: T);
+
+    getHashForOnchain(outputScript: Buffer, amount: BN, nonce: BN): Buffer;
 
 }

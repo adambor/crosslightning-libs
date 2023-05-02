@@ -90,17 +90,6 @@ export class ClientSwapContract<T extends SwapData> {
         return data.getExpiry().sub(new BN(tsDelta));
     }
 
-    static getHashForOnchain(outputScript: Buffer, amount: BN, nonce: BN): Buffer {
-        console.log("Buffer: ", outputScript);
-        console.log("amount: ", amount);
-        console.log("nonce: ", nonce);
-        return createHash("sha256").update(Buffer.concat([
-            Buffer.from(nonce.toArray("le", 8)),
-            Buffer.from(amount.toArray("le", 8)),
-            outputScript
-        ])).digest();
-    }
-
     init(): Promise<void> {
         return this.swapContract.start();
     }
@@ -131,7 +120,7 @@ export class ClientSwapContract<T extends SwapData> {
             throw new UserError("Invalid address specified");
         }
 
-        const hash = ClientSwapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
+        const hash = this.swapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
 
         console.log("Generated hash: ", hash);
 
@@ -149,7 +138,8 @@ export class ClientSwapContract<T extends SwapData> {
                 confirmationTarget,
                 confirmations,
                 nonce: nonce.toString(10),
-                token: requiredToken==null ? null : requiredToken.toString()
+                token: requiredToken==null ? null : requiredToken.toString(),
+                offerer: this.swapContract.getAddress()
             }),
             headers: {'Content-Type': 'application/json'}
         });
@@ -264,7 +254,8 @@ export class ClientSwapContract<T extends SwapData> {
                 pr: bolt11PayReq,
                 maxFee: maxFee.toString(),
                 expiryTimestamp,
-                token: requiredToken==null ? null : requiredToken.toString()
+                token: requiredToken==null ? null : requiredToken.toString(),
+                offerer: this.swapContract.getAddress()
             }),
             headers: {'Content-Type': 'application/json'}
         });
@@ -417,7 +408,7 @@ export class ClientSwapContract<T extends SwapData> {
                 const paymentHashBuffer = Buffer.from(data.getHash(), "hex");
 
                 const foundVout = (btcTx as BitcoinTransaction).vout.find(e =>
-                    ClientSwapContract.getHashForOnchain(Buffer.from(e.scriptpubkey, "hex"), new BN(e.value), data.getEscrowNonce()).equals(paymentHashBuffer));
+                    this.swapContract.getHashForOnchain(Buffer.from(e.scriptpubkey, "hex"), new BN(e.value), data.getEscrowNonce()).equals(paymentHashBuffer));
 
                 if(foundVout==null) {
                     throw new IntermediaryError("Invalid btc txId returned");
@@ -566,13 +557,9 @@ export class ClientSwapContract<T extends SwapData> {
 
         const lockingScript = bitcoin.address.toOutputScript(jsonBody.data.btcAddress, this.options.bitcoinNetwork);
 
-        const desiredHash = createHash("sha256").update(Buffer.concat([
-            Buffer.from(new BN(0).toArray("le", 8)),
-            Buffer.from(amount.toArray("le", 8)),
-            lockingScript
-        ])).digest();
+        const desiredHash = this.swapContract.getHashForOnchain(lockingScript, amount, new BN(0));
 
-        const suppliedHash = Buffer.from(jsonBody.data.data.paymentHash,"hex");
+        const suppliedHash = Buffer.from(data.getHash(),"hex");
 
         if(!desiredHash.equals(suppliedHash)) throw new IntermediaryError("Invalid payment hash returned!");
 
