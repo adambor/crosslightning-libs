@@ -56,7 +56,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
         }
     }
 
-    async retrieveLogAndBlockheight(blockhash: string, requiredBlockheight?: number): Promise<{
+    async retrieveLogAndBlockheight(blockData: {blockhash: string, height: number}, requiredBlockheight?: number): Promise<{
         header: SolanaBtcStoredHeader,
         height: number
     }> {
@@ -79,7 +79,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             storedCommitments.add(Buffer.from(e).toString("hex"));
         });
 
-        const blockHashBuffer = Buffer.from(blockhash, 'hex').reverse();
+        const blockHashBuffer = Buffer.from(blockData.blockhash, 'hex').reverse();
         const topicKey = this.BtcRelayHeader(blockHashBuffer);
 
         while(storedHeader==null) {
@@ -127,9 +127,9 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
         };
     }
 
-    async retrieveLogByCommitHash(spvCommitmentHashStr: string, blockHashStr: string): Promise<SolanaBtcStoredHeader> {
+    async retrieveLogByCommitHash(spvCommitmentHashStr: string, blockData: {blockhash: string, height: number}): Promise<SolanaBtcStoredHeader> {
         //Retrieve the log
-        const blockHash = Buffer.from(blockHashStr, "hex").reverse();
+        const blockHash = Buffer.from(blockData.blockhash, "hex").reverse();
         const spvCommitmentHash = Buffer.from(spvCommitmentHashStr, "hex");
 
         const topic = this.BtcRelayHeader(blockHash);
@@ -422,13 +422,15 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
         }
     }
 
-    async getTipData(): Promise<{ commitHash: string; blockhash: string, chainWork }> {
+    async getTipData(): Promise<{ commitHash: string; blockhash: string, chainWork: Buffer, blockheight: number }> {
         const acc = await this.program.account.mainState.fetch(this.BtcRelayMainState);
 
         const spvTipCommitment = Buffer.from(acc.tipCommitHash);
         const blockHashTip = Buffer.from(acc.tipBlockHash);
+        const height: BN = new BN(acc.blockHeight);
 
         return {
+            blockheight: height.toNumber(),
             commitHash: spvTipCommitment.toString("hex"),
             blockhash: blockHashTip.reverse().toString("hex"),
             chainWork: Buffer.from(acc.chainWork)

@@ -121,6 +121,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         )[0];
     }
 
+    getHashForOnchain(outputScript: Buffer, amount: BN, nonce: BN): Buffer {
+        return createHash("sha256").update(Buffer.concat([
+            Buffer.from(nonce.toArray("le", 8)),
+            Buffer.from(amount.toArray("le", 8)),
+            outputScript
+        ])).digest();
+    }
+
     saveDataAccount(publicKey: PublicKey): Promise<void> {
         return this.storage.saveData(publicKey.toBase58(), new StoredDataAccount(publicKey));
     }
@@ -597,7 +605,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             currentTimestamp = new BN(Math.floor(Date.now()/1000)-this.refundGracePeriod);
         }
         if(this.areWeClaimer(data)) {
-            const currentTimestamp = new BN(Math.floor(Date.now()/1000)+this.claimGracePeriod);
+            currentTimestamp = new BN(Math.floor(Date.now()/1000)+this.claimGracePeriod);
         }
         return data.expiry.lt(currentTimestamp);
     }
@@ -658,8 +666,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         return null;
     }
 
-    createSwapData(type: ChainSwapType, offerer: string, claimer: string, token: TokenAddress, amount: BN, paymentHash: string, expiry: BN, escrowNonce: BN, confirmations: number, payOut: boolean): SolanaSwapData {
-        return new SolanaSwapData(
+    createSwapData(type: ChainSwapType, offerer: string, claimer: string, token: TokenAddress, amount: BN, paymentHash: string, expiry: BN, escrowNonce: BN, confirmations: number, payIn: boolean, payOut: boolean): Promise<SolanaSwapData> {
+        return Promise.resolve(new SolanaSwapData(
             null,
             offerer==null ? null : new PublicKey(offerer),
             claimer==null ? null : new PublicKey(claimer),
@@ -671,10 +679,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             confirmations,
             payOut,
             type==null ? null : SolanaSwapProgram.typeToKind(type),
-            null,
+            payIn,
             null,
             null
-        );
+        ));
     }
 
     async sendAndConfirm(txs: SolTx[], waitForConfirmation?: boolean, abortSignal?: AbortSignal, parallel?: boolean): Promise<string[]> {
@@ -883,7 +891,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         if(synchronizer==null) {
             if(commitedHeader==null) try {
-                const result = await this.btcRelay.retrieveLogAndBlockheight(tx.blockhash, blockheight+swapData.getConfirmations()-1);
+                const result = await this.btcRelay.retrieveLogAndBlockheight({
+                    blockhash: tx.blockhash,
+                    height: merkleProof.blockheight
+                }, blockheight+swapData.getConfirmations()-1);
                 commitedHeader = result.header;
             } catch (e) {
                 console.error(e);
@@ -896,10 +907,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             if(commitedHeader==null) {
                 const requiredBlockheight = merkleProof.blockheight+swapData.getConfirmations()-1;
 
-                const result = await this.btcRelay.retrieveLogAndBlockheight(tx.blockhash);
+                const result = await this.btcRelay.retrieveLogAndBlockheight({
+                    blockhash: tx.blockhash,
+                    height: merkleProof.blockheight
+                }, requiredBlockheight);
 
-                commitedHeader = result.header;
-                if(result.height<requiredBlockheight) {
+                if(result==null) {
                     //Need to synchronize
                     //TODO: We don't have to synchronize to tip, only to our required blockheight
                     const resp = await synchronizer.syncToLatestTxs();
@@ -910,6 +923,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                         commitedHeader = resp.computedHeaderMap[merkleProof.blockheight];
                     }
                     resp.txs.forEach(tx => txs.push(tx));
+                } else {
+                    commitedHeader = result.header;
                 }
             }
         }
@@ -1456,22 +1471,22 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         return Promise.resolve(new BN(2039280));
     }
 
-    getClaimFee(): BN {
-        return new BN(-2707440+5000);
+    getClaimFee(): Promise<BN> {
+        return Promise.resolve(new BN(-2707440+5000));
     }
 
     /**
      * Get the estimated solana fee of the commit transaction
      */
-    getCommitFee(): BN {
-        return new BN(2707440+10000);
+    getCommitFee(): Promise<BN> {
+        return Promise.resolve(new BN(2707440+10000));
     }
 
     /**
      * Get the estimated solana transaction fee of the refund transaction
      */
-    getRefundFee(): BN {
-        return new BN(-2707440+10000);
+    getRefundFee(): Promise<BN> {
+        return Promise.resolve(new BN(-2707440+10000));
     }
 
     setUsAsClaimer(swapData: SolanaSwapData) {
