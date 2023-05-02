@@ -246,7 +246,7 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
 
         eventQueue = null;
 
-        await this.storage.saveSwapDataArr(Object.keys(changedSwaps).map(e => changedSwaps[e]));
+        await this.storage.saveSwapDataArr(Object.keys(changedSwaps).map(e => this.swapData[e]));
 
         this.isInitialized = true;
     }
