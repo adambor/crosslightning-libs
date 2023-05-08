@@ -80,6 +80,11 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
      */
     async getPrice(coinId: string): Promise<BN> {
 
+        if(coinId.startsWith("$fixed-")) {
+            const amt: number = parseFloat(coinId.substring(7));
+            return new BN(Math.floor(amt*1000));
+        }
+
         const response: Response = await fetch(this.url+"/simple/price?ids="+coinId+"&vs_currencies=sats&precision=3", {
             method: "GET",
             headers: {'Content-Type': 'application/json'}

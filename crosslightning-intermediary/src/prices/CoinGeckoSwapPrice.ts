@@ -90,6 +90,11 @@ export class CoinGeckoSwapPrice implements ISwapPrice {
      */
     async getPrice(coinId: string): Promise<BN> {
 
+        if(coinId.startsWith("$fixed-")) {
+            const amt: number = parseFloat(coinId.substring(7));
+            return new BN(Math.floor(amt*1000));
+        }
+
         const cachedValue = this.cache[coinId];
         if(cachedValue!=null && cachedValue.expiry>Date.now()) {
             return cachedValue.price;
