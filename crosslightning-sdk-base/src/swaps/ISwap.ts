@@ -5,6 +5,13 @@ import * as BN from "bn.js";
 export interface ISwap {
 
     /**
+     * Transaction IDs for the swap on the smart chain side
+     */
+    commitTxId: string;
+    refundTxId?: string;
+    claimTxId?: string;
+
+    /**
      * Returns hash identifier of the swap
      */
     getPaymentHash(): Buffer;

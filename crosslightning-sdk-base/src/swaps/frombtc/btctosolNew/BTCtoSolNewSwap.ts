@@ -179,6 +179,9 @@ export class BTCtoSolNewSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
 
         const txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.nonce, this.getTxoHash(), !noWaitForConfirmation, abortSignal);
 
+        this.commitTxId = txResult;
+        await this.save();
+
         //Maybe don't wait for TX but instead subscribe to logs, this would improve the experience when user speeds up the transaction by replacing it.
 
         if(!noWaitForConfirmation) {
@@ -193,6 +196,32 @@ export class BTCtoSolNewSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
         // this.emitEvent();
 
         return txResult;
+    }
+
+    /**
+     * Commits the swap on-chain, locking the tokens from the intermediary in an PTLC
+     * Important: Make sure this transaction is confirmed and only after it is display the address to user
+     */
+    async txsCommit(): Promise<any[]> {
+        if(this.state!==BTCtoSolNewSwapState.PR_CREATED) {
+            throw new Error("Must be in PR_CREATED state!");
+        }
+
+        //Check that we have enough time to send the TX and for it to confirm
+        const expiry = this.wrapper.contract.getOnchainSendTimeout(this.data);
+        const currentTimestamp = new BN(Math.floor(Date.now()/1000));
+
+        if(expiry.sub(currentTimestamp).lt(new BN(this.wrapper.contract.options.minSendWindow))) {
+            throw new Error("Send window too low");
+        }
+
+        try {
+            await this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+        } catch (e) {
+            throw new Error("Request timed out!")
+        }
+
+        return await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, this.getTxoHash());
     }
 
     /**
@@ -254,7 +283,10 @@ export class BTCtoSolNewSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
             hex: rawTx.toString("hex")
         }, this.vout, null, (this.wrapper as BTCtoSolNewWrapper<T>).synchronizer, true, !noWaitForConfirmation, abortSignal);
 
+        this.claimTxId = txResult;
+
         if(!noWaitForConfirmation) {
+            await this.save();
             await this.waitTillClaimed(abortSignal);
             return txResult;
         }
@@ -268,12 +300,30 @@ export class BTCtoSolNewSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
         }*/
 
         this.state = BTCtoSolNewSwapState.CLAIM_CLAIMED;
-
         await this.save();
 
         this.emitEvent();
 
         return txResult;
+    }
+
+    /**
+     * Claims and finishes the swap once it was successfully committed on-chain with commit()
+     */
+    async txsClaim(): Promise<any[]> {
+        if(this.state!==BTCtoSolNewSwapState.BTC_TX_CONFIRMED) {
+            throw new Error("Must be in BTC_TX_CONFIRMED state!");
+        }
+
+        const txData = await ChainUtils.getTransaction(this.txId);
+        const rawTx = await ChainUtils.getRawTransaction(this.txId);
+
+        return await this.wrapper.contract.swapContract.txsClaimWithTxData(this.data, txData.status.block_height, {
+            blockhash: txData.status.block_hash,
+            confirmations: this.data.getConfirmations(),
+            txid: txData.txid,
+            hex: rawTx.toString("hex")
+        }, this.vout, null, (this.wrapper as BTCtoSolNewWrapper<T>).synchronizer, true);
     }
 
     /**

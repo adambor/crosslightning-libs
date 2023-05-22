@@ -126,6 +126,9 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
 
         const txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, !noWaitForConfirmation, abortSignal);
 
+        this.commitTxId = txResult;
+        await this.save();
+
         //Maybe don't wait for TX but instead subscribe to logs, this would improve the experience when user speeds up the transaction by replacing it.
 
         if(!noWaitForConfirmation) {
@@ -148,6 +151,24 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
         // this.emitEvent();
 
         return txResult;
+    }
+
+    /**
+     * Commits the swap on-chain, locking the tokens from the intermediary in an HTLC
+     * Important: Make sure this transaction is confirmed and only after it is call claim()
+     */
+    async txsCommit(): Promise<any[]> {
+        if(this.state!==BTCxtoSolSwapState.PR_PAID) {
+            throw new Error("Must be in PR_PAID state!");
+        }
+
+        try {
+            await this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+        } catch (e) {
+            throw new Error("Request timed out!")
+        }
+
+        return await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, null);
     }
 
     /**
@@ -201,6 +222,9 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
 
         const txResult = await this.wrapper.contract.swapContract.claimWithSecret(this.data, this.secret.toString("hex"), true, true, !noWaitForConfirmation, abortSignal);
 
+        this.claimTxId = txResult;
+        await this.save();
+
         if(!noWaitForConfirmation) {
             await this.waitTillClaimed(abortSignal);
             return txResult;
@@ -221,6 +245,17 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
         // this.emitEvent();
 
         return txResult;
+    }
+
+    /**
+     * Claims and finishes the swap once it was successfully committed on-chain with commit()
+     */
+    async txsClaim(): Promise<any[]> {
+        if(this.state!==BTCxtoSolSwapState.CLAIM_COMMITED) {
+            throw new Error("Must be in CLAIM_COMMITED state!");
+        }
+
+        return await this.wrapper.contract.swapContract.txsClaimWithSecret(this.data, this.secret.toString("hex"), true, true);
     }
 
     /**
@@ -295,11 +330,47 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
             abortSignal
         );
 
+        this.commitTxId = txResult[0] || this.commitTxId;
+        this.claimTxId = txResult[1] || this.claimTxId;
+        await this.save();
+
         await this.waitTillClaimed(abortSignal);
 
         console.log("Claim tx confirmed!");
 
         return txResult;
+
+    }
+
+    /**
+     * Signs both, commit and claim transaction at once using signAllTransactions methods, wait for commit to confirm TX and then sends claim TX
+     * If swap is already commited, it just signs and executes the claim transaction
+     */
+    async txsCommitAndClaim(): Promise<any[]> {
+
+        if(this.state===BTCxtoSolSwapState.CLAIM_COMMITED) {
+            return await this.txsClaim();
+        }
+
+        if(this.state!==BTCxtoSolSwapState.PR_PAID) {
+            throw new Error("Must be in PR_PAID state!");
+        }
+
+        try {
+            await this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+        } catch (e) {
+            const result = await this.wrapper.contract.getPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM);
+            this.data = result.data;
+            this.prefix = result.prefix;
+            this.timeout = result.timeout;
+            this.signature = result.signature;
+            this.nonce = result.nonce;
+        }
+
+        const initTxs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+        const claimTxs = await this.wrapper.contract.swapContract.txsClaimWithSecret(this.data, this.secret.toString("hex"), true, true);
+
+        return initTxs.concat(claimTxs);
 
     }
 

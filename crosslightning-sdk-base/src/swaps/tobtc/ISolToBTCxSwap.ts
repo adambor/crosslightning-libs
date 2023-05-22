@@ -5,6 +5,7 @@ import * as BN from "bn.js";
 import * as EventEmitter from "events";
 import {SwapType} from "../SwapType";
 import {SwapData} from "crosslightning-base";
+import {TokenAddress} from "crosslightning-base";
 
 export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
 
@@ -23,6 +24,9 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
     secret: string;
 
     readonly wrapper: ISolToBTCxWrapper<T>;
+
+    commitTxId: string;
+    refundTxId: string;
 
     /**
      * Swap's event emitter
@@ -70,6 +74,8 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
             this.timeout = prOrObject.timeout;
             this.signature = prOrObject.signature;
             this.nonce = prOrObject.nonce;
+            this.commitTxId = prOrObject.commitTxId;
+            this.refundTxId = prOrObject.refundTxId;
         }
     }
 
@@ -133,12 +139,35 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
 
         const txResult = await this.wrapper.contract.swapContract.initPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce, !noWaitForConfirmation, abortSignal);
 
+        this.commitTxId = txResult;
+        await this.save();
+
         if(!noWaitForConfirmation) {
             await this.waitTillCommited(abortSignal);
             return txResult;
         }
 
         return txResult;
+    }
+
+    /**
+     * Commits the swap on-chain, locking the tokens in an HTLC
+     */
+    async txsCommit(): Promise<any[]> {
+        if(this.state!==SolToBTCxSwapState.CREATED) {
+            throw new Error("Must be in CREATED state!");
+        }
+
+        console.log(this);
+
+        try {
+            await this.wrapper.contract.swapContract.isValidClaimInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+        } catch (e) {
+            console.error(e);
+            throw new Error("Expired, please retry");
+        }
+
+        return await this.wrapper.contract.swapContract.txsInitPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce);
     }
 
     /**
@@ -230,12 +259,34 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
             txResult = await this.wrapper.contract.swapContract.refundWithAuthorization(this.data, res.timeout, res.prefix, res.signature, true, true, !noWaitForConfirmation, abortSignal);
         }
 
+        this.refundTxId = txResult;
+        await this.save();
+
         if(!noWaitForConfirmation) {
             await this.waitTillRefunded(abortSignal);
             return txResult;
         }
 
         return txResult;
+    }
+
+    /**
+     * Attempts a refund of the swap back to the initiator
+     */
+    async txsRefund(): Promise<any[]> {
+        if(this.state!==SolToBTCxSwapState.REFUNDABLE && !this.wrapper.contract.swapContract.isExpired(this.data)) {
+            throw new Error("Must be in REFUNDABLE state!");
+        }
+
+        if(this.wrapper.contract.swapContract.isExpired(this.data)) {
+            return await this.wrapper.contract.swapContract.txsRefund(this.data, true, true);
+        } else {
+            const res = await this.wrapper.contract.getRefundAuthorization(this.data, this.url);
+            if(res.is_paid) {
+                throw new Error("Payment was successful");
+            }
+            return await this.wrapper.contract.swapContract.txsRefundWithAuthorization(this.data, res.timeout, res.prefix, res.signature, true, true);
+        }
     }
 
     /**
@@ -288,7 +339,9 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
             prefix: this.prefix,
             timeout: this.timeout,
             signature: this.signature,
-            nonce: this.nonce
+            nonce: this.nonce,
+            commitTxId: this.commitTxId,
+            refundTxId: this.refundTxId,
         };
     }
 
@@ -298,6 +351,13 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
 
     getTxId(): string {
         return this.secret;
+    }
+
+    /**
+     * Returns the address of the input token
+     */
+    getToken(): TokenAddress {
+        return this.data.getToken();
     }
 
     /**

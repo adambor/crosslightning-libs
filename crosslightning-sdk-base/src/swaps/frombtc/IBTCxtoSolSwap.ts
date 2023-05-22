@@ -4,7 +4,7 @@ import {ISwap} from "../ISwap";
 import * as BN from "bn.js";
 import * as EventEmitter from "events";
 import {SwapType} from "../SwapType";
-import {SwapData} from "crosslightning-base";
+import {SwapData, TokenAddress} from "crosslightning-base";
 
 
 export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
@@ -20,6 +20,9 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
     nonce: number;
 
     protected readonly wrapper: IBTCxtoSolWrapper<T>;
+
+    commitTxId: string;
+    claimTxId: string;
 
     /**
      * Swap's event emitter
@@ -59,6 +62,8 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
             this.timeout = urlOrObject.timeout;
             this.signature = urlOrObject.signature;
             this.nonce = urlOrObject.nonce;
+            this.commitTxId = urlOrObject.commitTxId;
+            this.claimTxId = urlOrObject.claimTxId;
         }
     }
 
@@ -108,6 +113,12 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
     abstract commit(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
 
     /**
+     * Commits the swap on-chain, locking the tokens from the intermediary in an HTLC
+     * Important: Make sure this transaction is confirmed and only after it is call claim()
+     */
+    abstract txsCommit(): Promise<any[]>;
+
+    /**
      * Returns a promise that resolves when swap is committed
      *
      * @param abortSignal   AbortSignal
@@ -126,6 +137,11 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
      * @param abortSignal               Abort signal
      */
     abstract claim(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
+
+    /**
+     * Claims and finishes the swap once it was successfully committed on-chain with commit()
+     */
+    abstract txsClaim(): Promise<any[]>;
 
     /**
      * Returns a promise that resolves when swap is claimed
@@ -179,6 +195,13 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
         return this.wrapper.storage.saveSwapData(this);
     }
 
+    /**
+     * Returns the address of the output token
+     */
+    getToken(): TokenAddress {
+        return this.data.getToken();
+    }
+
     serialize(): any{
         return {
             url: this.url,
@@ -188,7 +211,9 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
             prefix: this.prefix,
             timeout: this.timeout,
             signature: this.signature,
-            nonce: this.nonce
+            nonce: this.nonce,
+            commitTxId: this.commitTxId,
+            claimTxId: this.claimTxId
         };
     }
 
