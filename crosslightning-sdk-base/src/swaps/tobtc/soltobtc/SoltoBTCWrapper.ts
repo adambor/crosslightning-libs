@@ -19,7 +19,7 @@ export class SoltoBTCWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> {
     }
 
     /**
-     * Returns a newly created swap, paying for 'bolt11PayRequest' - a bitcoin LN invoice
+     * Returns a newly created swap, paying for 'address' - a bitcoin address
      *
      * @param address               Bitcoin on-chain address you wish to pay to
      * @param amount                Amount of bitcoin to send, in base units - satoshis
@@ -41,6 +41,48 @@ export class SoltoBTCWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> {
             this,
             address,
             amount,
+            confirmationTarget,
+            result.networkFee,
+            result.swapFee,
+            result.totalFee,
+            result.data,
+            result.prefix,
+            result.timeout,
+            result.signature,
+            result.nonce,
+            url
+        );
+
+        await swap.save();
+        this.swapData[result.data.getHash()] = swap;
+
+        return swap;
+
+    }
+
+    /**
+     * Returns a newly created swap, paying for 'address' - a bitcoin address, with exactly specified swap input instead of output
+     *
+     * @param address               Bitcoin on-chain address you wish to pay to
+     * @param tokenAmount                Amount of token to send, in base units
+     * @param confirmationTarget    Time preference of the transaction (in how many blocks should it confirm)
+     * @param confirmations         Confirmations required for intermediary to claim the funds from PTLC (this determines the safety of swap)
+     * @param url                   Intermediary/Counterparty swap service url
+     * @param requiredToken         Token that we want to send
+     * @param requiredKey           Required key of the Intermediary
+     * @param requiredBaseFee       Desired base fee reported by the swap intermediary
+     * @param requiredFeePPM        Desired proportional fee report by the swap intermediary
+     */
+    async createExactIn(address: string, tokenAmount: BN, confirmationTarget: number, confirmations: number, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<SoltoBTCSwap<T>> {
+
+        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
+
+        const result = await this.contract.payOnchainExactIn(address, tokenAmount, confirmationTarget, confirmations, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
+
+        const swap = new SoltoBTCSwap(
+            this,
+            address,
+            result.amount,
             confirmationTarget,
             result.networkFee,
             result.swapFee,

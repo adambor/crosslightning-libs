@@ -94,7 +94,17 @@ export class ClientSwapContract<T extends SwapData> {
         return this.swapContract.start();
     }
 
-    async payOnchain(address: string, amount: BN, confirmationTarget: number, confirmations: number, url: string, requiredToken?: TokenAddress, requiredClaimerKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<{
+    async payOnchain(
+        address: string,
+        amount: BN,
+        confirmationTarget: number,
+        confirmations: number,
+        url: string,
+        requiredToken?: TokenAddress,
+        requiredClaimerKey?: string,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN
+    ): Promise<{
         networkFee: BN,
         swapFee: BN,
         totalFee: BN,
@@ -222,7 +232,162 @@ export class ClientSwapContract<T extends SwapData> {
         };
     }
 
-    async payLightning(bolt11PayReq: string, expirySeconds: number, maxFee: BN, url: string, requiredToken?: TokenAddress, requiredClaimerKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<{
+    async payOnchainExactIn(
+        address: string,
+        tokenAmount: BN,
+        confirmationTarget: number,
+        confirmations: number,
+        url: string,
+        requiredToken?: TokenAddress,
+        requiredClaimerKey?: string,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN
+    ): Promise<{
+        networkFee: BN,
+        swapFee: BN,
+        totalFee: BN,
+        data: T,
+        prefix: string,
+        timeout: string,
+        signature: string,
+        nonce: number,
+        amount: BN
+    }> {
+        const firstPart = new BN(Math.floor((Date.now()/1000)) - 700000000);
+
+        const nonceBuffer = Buffer.concat([
+            Buffer.from(firstPart.toArray("be", 5)),
+            randomBytes(3)
+        ]);
+
+        const nonce = new BN(nonceBuffer, "be");
+
+        let outputScript;
+        try {
+            outputScript = bitcoin.address.toOutputScript(address, this.options.bitcoinNetwork);
+        } catch (e) {
+            throw new UserError("Invalid address specified");
+        }
+
+        const response: Response = await fetch(url+"/payInvoiceExactIn", {
+            method: "POST",
+            body: JSON.stringify({
+                address,
+                amount: tokenAmount.toString(10),
+                confirmationTarget,
+                confirmations,
+                nonce: nonce.toString(10),
+                token: requiredToken==null ? null : requiredToken.toString(),
+                offerer: this.swapContract.getAddress()
+            }),
+            headers: {'Content-Type': 'application/json'}
+        });
+
+        if(response.status!==200) {
+            let resp: string;
+            try {
+                resp = await response.text();
+            } catch (e) {
+                throw new Error(response.statusText);
+            }
+            throw new Error(resp);
+        }
+
+        let jsonBody: any = await response.json();
+
+        const amount = new BN(jsonBody.data.amount);
+
+        const swapFee = new BN(jsonBody.data.swapFee);
+        const networkFee = new BN(jsonBody.data.networkFee);
+        const totalFee = new BN(jsonBody.data.totalFee);
+
+        if(!totalFee.eq(swapFee.add(networkFee))){
+            throw new IntermediaryError("Invalid totalFee returned");
+        }
+
+        const total = new BN(jsonBody.data.total);
+
+        if(!total.eq(tokenAmount)) {
+            throw new IntermediaryError("Invalid total returned");
+        }
+
+        const data: T = new this.swapDataDeserializer(jsonBody.data.data);
+        this.swapContract.setUsAsOfferer(data);
+
+        if(this.WBTC_ADDRESS!=null) {
+            if(!total.eq(amount.add(totalFee))){
+                throw new IntermediaryError("Invalid total returned");
+            }
+            if(!data.isToken(this.WBTC_ADDRESS)) {
+                throw new IntermediaryError("Invalid data returned - token");
+            }
+        } else {
+            if(requiredToken!=null) if(!data.isToken(requiredToken)) {
+                throw new IntermediaryError("Invalid data returned - token");
+            }
+            if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
+                if(!(await this.swapPrice.isValidAmountSend(amount, requiredBaseFee, requiredFeePPM, total.sub(networkFee), data.getToken()))) {
+                    throw new IntermediaryError("Fee too high");
+                }
+            }
+        }
+
+        const hash = this.swapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
+
+        console.log("Generated hash: ", hash);
+
+        const payStatus = await this.swapContract.getPaymentHashStatus(hash);
+
+        if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
+            throw new UserError("Invoice already being paid for or paid");
+        }
+
+        if(
+            !data.getAmount().eq(total) ||
+            data.getHash()!==hash ||
+            !data.getEscrowNonce().eq(nonce) ||
+            data.getConfirmations()!==confirmations ||
+            data.getType()!==ChainSwapType.CHAIN_NONCED
+        ) {
+            throw new IntermediaryError("Invalid data returned");
+        }
+
+        if(requiredClaimerKey!=null) {
+            if(data.getClaimer()!==requiredClaimerKey) throw new IntermediaryError("Invalid data returned");
+        }
+
+        try {
+            await this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
+        } catch (e) {
+            if(e instanceof SignatureVerificationError) {
+                throw new IntermediaryError(e.message);
+            }
+            throw e;
+        }
+
+        return {
+            networkFee: new BN(jsonBody.data.networkFee),
+            swapFee: new BN(jsonBody.data.swapFee),
+            totalFee: new BN(jsonBody.data.totalFee),
+            data,
+            prefix: jsonBody.data.prefix,
+            timeout: jsonBody.data.timeout,
+            signature: jsonBody.data.signature,
+            nonce: jsonBody.data.nonce,
+            amount: amount
+        };
+    }
+
+    async payLightning(
+        bolt11PayReq: string,
+        expirySeconds: number,
+        maxFee: BN,
+        url: string,
+        requiredToken?: TokenAddress,
+        requiredClaimerKey?: string,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN
+    ): Promise<{
         confidence: string,
         maxFee: BN,
         swapFee: BN,

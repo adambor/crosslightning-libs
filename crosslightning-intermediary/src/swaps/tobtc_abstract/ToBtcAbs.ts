@@ -708,6 +708,268 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
         });
 
+        restServer.post(this.path+"/payInvoiceExactIn", async (req, res) => {
+            /**
+             * address: string                      Bitcoin destination address
+             * amount: string                       Amount to send (in desired token's base units)
+             * confirmationTarget: number           Desired confirmation target for the swap, how big of a fee should be assigned to TX
+             * confirmations: number                Required number of confirmations for us to claim the swap
+             * nonce: string                        Nonce for the swap (used for replay protection)
+             * token: string                        Desired token to use
+             * offerer: string                      Address of the caller
+             */
+            if (
+                req.body == null ||
+
+                req.body.address == null ||
+                typeof(req.body.address) !== "string" ||
+
+                req.body.amount == null ||
+                typeof(req.body.amount) !== "string" ||
+
+                req.body.confirmationTarget == null ||
+                typeof(req.body.confirmationTarget) !== "number" ||
+
+                req.body.confirmations == null ||
+                typeof(req.body.confirmations) !== "number" ||
+
+                req.body.nonce == null ||
+                typeof(req.body.nonce) !== "string" ||
+
+                req.body.token == null ||
+                typeof(req.body.token) !== "string" ||
+
+                req.body.offerer == null ||
+                typeof(req.body.offerer) !== "string"
+            ) {
+                res.status(400).json({
+                    msg: "Invalid request body (address/amount/confirmationTarget/confirmations/nonce/token/offerer)"
+                });
+                return;
+            }
+
+            if(!this.swapContract.isValidAddress(req.body.offerer)) {
+                res.status(400).json({
+                    msg: "Invalid request body (offerer)"
+                });
+                return;
+            }
+
+            if(!this.allowedTokens.has(req.body.token)) {
+                res.status(400).json({
+                    msg: "Invalid request body (token)"
+                });
+                return;
+            }
+
+            let tokenAmountBD: BN;
+
+            try {
+                tokenAmountBD = new BN(req.body.amount);
+            } catch (e) {
+                res.status(400).json({
+                    msg: "Invalid request body (amount - cannot be parsed)"
+                });
+                return;
+            }
+
+            let nonce: BN;
+
+            try {
+                nonce = new BN(req.body.nonce);
+            } catch (e) {
+                res.status(400).json({
+                    msg: "Invalid request body (nonce - cannot be parsed)"
+                });
+                return;
+            }
+
+            const nonceBuffer = Buffer.from(nonce.toArray("be", 8));
+            const firstPart = new BN(nonceBuffer.slice(0, 5), "be");
+
+            const maxAllowedValue = new BN(Math.floor(Date.now()/1000)-600000000);
+            if(firstPart.gt(maxAllowedValue)) {
+                res.status(400).json({
+                    msg: "Invalid request body (nonce - too high)"
+                });
+                return;
+            }
+
+            if(req.body.confirmationTarget>this.config.maxConfTarget) {
+                res.status(400).json({
+                    msg: "Invalid request body (confirmationTarget - too high)"
+                });
+                return;
+            }
+            if(req.body.confirmationTarget<this.config.minConfTarget) {
+                res.status(400).json({
+                    msg: "Invalid request body (confirmationTarget - too low)"
+                });
+                return;
+            }
+
+            if(req.body.confirmations>this.config.maxConfirmations) {
+                res.status(400).json({
+                    msg: "Invalid request body (confirmations - too high)"
+                });
+                return;
+            }
+            if(req.body.confirmations<this.config.minConfirmations) {
+                res.status(400).json({
+                    msg: "Invalid request body (confirmations - too low)"
+                });
+                return;
+            }
+
+            let parsedOutputScript;
+
+            try {
+                parsedOutputScript = bitcoin.address.toOutputScript(req.body.address, this.config.bitcoinNetwork);
+            } catch (e) {
+                res.status(400).json({
+                    msg: "Invalid request body (address - cannot be parsed)"
+                });
+                return;
+            }
+
+            if(parsedOutputScript.length > OUTPUT_SCRIPT_MAX_LENGTH) {
+                res.status(400).json({
+                    msg: "Invalid request body (address's output script - too long)"
+                });
+                return;
+            }
+
+            const useToken = this.swapContract.toTokenAddress(req.body.token);
+
+            let amountBD = await this.swapPricing.getToBtcSwapAmount(tokenAmountBD, useToken);
+
+            //Decrease by base fee
+            amountBD = amountBD.sub(this.config.baseFee);
+
+            const expirySeconds = this.getExpiryFromCLTV(req.body.confirmationTarget, req.body.confirmations).add(new BN(this.config.gracePeriod)); //Add grace period another time, so the user has 1 hour to commit
+
+            let chainFeeResp;
+            try {
+                chainFeeResp = await lncli.getChainFeeEstimate({
+                    lnd: this.LND,
+                    send_to: [
+                        {
+                            address: req.body.address,
+                            tokens: amountBD.toNumber()
+                        }
+                    ],
+                    target_confirmations: req.body.confirmationTarget,
+                    utxo_confirmations: 0
+                });
+            } catch (e) {
+                console.error(e);
+            }
+
+            if(chainFeeResp==null) {
+                res.status(400).json({
+                    code: 20002,
+                    msg: "Insufficient liquidity!"
+                });
+            }
+
+            const networkFee = chainFeeResp.fee;
+            const feeSatsPervByte = chainFeeResp.tokens_per_vbyte;
+
+            console.log("[To BTC: REST.PayInvoice] Total network fee: ", networkFee);
+            console.log("[To BTC: REST.PayInvoice] Network fee (sats/vB): ", feeSatsPervByte);
+
+            const networkFeeAdjusted = new BN(networkFee).mul(this.config.networkFeeMultiplierPPM).div(new BN(1000000));
+            const feeSatsPervByteAdjusted = new BN(feeSatsPervByte).mul(this.config.networkFeeMultiplierPPM).div(new BN(1000000));
+
+            console.log("[To BTC: REST.PayInvoice] Adjusted total network fee: ", networkFeeAdjusted.toString(10));
+            console.log("[To BTC: REST.PayInvoice] Adjusted network fee (sats/vB): ", feeSatsPervByteAdjusted.toString(10));
+
+            //Decrease by network fee
+            amountBD = amountBD.sub(networkFeeAdjusted);
+
+            //Decrease by percentage fee
+            amountBD = amountBD.mul(new BN(1000000)).div(this.config.feePPM.add(new BN(1000000)));
+
+            if(amountBD.lt(this.config.min)) {
+                res.status(400).json({
+                    code: 20003,
+                    msg: "Amount too low!",
+                    data: {
+                        min: this.config.min.toString(10),
+                        max: this.config.max.toString(10)
+                    }
+                });
+                return;
+            }
+            if(amountBD.gt(this.config.max)) {
+                res.status(400).json({
+                    code: 20004,
+                    msg: "Amount too high!",
+                    data: {
+                        min: this.config.min.toString(10),
+                        max: this.config.max.toString(10)
+                    }
+                });
+                return;
+            }
+
+            const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
+
+            const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(networkFeeAdjusted, useToken);
+            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken);
+            const amountInToken = tokenAmountBD.sub(swapFeeInToken).sub(networkFeeInToken);
+
+            const total = amountInToken.add(swapFeeInToken).add(networkFeeInToken);
+
+            const currentTimestamp = new BN(Math.floor(Date.now()/1000));
+            const minRequiredExpiry = currentTimestamp.add(expirySeconds);
+
+            const payObject: T = await this.swapContract.createSwapData(
+                ChainSwapType.CHAIN_NONCED,
+                req.body.offerer,
+                this.swapContract.getAddress(),
+                useToken,
+                total,
+                this.getHash(req.body.address, nonce, amountBD, this.config.bitcoinNetwork).toString("hex"),
+                minRequiredExpiry,
+                nonce,
+                req.body.confirmations,
+                true,
+                false
+            );
+
+            const sigData = await this.swapContract.getClaimInitSignature(payObject, this.nonce, this.config.authorizationTimeout);
+
+            const createdSwap = new ToBtcSwapAbs<T>(req.body.address, amountBD, swapFee, networkFeeAdjusted, nonce, req.body.confirmationTarget, new BN(sigData.timeout));
+            const paymentHash = this.getChainHash(createdSwap);
+            createdSwap.data = payObject;
+
+            await this.storageManager.saveData(paymentHash.toString("hex"), createdSwap);
+
+            res.status(200).json({
+                code: 20000,
+                msg: "Success",
+                data: {
+                    address: this.swapContract.getAddress(),
+                    amount: amountBD.toString(10),
+                    satsPervByte: feeSatsPervByteAdjusted.toString(10),
+                    networkFee: networkFeeInToken.toString(10),
+                    swapFee: swapFeeInToken.toString(10),
+                    totalFee: swapFeeInToken.add(networkFeeInToken).toString(10),
+                    total: total.toString(10),
+                    minRequiredExpiry: minRequiredExpiry.toString(),
+
+                    data: payObject.serialize(),
+
+                    nonce: sigData.nonce,
+                    prefix: sigData.prefix,
+                    timeout: sigData.timeout,
+                    signature: sigData.signature
+                }
+            });
+
+        });
+
         restServer.post(this.path+"/getRefundAuthorization", async (req, res) => {
             try {
                 /**
