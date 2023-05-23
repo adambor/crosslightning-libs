@@ -223,9 +223,61 @@ export abstract class ISolToBTCxWrapper<T extends SwapData> {
     }
 
     /**
+     * Returns swaps that are refundable and that were initiated with the current provider's public key
+     */
+    getRefundableSwapsSync(): ISolToBTCxSwap<T>[] {
+
+        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
+
+        const returnArr: ISolToBTCxSwap<T>[] = [];
+
+        for(let paymentHash in this.swapData) {
+            const swap = this.swapData[paymentHash];
+
+            console.log(swap);
+
+            if(swap.data.getOfferer()!==this.contract.swapContract.getAddress()) {
+                continue;
+            }
+
+            if(swap.state===SolToBTCxSwapState.REFUNDABLE) {
+                returnArr.push(swap);
+            }
+        }
+
+        return returnArr;
+
+    }
+
+    /**
      * Returns all swaps that were initiated with the current provider's public key
      */
     async getAllSwaps(): Promise<ISolToBTCxSwap<T>[]> {
+
+        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
+
+        const returnArr: ISolToBTCxSwap<T>[] = [];
+
+        for(let paymentHash in this.swapData) {
+            const swap = this.swapData[paymentHash];
+
+            console.log(swap);
+
+            if(swap.data.getOfferer()!==this.contract.swapContract.getAddress()) {
+                continue;
+            }
+
+            returnArr.push(swap);
+        }
+
+        return returnArr;
+
+    }
+
+    /**
+     * Returns all swaps that were initiated with the current provider's public key
+     */
+    getAllSwapsSync(): ISolToBTCxSwap<T>[] {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 

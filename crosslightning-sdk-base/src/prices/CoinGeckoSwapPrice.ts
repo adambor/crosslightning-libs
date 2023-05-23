@@ -11,6 +11,10 @@ export type CoinsMapType = {
     }
 };
 
+export type CoinAddresses = {
+    [token in "USDC" | "USDT" | "WBTC" | "ETH"]?: string;
+};
+
 export class CoinGeckoSwapPrice extends ISwapPrice {
 
     static createCoinsMap(wbtcAdress?: string, usdcAddress?: string, usdtAddress?: string): CoinsMapType {
@@ -38,6 +42,39 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
             coinMap[usdtAddress] = {
                 coinId: "tether",
                 decimals: 6
+            };
+        }
+
+        return coinMap;
+
+    }
+
+    static createCoinsMapFromTokens(tokens: CoinAddresses, nativeTokenCoinGeckoId?: string): CoinsMapType {
+
+        const coinMap = {};
+
+        if(tokens.WBTC!=null) {
+            coinMap[tokens.WBTC] = {
+                coinId: "wrapped-bitcoin",
+                decimals: 8
+            };
+        }
+        if(tokens.USDC!=null) {
+            coinMap[tokens.USDC] = {
+                coinId: "usd-coin",
+                decimals: 6
+            };
+        }
+        if(tokens.USDT!=null) {
+            coinMap[tokens.USDT] = {
+                coinId: "tether",
+                decimals: 6
+            };
+        }
+        if(tokens.ETH!=null || nativeTokenCoinGeckoId!=null) {
+            coinMap[tokens.ETH] = {
+                coinId: nativeTokenCoinGeckoId,
+                decimals: 18
             };
         }
 
@@ -138,6 +175,14 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
             .mul(price)
             .div(new BN(1000))
             .div(new BN(10).pow(new BN(coin.decimals)));
+    }
+
+    shouldIgnore(tokenAddress: TokenAddress): boolean {
+        const coin = this.COINS_MAP[tokenAddress];
+
+        if(coin==null) throw new Error("Token not found");
+
+        return coin.coinId==="$ignore";
     }
 
 }

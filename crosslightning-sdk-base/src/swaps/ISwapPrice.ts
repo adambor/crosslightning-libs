@@ -10,6 +10,8 @@ export abstract class ISwapPrice {
     }
 
     async isValidAmountSend(amountSats: BN,satsBaseFee: BN, feePPM: BN, paidToken: BN, token: TokenAddress): Promise<boolean> {
+        if(this.shouldIgnore(token)) return true;
+
         const totalSats = amountSats.mul(new BN(1000000).add(feePPM)).div(new BN(1000000))
             .add(satsBaseFee);
 
@@ -29,6 +31,8 @@ export abstract class ISwapPrice {
     }
 
     async isValidAmountReceive(amountSats: BN,satsBaseFee: BN, feePPM: BN, receiveToken: BN, token: TokenAddress): Promise<boolean> {
+        if(this.shouldIgnore(token)) return true;
+
         const totalSats = amountSats.mul(new BN(1000000).sub(feePPM)).div(new BN(1000000))
             .sub(satsBaseFee);
 
@@ -62,5 +66,7 @@ export abstract class ISwapPrice {
      * @param toToken           Token
      */
     abstract getFromBtcSwapAmount(fromAmount:BN, toToken: TokenAddress): Promise<BN>;
+
+    abstract shouldIgnore(tokenAddress: TokenAddress): boolean;
 
 }

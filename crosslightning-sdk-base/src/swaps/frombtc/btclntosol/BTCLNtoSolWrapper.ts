@@ -283,9 +283,65 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
     }
 
     /**
+     * Returns swaps that are in-progress and are claimable that were initiated with the current provider's public key
+     */
+    getClaimableSwapsSync(): BTCLNtoSolSwap<T>[] {
+
+        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
+
+        const returnArr: BTCLNtoSolSwap<T>[] = [];
+
+        for(let paymentHash in this.swapData) {
+            const swap = this.swapData[paymentHash];
+
+            console.log(swap);
+
+            if(swap.data.getClaimer()!==this.contract.swapContract.getAddress()) {
+                continue;
+            }
+
+            const castedSwap = swap as BTCLNtoSolSwap<T>;
+
+            if(castedSwap.state===BTCxtoSolSwapState.PR_CREATED || castedSwap.state===BTCxtoSolSwapState.CLAIM_CLAIMED || castedSwap.state===BTCxtoSolSwapState.FAILED) {
+                continue;
+            }
+
+            returnArr.push(castedSwap);
+        }
+
+        return returnArr;
+
+    }
+
+    /**
      * Returns all swaps that were initiated with the current provider's public key
      */
     async getAllSwaps(): Promise<BTCLNtoSolSwap<T>[]> {
+
+        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
+
+        const returnArr: BTCLNtoSolSwap<T>[] = [];
+
+        for(let paymentHash in this.swapData) {
+            const swap = this.swapData[paymentHash];
+
+            console.log(swap);
+
+            if(swap.data.getClaimer()!==this.contract.swapContract.getAddress()) {
+                continue;
+            }
+
+            returnArr.push(swap as BTCLNtoSolSwap<T>);
+        }
+
+        return returnArr;
+
+    }
+
+    /**
+     * Returns all swaps that were initiated with the current provider's public key
+     */
+    getAllSwapsSync(): BTCLNtoSolSwap<T>[] {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
