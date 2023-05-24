@@ -19,8 +19,8 @@ export class SoltoBTCLNWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> 
         super(storage, contract, chainEvents, swapDataDeserializer);
     }
 
-    private calculateFeeForAmount(amount: BN) : BN {
-        return new BN(this.contract.options.lightningBaseFee).add(amount.mul(new BN(this.contract.options.lightningFeePPM)).div(new BN(1000000)));
+    private calculateFeeForAmount(amount: BN, overrideBaseFee?: BN, overrideFeePPM?: BN) : BN {
+        return new BN(overrideBaseFee || this.contract.options.lightningBaseFee).add(amount.mul(new BN(overrideFeePPM || this.contract.options.lightningFeePPM)).div(new BN(1000000)));
     }
 
     init(): Promise<void> {
@@ -33,12 +33,24 @@ export class SoltoBTCLNWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> 
      * @param bolt11PayRequest  BOLT11 payment request (bitcoin lightning invoice) you wish to pay
      * @param expirySeconds     Swap expiration in seconds, setting this too low might lead to unsuccessful payments, too high and you might lose access to your funds for longer than necessary
      * @param url               Intermediary/Counterparty swap service url
+     * @param maxBaseFee        Max base fee for the payment routing
+     * @param maxPPMFee         Max proportional fee PPM (per million 0.1% == 1000) for routing
      * @param requiredToken     Token that we want to send
      * @param requiredKey       Required key of the Intermediary
      * @param requiredBaseFee   Desired base fee reported by the swap intermediary
      * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
      */
-    async create(bolt11PayRequest: string, expirySeconds: number, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<SoltoBTCLNSwap<T>> {
+    async create(
+        bolt11PayRequest: string,
+        expirySeconds: number,
+        url: string,
+        maxBaseFee?: BN,
+        maxPPMFee?: BN,
+        requiredToken?: TokenAddress,
+        requiredKey?: string,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN
+    ): Promise<SoltoBTCLNSwap<T>> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
@@ -50,7 +62,7 @@ export class SoltoBTCLNWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> 
 
         const sats = new BN(parsedPR.millisatoshis).div(new BN(1000));
 
-        const fee = this.calculateFeeForAmount(sats);
+        const fee = this.calculateFeeForAmount(sats, maxBaseFee, maxPPMFee);
 
         const result = await this.contract.payLightning(bolt11PayRequest, expirySeconds, fee, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
 
