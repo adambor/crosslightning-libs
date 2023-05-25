@@ -402,4 +402,8 @@ export class BTCtoSolNewSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
         return this.wrapper.contract.getOnchainSendTimeout(this.data).toNumber()*1000;
     }
 
+    getClaimerBounty(): BN {
+        return this.data.getClaimerBounty();
+    }
+
 }

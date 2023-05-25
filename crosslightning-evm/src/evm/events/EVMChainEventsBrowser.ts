@@ -25,16 +25,8 @@ export class EVMChainEventsBrowser implements ChainEvents<EVMSwapData> {
             const event = this.evmSwapContract.contractInterface.parseLog(log);
             let parsedEvent: SwapEvent<EVMSwapData>;
             if(event.name==="Initialize") {
-                const data = {
-                    offerer: event.args.data.offerer,
-                    claimer: event.args.data.claimer,
-                    token: event.args.data.token,
-                    amount: event.args.data.amount,
-                    paymentHash: event.args.data.paymentHash,
-                    data: event.args.data.data,
-                    txoHash: event.args.txoHash
-                };
-                const swapData = new EVMSwapData(data);
+                const swapData = new EVMSwapData(event.args.data);
+                swapData.txoHash = event.args.txoHash;
                 parsedEvent = new InitializeEvent<EVMSwapData>(swapData.getHash(), swapData.getTxoHash(), swapData.getIndex(), swapData);
             }
             if(event.name==="Claim") {

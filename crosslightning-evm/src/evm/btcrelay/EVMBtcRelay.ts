@@ -4,8 +4,11 @@ import {BigNumber, Contract, Signer, UnsignedTransaction} from "ethers";
 import {Interface} from "ethers/lib/utils";
 import {EVMBtcStoredHeader} from "./headers/EVMBtcStoredHeader";
 import {EVMBtcHeader} from "./headers/EVMBtcHeader";
+import * as BN from "bn.js";
 
 const limit = 2500;
+
+const GAS_PER_BLOCKHEADER = 35000;
 
 export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHeader, UnsignedTransaction, B> {
 
@@ -308,6 +311,61 @@ export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHea
             chainWork,
             blockheight: highScoreAndBlockHeight.shr(224).toNumber()
         }
+    }
+
+    async estimateSynchronizeFee(requiredBlockheight: number): Promise<BN> {
+
+        const highScoreAndBlockHeight: BigNumber = await this.contract._highScoreAndBlockHeight();
+        const currBlockheight = highScoreAndBlockHeight.shr(224).toNumber();
+
+        const blockheightDelta = requiredBlockheight-currBlockheight;
+
+        if(blockheightDelta<=0) return new BN(0);
+
+        const totalGas = blockheightDelta*GAS_PER_BLOCKHEADER;
+
+        let gasPrice: BigNumber;
+        try {
+            const gasPriceData = await this.provider.provider.getFeeData();
+
+            if(gasPriceData.lastBaseFeePerGas!=null) {
+                gasPrice = gasPriceData.lastBaseFeePerGas;
+            } else {
+                gasPrice = gasPriceData.gasPrice;
+            }
+        } catch (e) {
+            console.error(e);
+        }
+
+        if(gasPrice==null) {
+            gasPrice = await this.provider.provider.getGasPrice();
+        }
+
+        return new BN(BigNumber.from(totalGas).mul(gasPrice).toString());
+
+    }
+
+    async getFeePerBlock(): Promise<BN> {
+
+        let gasPrice: BigNumber;
+        try {
+            const gasPriceData = await this.provider.provider.getFeeData();
+
+            if(gasPriceData.lastBaseFeePerGas!=null) {
+                gasPrice = gasPriceData.lastBaseFeePerGas;
+            } else {
+                gasPrice = gasPriceData.gasPrice;
+            }
+        } catch (e) {
+            console.error(e);
+        }
+
+        if(gasPrice==null) {
+            gasPrice = await this.provider.provider.getGasPrice();
+        }
+
+        return new BN(BigNumber.from(GAS_PER_BLOCKHEADER).mul(gasPrice).toString());
+
     }
 
 }

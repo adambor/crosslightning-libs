@@ -94,6 +94,16 @@ export const swapContract = {
                             "internalType": "uint256",
                             "name": "data",
                             "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "securityDeposit",
+                            "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "claimerBounty",
+                            "type": "uint256"
                         }
                     ],
                     "indexed": false,
@@ -135,19 +145,6 @@ export const swapContract = {
             ],
             "name": "Refund",
             "type": "event"
-        },
-        {
-            "inputs": [],
-            "name": "SECURITY_DEPOSIT",
-            "outputs": [
-                {
-                    "internalType": "uint256",
-                    "name": "",
-                    "type": "uint256"
-                }
-            ],
-            "stateMutability": "view",
-            "type": "function"
         },
         {
             "inputs": [
@@ -230,6 +227,16 @@ export const swapContract = {
                             "internalType": "uint256",
                             "name": "data",
                             "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "securityDeposit",
+                            "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "claimerBounty",
+                            "type": "uint256"
                         }
                     ],
                     "internalType": "struct CrossLightningSwaps.AtomicSwapStruct",
@@ -279,6 +286,16 @@ export const swapContract = {
                         {
                             "internalType": "uint256",
                             "name": "data",
+                            "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "securityDeposit",
+                            "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "claimerBounty",
                             "type": "uint256"
                         }
                     ],
@@ -390,7 +407,7 @@ export const swapContract = {
             ],
             "name": "deposit",
             "outputs": [],
-            "stateMutability": "nonpayable",
+            "stateMutability": "payable",
             "type": "function"
         },
         {
@@ -505,6 +522,16 @@ export const swapContract = {
                             "internalType": "uint256",
                             "name": "data",
                             "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "securityDeposit",
+                            "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "claimerBounty",
+                            "type": "uint256"
                         }
                     ],
                     "internalType": "struct CrossLightningSwaps.AtomicSwapStruct",
@@ -547,7 +574,7 @@ export const swapContract = {
                     "type": "bytes32"
                 }
             ],
-            "stateMutability": "nonpayable",
+            "stateMutability": "payable",
             "type": "function"
         },
         {
@@ -582,6 +609,16 @@ export const swapContract = {
                         {
                             "internalType": "uint256",
                             "name": "data",
+                            "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "securityDeposit",
+                            "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "claimerBounty",
                             "type": "uint256"
                         }
                     ],
@@ -661,6 +698,16 @@ export const swapContract = {
                             "internalType": "uint256",
                             "name": "data",
                             "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "securityDeposit",
+                            "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "claimerBounty",
+                            "type": "uint256"
                         }
                     ],
                     "internalType": "struct CrossLightningSwaps.AtomicSwapStruct[]",
@@ -710,6 +757,16 @@ export const swapContract = {
                         {
                             "internalType": "uint256",
                             "name": "data",
+                            "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "securityDeposit",
+                            "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "claimerBounty",
                             "type": "uint256"
                         }
                     ],
@@ -783,6 +840,16 @@ export const swapContract = {
                             "internalType": "uint256",
                             "name": "data",
                             "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "securityDeposit",
+                            "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "claimerBounty",
+                            "type": "uint256"
                         }
                     ],
                     "internalType": "struct CrossLightningSwaps.AtomicSwapStruct",
@@ -827,6 +894,16 @@ export const swapContract = {
                         {
                             "internalType": "uint256",
                             "name": "data",
+                            "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "securityDeposit",
+                            "type": "uint256"
+                        },
+                        {
+                            "internalType": "uint256",
+                            "name": "claimerBounty",
                             "type": "uint256"
                         }
                     ],

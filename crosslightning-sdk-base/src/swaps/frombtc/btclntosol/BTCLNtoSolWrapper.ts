@@ -54,7 +54,9 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
             null,
             null,
             false,
-            true
+            true,
+            new BN(0),
+            new BN(0)
         );
 
         const total = result.total;

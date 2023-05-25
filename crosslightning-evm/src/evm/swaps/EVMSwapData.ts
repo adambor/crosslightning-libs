@@ -11,6 +11,8 @@ export class EVMSwapData extends SwapData {
     amount: BigNumber;
     paymentHash: string; //0x prefixed
     data: BigNumber;
+    securityDeposit: BigNumber;
+    claimerBounty: BigNumber;
 
     txoHash: string; //0x prefixed
 
@@ -28,6 +30,8 @@ export class EVMSwapData extends SwapData {
         kind: number,
         payIn: boolean,
         payOut: boolean,
+        securityDeposit: BigNumber,
+        claimerBounty: BigNumber,
         index: number,
         txoHash: string
     );
@@ -46,6 +50,8 @@ export class EVMSwapData extends SwapData {
         kind?: number,
         payIn?: boolean,
         payOut?: boolean,
+        securityDeposit?: BigNumber,
+        claimerBounty?: BigNumber,
         index?: number,
         txoHash?: string,
     ) {
@@ -69,6 +75,8 @@ export class EVMSwapData extends SwapData {
                 .or(BigNumber.from(payIn ? 1 : 0).and(BigNumber.from(0xFF)).shl(152))
                 .or(BigNumber.from(payOut ? 1 : 0).and(BigNumber.from(0xFF)).shl(160))
                 .or(BigNumber.from(index).and(BigNumber.from(0xFF)).shl(168));
+            this.securityDeposit = securityDeposit;
+            this.claimerBounty = claimerBounty;
             this.txoHash = txoHash;
         } else {
             this.offerer = offererOrData.offerer;
@@ -77,6 +85,8 @@ export class EVMSwapData extends SwapData {
             this.amount = offererOrData.amount==null ? null : BigNumber.from(offererOrData.amount);
             this.paymentHash = offererOrData.paymentHash;
             this.data = offererOrData.data==null ? null : BigNumber.from(offererOrData.data);
+            this.securityDeposit = offererOrData.securityDeposit==null ? null : BigNumber.from(offererOrData.securityDeposit);
+            this.claimerBounty = offererOrData.claimerBounty==null ? null : BigNumber.from(offererOrData.claimerBounty);
             this.txoHash = offererOrData.txoHash;
         }
     }
@@ -106,6 +116,8 @@ export class EVMSwapData extends SwapData {
             amount: this.amount==null ? null : this.amount.toHexString(),
             paymentHash: this.paymentHash,
             data: this.data==null ? null : this.data.toHexString(),
+            securityDeposit: this.securityDeposit==null ? null : this.securityDeposit.toHexString(),
+            claimerBounty: this.claimerBounty==null ? null : this.claimerBounty.toHexString(),
             txoHash: this.txoHash
         }
     }
@@ -186,7 +198,7 @@ export class EVMSwapData extends SwapData {
 
     getBytes(): string {
         return utils.defaultAbiCoder.encode([
-            "tuple(address offerer,address claimer,address token,uint256 amount,bytes32 paymentHash,uint256 data)"
+            "tuple(address offerer,address claimer,address token,uint256 amount,bytes32 paymentHash,uint256 data,uint256 securityDeposit,uint256 claimerBounty)"
         ], [
             {
                 offerer: this.offerer,
@@ -194,7 +206,9 @@ export class EVMSwapData extends SwapData {
                 token: this.token,
                 amount: this.amount,
                 paymentHash: this.paymentHash,
-                data: this.data
+                data: this.data,
+                securityDeposit: this.securityDeposit,
+                claimerBounty: this.claimerBounty
             }
         ]);
     }
@@ -202,6 +216,24 @@ export class EVMSwapData extends SwapData {
     getCommitHash(): string {
         const encoded = this.getBytes();
         return utils.solidityKeccak256(["bytes"], [encoded]);
+    }
+
+    getSecurityDeposit(): BN {
+        return new BN(this.securityDeposit.toString());
+    }
+
+    getClaimerBounty(): BN {
+        return new BN(this.claimerBounty.toString());
+    }
+
+    getTotalDepositBigNumber(): BigNumber {
+        return this.securityDeposit.gt(this.claimerBounty) ? this.securityDeposit : this.claimerBounty;
+    }
+
+    getTotalDeposit(): BN {
+        return new BN(
+            this.getTotalDepositBigNumber().toString()
+        );
     }
 
 }

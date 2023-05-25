@@ -8,6 +8,7 @@ import {UserError} from "../errors/UserError";
 import {IntermediaryError} from "../errors/IntermediaryError";
 import {ISwapPrice} from "./ISwapPrice";
 import {ChainSwapType, SignatureVerificationError, SwapCommitStatus, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
+import {BitcoinRpc, BtcRelay} from "crosslightning-base/dist";
 
 export class PaymentAuthError extends Error {
 
@@ -46,12 +47,17 @@ export type ClientSwapContractOptions = {
     bitcoinNetwork?: bitcoin.networks.Network,
 
     lightningBaseFee?: number,
-    lightningFeePPM?: number
+    lightningFeePPM?: number,
+
+    bitcoinBlocktime?: number
 }
 
 const BITCOIN_BLOCKTIME = 10*60;
 
 export class ClientSwapContract<T extends SwapData> {
+
+    readonly btcRpc: BitcoinRpc<any>;
+    readonly btcRelay: BtcRelay<any, any, any>;
 
     readonly swapDataDeserializer: new (data: any) => T;
     readonly swapContract: SwapContract<T, any>;
@@ -63,10 +69,14 @@ export class ClientSwapContract<T extends SwapData> {
     constructor(
         swapContract: SwapContract<T, any>,
         swapDataDeserializer: new (data: any) => T,
+        btcRelay: BtcRelay<any, any, any>,
+        btcRpc: BitcoinRpc<any>,
         wbtcAddress?: TokenAddress,
         swapPrice?: ISwapPrice,
         options?: ClientSwapContractOptions
     ) {
+        this.btcRpc = btcRpc;
+        this.btcRelay = btcRelay;
         this.swapContract = swapContract;
         this.swapDataDeserializer = swapDataDeserializer;
         this.WBTC_ADDRESS = wbtcAddress;
@@ -83,6 +93,7 @@ export class ClientSwapContract<T extends SwapData> {
         this.options.minSendWindow = options.minSendWindow || 30*60;
         this.options.lightningBaseFee = options.lightningBaseFee || 10;
         this.options.lightningFeePPM = options.lightningFeePPM || 2000;
+        this.options.bitcoinBlocktime = options.bitcoinBlocktime|| (60*10);
     }
 
     getOnchainSendTimeout(data: SwapData) {
@@ -638,7 +649,7 @@ export class ClientSwapContract<T extends SwapData> {
         throw new Error("Aborted");
     }
 
-    async receiveOnchain(amount: BN, url: string, requiredToken?: string, requiredOffererKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<{
+    async receiveOnchain(amount: BN, url: string, requiredToken?: string, requiredOffererKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, feeSafetyFactor?: BN, blockSafetyFactor?: number): Promise<{
         address: string,
         swapFee: BN,
         data: T,
@@ -647,12 +658,29 @@ export class ClientSwapContract<T extends SwapData> {
         signature: string,
         nonce: number
     }> {
+
+        const feePerBlock: BN = (await this.btcRelay.getFeePerBlock()).mul(feeSafetyFactor || new BN(2));
+        blockSafetyFactor = blockSafetyFactor || 2;
+        const startTimestamp = new BN(Math.floor(Date.now()/1000));
+        const btcRelayData = await this.btcRelay.getTipData();
+        const currentBtcRelayBlock = btcRelayData.blockheight;
+        const currentBtcBlock = await this.btcRpc.getTipHeight();
+
+        const addBlock = Math.max(currentBtcBlock-currentBtcRelayBlock, 0);
+
         const response: Response = await fetch(url+"/getAddress", {
             method: "POST",
             body: JSON.stringify({
                 address: this.swapContract.getAddress(),
                 amount: amount.toString(),
-                token: requiredToken==null ? null : requiredToken.toString()
+                token: requiredToken==null ? null : requiredToken.toString(),
+
+                claimerBounty: {
+                    feePerBlock: feePerBlock.toString(10),
+                    safetyFactor: blockSafetyFactor,
+                    startTimestamp: startTimestamp.toString(10),
+                    addBlock
+                }
             }),
             headers: {'Content-Type': 'application/json'}
         });
@@ -671,6 +699,15 @@ export class ClientSwapContract<T extends SwapData> {
 
         const data: T = new this.swapDataDeserializer(jsonBody.data.data);
         this.swapContract.setUsAsClaimer(data);
+
+        const tsDelta = data.getExpiry().sub(startTimestamp);
+        const blocksDelta = tsDelta.div(new BN(this.options.bitcoinBlocktime)).mul(new BN(blockSafetyFactor));
+        const totalBlock = blocksDelta.add(new BN(addBlock));
+        const totalClaimerBounty = totalBlock.mul(feePerBlock);
+
+        if(!data.getClaimerBounty().eq(totalClaimerBounty)) {
+            throw new IntermediaryError("Invalid claimer bounty");
+        }
 
         if(data.getConfirmations()>this.options.maxConfirmations) {
             throw new IntermediaryError("Requires too many confirmations");

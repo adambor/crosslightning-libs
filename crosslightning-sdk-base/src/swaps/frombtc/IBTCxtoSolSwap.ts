@@ -225,6 +225,14 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
         return this.getWrapper().contract.swapContract.getClaimFee();
     }
 
+    getSecurityDeposit(): BN {
+        return this.data.getSecurityDeposit();
+    }
+
+    getTotalDeposit():BN {
+        return this.data.getTotalDeposit();
+    }
+
 }
 
 export enum BTCxtoSolSwapState {

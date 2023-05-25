@@ -51,4 +51,6 @@ export interface BitcoinRpc<T extends BtcBlock> {
     getBlockhash(height: number): Promise<string>;
     getBlockWithTransactions(blockhash: string): Promise<BtcBlockWithTxs>;
 
+    getTipHeight(): Promise<number>;
+
 }

@@ -154,14 +154,18 @@ export abstract class ISolToBTCxWrapper<T extends SwapData> {
                 const res = await this.contract.swapContract.getCommitStatus(swap.data);
                 if(res===SwapCommitStatus.COMMITED) {
                     //Check if that maybe already concluded
-                    const refundAuth = await this.contract.getRefundAuthorization(swap.data, swap.url);
-                    if(refundAuth!=null) {
-                        if(!refundAuth.is_paid) {
-                            swap.state = SolToBTCxSwapState.REFUNDABLE;
-                            changedSwaps[paymentHash] = swap;
-                        } else {
-                            swap.secret = refundAuth.secret;
+                    try {
+                        const refundAuth = await this.contract.getRefundAuthorization(swap.data, swap.url);
+                        if(refundAuth!=null) {
+                            if(!refundAuth.is_paid) {
+                                swap.state = SolToBTCxSwapState.REFUNDABLE;
+                                changedSwaps[paymentHash] = swap;
+                            } else {
+                                swap.secret = refundAuth.secret;
+                            }
                         }
+                    } catch (e) {
+                        console.error(e);
                     }
                 }
                 if(res===SwapCommitStatus.NOT_COMMITED) {

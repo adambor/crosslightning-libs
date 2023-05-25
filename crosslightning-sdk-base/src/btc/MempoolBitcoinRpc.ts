@@ -5,6 +5,10 @@ import {ChainUtils} from "./ChainUtils";
 
 export class MempoolBitcoinRpc implements BitcoinRpc<MempoolBitcoinBlock> {
 
+    getTipHeight(): Promise<number> {
+        return ChainUtils.getTipBlockHeight();
+    }
+
     async getBlockHeader(blockhash: string): Promise<MempoolBitcoinBlock> {
         return new MempoolBitcoinBlock(await ChainUtils.getBlock(blockhash));
     }

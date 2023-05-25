@@ -51,20 +51,14 @@ export class EVMChainEvents implements ChainEvents<EVMSwapData> {
             parsedEvents.push(new RefundEvent<EVMSwapData>(event.args.paymentHash.substring(2)));
         }
         if(event.name==="Initialize") {
-            const struct = {
-                offerer: event.args.data.offerer,
-                claimer: event.args.data.claimer,
-                token: event.args.data.token,
-                amount: event.args.data.amount,
-                paymentHash: event.args.data.paymentHash,
-                data: event.args.data.data,
-                txoHash: event.args.txoHash
-            };
+            const object = new EVMSwapData(event.args.data);
+            object.txoHash = event.args.txoHash;
+
             parsedEvents.push(new InitializeEvent<EVMSwapData>(
                 event.args.paymentHash.substring(2),
                 event.args.txoHash.substring(2),
                 0,
-                new EVMSwapData(struct)
+                object
             ));
         }
 

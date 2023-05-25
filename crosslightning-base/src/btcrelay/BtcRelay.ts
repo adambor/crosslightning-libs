@@ -1,5 +1,6 @@
 import {BtcStoredHeader} from "./types/BtcStoredHeader";
 import {BtcBlock} from "./types/BtcBlock";
+import * as BN from "bn.js";
 
 export interface BtcRelay<V extends BtcStoredHeader<any>, T, B extends BtcBlock> {
 
@@ -43,5 +44,10 @@ export interface BtcRelay<V extends BtcStoredHeader<any>, T, B extends BtcBlock>
         tx: T,
         computedCommitedHeaders: V[]
     }>;
+
+
+    estimateSynchronizeFee(requiredBlockheight: number): Promise<BN>;
+
+    getFeePerBlock(): Promise<BN>;
 
 }

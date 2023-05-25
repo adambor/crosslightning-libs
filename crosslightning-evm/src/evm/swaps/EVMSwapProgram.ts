@@ -74,6 +74,10 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
         this.contractInterface = new Interface(swapContract.abi);
     }
 
+    getNativeCurrencyAddress() {
+        return ZERO_ADDRESS;
+    }
+
     getHashForOnchain(outputScript: Buffer, amount: BN, nonce: BN): Buffer {
         const amountBuffer = Buffer.from((amount.toString(16) as string).padStart(16,"0"), "hex").reverse();
         const txoHash = utils.solidityKeccak256(
@@ -443,8 +447,8 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
             for(let log of logs) {
                 const event = this.contractInterface.parseLog(log);
                 const data = event.args.data;
-                data.txoHash = event.args.txoHash;
                 const _swapData = new EVMSwapData(data);
+                _swapData.txoHash = event.args.txoHash;
                 if(_swapData.getCommitHash()===commitment) swapData = _swapData;
             }
             currentBlock -= LOG_FETCH_LIMIT;
@@ -471,7 +475,21 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
         return null;
     }
 
-    async createSwapData(type: ChainSwapType, offerer: string, claimer: string, token: string, amount: BN, paymentHash: string, expiry: BN, escrowNonce: BN, confirmations: number, payIn: boolean, payOut: boolean): Promise<EVMSwapData> {
+    async createSwapData(
+        type: ChainSwapType,
+        offerer: string,
+        claimer: string,
+        token: string,
+        amount: BN,
+        paymentHash: string,
+        expiry: BN,
+        escrowNonce: BN,
+        confirmations: number,
+        payIn: boolean,
+        payOut: boolean,
+        securityDeposit: BN,
+        claimerBounty: BN
+    ): Promise<EVMSwapData> {
         const commitment: string = await this.contract.getCommitment("0x"+paymentHash);
         const commitNum: BigNumber = BigNumber.from(commitment);
         if(commitNum.gte(BigNumber.from(0x100))) {
@@ -489,6 +507,8 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
             EVMSwapProgram.typeToKind(type),
             payIn,
             payOut,
+            securityDeposit==null ? null : BigNumber.from(securityDeposit.toString(10)),
+            claimerBounty==null ? null : BigNumber.from(claimerBounty.toString(10)),
             commitNum.toNumber(),
             null
         );
@@ -750,8 +770,6 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
 
     async txsInit(swapData: EVMSwapData, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer): Promise<UnsignedTransaction[]> {
 
-        const requiredDeposit: BigNumber = await this.contract.SECURITY_DEPOSIT();
-
         const tx = await this.contract.populateTransaction.offerer_init(
             swapData,
             EVMSwapProgram.getSignatureStruct(signature, timeout),
@@ -759,7 +777,8 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
                 "0x"+txoHash.toString("hex") :
                 "0x0000000000000000000000000000000000000000000000000000000000000000"
         );
-        tx.value = requiredDeposit;
+
+        tx.value = swapData.getTotalDepositBigNumber();
         tx.gasLimit = BigNumber.from(GAS_INIT);
 
         return [tx]
@@ -820,34 +839,30 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
     }
 
     async getClaimFee(): Promise<BN> {
-        const securityDeposit: BigNumber = await this.contract.SECURITY_DEPOSIT();
         const gasPrice: BigNumber = await this.signer.provider.getGasPrice();
         const gasLimit: BigNumber = BigNumber.from(GAS_CLAIM_WITH_SECRET);
         const gasFee: BigNumber = gasPrice.mul(gasLimit);
-
-        return new BN(securityDeposit.sub(gasFee).toString());
+        return new BN(gasFee.toString());
     }
 
     /**
      * Get the estimated solana fee of the commit transaction
      */
     async getCommitFee(): Promise<BN> {
-        const securityDeposit: BigNumber = await this.contract.SECURITY_DEPOSIT();
         const gasPrice: BigNumber = await this.signer.provider.getGasPrice();
         const gasLimit: BigNumber = BigNumber.from(GAS_CLAIM_INIT);
         const gasFee: BigNumber = gasPrice.mul(gasLimit);
-        return new BN(securityDeposit.add(gasFee));
+        return new BN(gasFee.toString());
     }
 
     /**
      * Get the estimated solana transaction fee of the refund transaction
      */
     async getRefundFee(): Promise<BN> {
-        const securityDeposit: BigNumber = await this.contract.SECURITY_DEPOSIT();
         const gasPrice: BigNumber = await this.signer.provider.getGasPrice();
         const gasLimit: BigNumber = BigNumber.from(GAS_REFUND_WITH_AUTH);
         const gasFee: BigNumber = gasPrice.mul(gasLimit);
-        return new BN(securityDeposit.sub(gasFee).toString());
+        return new BN(gasFee.toString());
     }
 
     setUsAsClaimer(swapData: EVMSwapData) {

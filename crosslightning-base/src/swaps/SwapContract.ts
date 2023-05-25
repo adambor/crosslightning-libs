@@ -113,4 +113,6 @@ export interface SwapContract<T extends SwapData, TX> {
 
     getHashForOnchain(outputScript: Buffer, amount: BN, nonce: BN): Buffer;
 
+    getNativeCurrencyAddress(): TokenAddress;
+
 }

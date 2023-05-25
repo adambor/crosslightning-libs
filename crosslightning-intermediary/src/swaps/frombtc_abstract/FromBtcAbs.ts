@@ -330,9 +330,14 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
             //Calculate security deposit
             const baseSD = (await this.swapContract.getRefundFee()).mul(new BN(2));
+            console.log("[From BTC: REST.CreateInvoice] Base security deposit: ", baseSD.toString(10));
             const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(amountBD.sub(swapFee), this.swapContract.getNativeCurrencyAddress());
+            console.log("[From BTC: REST.CreateInvoice] Swap output value in native currency: ", swapValueInNativeCurrency.toString(10));
             const apyPPM = new BN(Math.floor(this.config.securityDepositAPY*1000000));
+            console.log("[From BTC: REST.CreateInvoice] APY PPM: ", apyPPM.toString(10));
+            console.log("[From BTC: REST.CreateInvoice] Expiry timeout: ", expiryTimeout.toString(10));
             const variableSD = swapValueInNativeCurrency.mul(apyPPM).mul(expiryTimeout).div(new BN(1000000)).div(secondsInYear);
+            console.log("[From BTC: REST.CreateInvoice] Variable security deposit: ", variableSD.toString(10));
 
             //Calculate claimer bounty
             const tsDelta = expiry.sub(startTimestampBD);
@@ -352,7 +357,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 this.config.confirmations,
                 false,
                 true,
-                baseSD.mul(variableSD),
+                baseSD.add(variableSD),
                 totalClaimerBounty
             );
 
