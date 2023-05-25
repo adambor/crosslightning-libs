@@ -45,5 +45,11 @@ export abstract class SwapData implements StorageObject {
 
     abstract getTxoHash(): string;
 
+    abstract getSecurityDeposit(): BN;
+
+    abstract getClaimerBounty(): BN;
+
+    abstract getTotalDeposit(): BN;
+
 }
 

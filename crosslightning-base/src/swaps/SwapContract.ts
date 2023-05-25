@@ -89,7 +89,9 @@ export interface SwapContract<T extends SwapData, TX> {
         escrowNonce: BN,
         confirmations: number,
         payIn: boolean,
-        payOut: boolean
+        payOut: boolean,
+        securityDeposit: BN,
+        claimerBounty: BN
     ): Promise<T>;
 
     areWeClaimer(swapData: T): boolean;
