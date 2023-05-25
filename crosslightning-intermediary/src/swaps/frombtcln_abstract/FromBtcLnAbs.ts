@@ -28,8 +28,12 @@ export type FromBtcLnConfig = {
 
     minCltv: BN,
 
-    refundInterval: number
+    refundInterval: number,
+
+    securityDepositAPY: number
 }
+
+const secondsInYear = new BN(365*24*60*60);
 
 export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapAbs<T>, T> {
 
@@ -395,7 +399,20 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             const paymentHash = Buffer.from(req.body.paymentHash, "hex");
             const createdSwap = new FromBtcLnSwapAbs<T>(hodlInvoice.request, swapFee);
 
-            createdSwap.data = await this.swapContract.createSwapData(ChainSwapType.HTLC, this.swapContract.getAddress(), req.body.address, useToken, null, req.body.paymentHash, null, null, 0, false, true);
+            createdSwap.data = await this.swapContract.createSwapData(
+                ChainSwapType.HTLC,
+                this.swapContract.getAddress(),
+                req.body.address, useToken,
+                null,
+                req.body.paymentHash,
+                null,
+                null,
+                0,
+                false,
+                true,
+                new BN(0),
+                new BN(0)
+            );
 
             await this.storageManager.saveData(req.body.paymentHash, createdSwap);
 
@@ -618,6 +635,14 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                         return;
                     }
 
+                    const baseSD = (await this.swapContract.getRefundFee()).mul(new BN(2));
+
+                    const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(invoiceAmount.sub(fee), this.swapContract.getNativeCurrencyAddress());
+
+                    const apyPPM = new BN(Math.floor(this.config.securityDepositAPY*1000000));
+
+                    const variableSD = swapValueInNativeCurrency.mul(apyPPM).mul(expiryTimeout).div(new BN(1000000)).div(secondsInYear);
+
                     /*
                     {
                         intermediary: new PublicKey(invoice.description),
@@ -638,7 +663,9 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                         new BN(0),
                         0,
                         false,
-                        true
+                        true,
+                        baseSD.add(variableSD),
+                        new BN(0)
                     );
 
                     invoiceData.data = payInvoiceObject;

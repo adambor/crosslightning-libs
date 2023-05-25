@@ -27,8 +27,12 @@ export type FromBtcConfig = {
     confirmations: number,
     swapCsvDelta: number,
 
-    refundInterval: number
+    refundInterval: number,
+
+    securityDepositAPY: number
 };
+
+const secondsInYear = new BN(365*24*60*60);
 
 export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T>, T> {
 
@@ -175,10 +179,30 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
              * address: string              solana address of the recipient
              * amount: string               amount (in sats) of the invoice
              * token: string                Desired token to use
+             * claimerBounty: object        Data for calculating claimer bounty
+             *  - feePerBlock: string           Fee per block to be synchronized with btc relay
+             *  - safetyFactor: number          Safety factor to multiply required blocks (when using 10 min block time)
+             *  - startTimestamp: string        UNIX seconds used for timestamp delta calc
+             *  - addBlock: number              Additional blocks to add to the calculation
              */
 
             if(
                 req.body==null ||
+
+                req.body.claimerBounty==null ||
+                typeof(req.body.claimerBounty)!=="object" ||
+
+                req.body.claimerBounty.feePerBlock==null ||
+                typeof(req.body.claimerBounty.feePerBlock)!=="string" ||
+
+                req.body.claimerBounty.safetyFactor==null ||
+                typeof(req.body.claimerBounty.safetyFactor)!=="number" ||
+
+                req.body.claimerBounty.startTimestamp==null ||
+                typeof(req.body.claimerBounty.startTimestamp)!=="string" ||
+
+                req.body.claimerBounty.addBlock==null ||
+                typeof(req.body.claimerBounty.addBlock)!=="number" ||
 
                 req.body.token==null ||
                 typeof(req.body.token)!=="string" ||
@@ -234,6 +258,29 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 return;
             }
 
+            let feePerBlockBD: BN;
+            try {
+                feePerBlockBD = new BN(req.body.claimerBounty.feePerBlock);
+            } catch (e) {
+                res.status(400).json({
+                    msg: "Invalid request body (feePerBlock)"
+                });
+                return;
+            }
+
+            let startTimestampBD: BN;
+            try {
+                startTimestampBD = new BN(req.body.claimerBounty.startTimestamp);
+            } catch (e) {
+                res.status(400).json({
+                    msg: "Invalid request body (startTimestamp)"
+                });
+                return;
+            }
+
+            const safetyFactorBD: BN = new BN(req.body.claimerBounty.safetyFactor);
+            const addBlockBD: BN = new BN(req.body.claimerBounty.addBlock);
+
             if(amountBD.lt(this.config.min)) {
                 res.status(400).json({
                     msg: "Amount too low"
@@ -279,6 +326,20 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
             const currentTimestamp = new BN(Math.floor(Date.now()/1000));
             const expiryTimeout = this.config.swapTsCsvDelta;
 
+            const expiry = currentTimestamp.add(expiryTimeout);
+
+            //Calculate security deposit
+            const baseSD = (await this.swapContract.getRefundFee()).mul(new BN(2));
+            const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(amountBD.sub(swapFee), this.swapContract.getNativeCurrencyAddress());
+            const apyPPM = new BN(Math.floor(this.config.securityDepositAPY*1000000));
+            const variableSD = swapValueInNativeCurrency.mul(apyPPM).mul(expiryTimeout).div(new BN(1000000)).div(secondsInYear);
+
+            //Calculate claimer bounty
+            const tsDelta = expiry.sub(startTimestampBD);
+            const blocksDelta = tsDelta.div(this.config.bitcoinBlocktime).mul(safetyFactorBD);
+            const totalBlock = blocksDelta.add(addBlockBD);
+            const totalClaimerBounty = totalBlock.mul(feePerBlockBD);
+
             const data: T = await this.swapContract.createSwapData(
                 ChainSwapType.CHAIN,
                 this.swapContract.getAddress(),
@@ -286,11 +347,13 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 useToken,
                 amountInToken.sub(swapFeeInToken),
                 paymentHash.toString("hex"),
-                currentTimestamp.add(expiryTimeout),
+                expiry,
                 new BN(0),
                 this.config.confirmations,
                 false,
-                true
+                true,
+                baseSD.mul(variableSD),
+                totalClaimerBounty
             );
 
             createdSwap.data = data;

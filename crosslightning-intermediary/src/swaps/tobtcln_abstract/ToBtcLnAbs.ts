@@ -492,7 +492,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     const parsedRequest = await lncli.parsePaymentRequest({
                         request: req.body.pr
                     });
-
+                    console.log("[To BTC-LN: REST.payInvoice] Parsed PR: ", JSON.stringify(parsedRequest, null, 4));
                     const probeReq: any = {
                         destination: parsedPR.payeeNodeKey,
                         cltv_delta: parsedPR.tagsObject.min_final_cltv_expiry,
@@ -504,7 +504,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                         routes: parsedRequest.routes
                     };
                     //if(hints.length>0) req.routes = [hints];
-                    console.log("[To BTC-LN: REST.payInvoice] Probe for route: ", probeReq);
+                    console.log("[To BTC-LN: REST.payInvoice] Probe for route: ", JSON.stringify(probeReq, null, 4));
                     probeReq.lnd = this.LND;
                     obj = await lncli.probeForRoute(probeReq);
                 } catch (e) {
@@ -542,7 +542,9 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     new BN(0),
                     0,
                     true,
-                    false
+                    false,
+                    new BN(0),
+                    new BN(0)
                 );
 
                 const sigData = await this.swapContract.getClaimInitSignature(payObject, this.nonce, this.config.authorizationTimeout);

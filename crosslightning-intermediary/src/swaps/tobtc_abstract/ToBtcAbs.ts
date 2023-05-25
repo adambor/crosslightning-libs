@@ -674,7 +674,9 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 nonce,
                 req.body.confirmations,
                 true,
-                false
+                false,
+                new BN(0),
+                new BN(0)
             );
 
             const sigData = await this.swapContract.getClaimInitSignature(payObject, this.nonce, this.config.authorizationTimeout);
@@ -935,7 +937,9 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 nonce,
                 req.body.confirmations,
                 true,
-                false
+                false,
+                new BN(0),
+                new BN(0)
             );
 
             const sigData = await this.swapContract.getClaimInitSignature(payObject, this.nonce, this.config.authorizationTimeout);
