@@ -321,34 +321,22 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
         const blockDelta = new BN(timeout - current_block_height);
 
-        console.log("[From BTC-LN: REST.GetInvoicePaymentAuth] block delta: ", blockDelta.toString(10));
-
-        const expiryTimeout = blockDelta.mul(this.config.bitcoinBlocktime.div(this.config.safetyFactor)).sub(this.config.gracePeriod);
-
-        console.log("[From BTC-LN: REST.GetInvoicePaymentAuth] expiry timeout: ", expiryTimeout.toString(10));
-
-        if (expiryTimeout.isNeg()) {
+        if(blockDelta.lt(this.config.minCltv)) {
             await cancelAndRemove();
-            console.error("[From BTC-LN: REST.GetInvoicePaymentAuth] Expire time is lower than 0");
+            console.error("[From BTC-LN: REST.GetInvoicePaymentAuth] Receive HTLC expires too soon (required: "+this.config.minCltv.toString(10)+", got: "+blockDelta.toString(10)+")");
             throw {
                 code: 20002,
                 msg: "Not enough time to reliably process the swap"
             };
         }
 
-        let baseSD: BN;
-        //Solana workaround
-        if((this.swapContract as any).getRawRefundFee!=null) {
-            baseSD = await (this.swapContract as any).getRawRefundFee();
-        } else {
-            baseSD = (await this.swapContract.getRefundFee()).mul(new BN(2));
-        }
+        console.log("[From BTC-LN: REST.GetInvoicePaymentAuth] using cltv delta: ", this.config.minCltv.toString(10));
 
-        const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(invoiceAmount.sub(fee), this.swapContract.getNativeCurrencyAddress());
+        const expiryTimeout = this.config.minCltv.mul(this.config.bitcoinBlocktime.div(this.config.safetyFactor)).sub(this.config.gracePeriod);
 
-        const apyPPM = new BN(Math.floor(this.config.securityDepositAPY*1000000));
+        //Cap expiryTimeout to minCltv, for predictable security deposit
 
-        const variableSD = swapValueInNativeCurrency.mul(apyPPM).mul(expiryTimeout).div(new BN(1000000)).div(secondsInYear);
+        console.log("[From BTC-LN: REST.GetInvoicePaymentAuth] expiry timeout: ", expiryTimeout.toString(10));
 
         /*
         {
@@ -371,7 +359,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             0,
             false,
             true,
-            baseSD.add(variableSD),
+            invoiceData.data.getSecurityDeposit(),
             new BN(0)
         );
 
@@ -503,7 +491,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
             const hodlInvoiceObj: any = {
                 description: req.body.address,
-                cltv_delta: this.config.minCltv.toString(10),
+                cltv_delta: this.config.minCltv.add(new BN(5)).toString(10),
                 expires_at: new Date(Date.now()+(req.body.expiry*1000)).toISOString(),
                 id: req.body.paymentHash,
                 tokens: amountBD.toString(10)
@@ -520,6 +508,21 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             const paymentHash = Buffer.from(req.body.paymentHash, "hex");
             const createdSwap = new FromBtcLnSwapAbs<T>(hodlInvoice.request, swapFee);
 
+            //Pre-compute the security deposit
+            const expiryTimeout = this.config.minCltv.mul(this.config.bitcoinBlocktime.div(this.config.safetyFactor)).sub(this.config.gracePeriod);
+
+            let baseSD: BN;
+            //Solana workaround
+            if((this.swapContract as any).getRawRefundFee!=null) {
+                baseSD = await (this.swapContract as any).getRawRefundFee();
+            } else {
+                baseSD = (await this.swapContract.getRefundFee()).mul(new BN(2));
+            }
+
+            const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(amountBD.sub(swapFee), this.swapContract.getNativeCurrencyAddress());
+            const apyPPM = new BN(Math.floor(this.config.securityDepositAPY*1000000));
+            const variableSD = swapValueInNativeCurrency.mul(apyPPM).mul(expiryTimeout).div(new BN(1000000)).div(secondsInYear);
+
             createdSwap.data = await this.swapContract.createSwapData(
                 ChainSwapType.HTLC,
                 this.swapContract.getAddress(),
@@ -531,7 +534,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 0,
                 false,
                 true,
-                new BN(0),
+                baseSD.add(variableSD),
                 new BN(0)
             );
 
@@ -543,7 +546,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     pr: hodlInvoice.request,
                     swapFee: swapFeeInToken.toString(10),
                     total: amountInToken.sub(swapFeeInToken).toString(10),
-                    intermediaryKey: this.swapContract.getAddress()
+                    intermediaryKey: this.swapContract.getAddress(),
+                    securityDeposit: baseSD.add(variableSD).toString(10)
                 }
             });
 
