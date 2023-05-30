@@ -10,8 +10,7 @@ import {ChainEvents, ClaimEvent, InitializeEvent,
     RefundEvent, SwapContract, SwapData, SwapEvent, ChainSwapType, TokenAddress} from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
 import * as bitcoin from "bitcoinjs-lib";
-import {FromBtcLnSwapAbs, ToBtcSwapAbs} from "../..";
-
+import {createHash} from "crypto";
 
 export type FromBtcConfig = {
     authorizationTimeout: number,
@@ -57,6 +56,14 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
         this.config = anyConfig;
     }
 
+    getTxoHash(address: string, amount: BN, bitcoinNetwork: bitcoin.networks.Network): Buffer {
+        const parsedOutputScript = bitcoin.address.toOutputScript(address, bitcoinNetwork);
+
+        return createHash("sha256").update(Buffer.concat([
+            Buffer.from(amount.toArray("le", 8)),
+            parsedOutputScript
+        ])).digest();
+    }
 
     getHash(address: string, nonce: BN, amount: BN, bitcoinNetwork: bitcoin.networks.Network): Buffer {
         const parsedOutputScript = bitcoin.address.toOutputScript(address, bitcoinNetwork);
@@ -65,6 +72,10 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
     getChainHash(swap: FromBtcSwapAbs<T>): Buffer {
         return this.getHash(swap.address, new BN(0), swap.amount, this.config.bitcoinNetwork);
+    }
+
+    getChainTxoHash(swap: FromBtcSwapAbs<T>): Buffer {
+        return this.getTxoHash(swap.address, swap.amount, this.config.bitcoinNetwork);
     }
 
     async checkPastSwaps() {
@@ -92,7 +103,10 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
                     if(isCommited) {
                         refundSwaps.push(swap);
+                        continue;
                     }
+
+                    removeSwaps.push(this.getChainHash(swap));
                 }
             }
         }
@@ -165,6 +179,18 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 continue;
             }
             if(event instanceof RefundEvent) {
+                if (event.paymentHash == null) {
+                    continue;
+                }
+
+                const savedSwap = this.storageManager.data[event.paymentHash];
+
+                if (savedSwap == null) {
+                    continue;
+                }
+
+                await this.storageManager.removeData(event.paymentHash);
+
                 continue;
             }
         }
@@ -184,6 +210,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
              *  - safetyFactor: number          Safety factor to multiply required blocks (when using 10 min block time)
              *  - startTimestamp: string        UNIX seconds used for timestamp delta calc
              *  - addBlock: number              Additional blocks to add to the calculation
+             *  - addFee: string                Additional fee to add to the final claimer bounty
              */
 
             if(
@@ -280,6 +307,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
             const safetyFactorBD: BN = new BN(req.body.claimerBounty.safetyFactor);
             const addBlockBD: BN = new BN(req.body.claimerBounty.addBlock);
+            const addFeeBD: BN = new BN(req.body.claimerBounty.addFee);
 
             if(amountBD.lt(this.config.min)) {
                 res.status(400).json({
@@ -329,7 +357,13 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
             const expiry = currentTimestamp.add(expiryTimeout);
 
             //Calculate security deposit
-            const baseSD = (await this.swapContract.getRefundFee()).mul(new BN(2));
+            let baseSD: BN;
+            //Solana workaround
+            if((this.swapContract as any).getRawRefundFee!=null) {
+                baseSD = await (this.swapContract as any).getRawRefundFee();
+            } else {
+                baseSD = (await this.swapContract.getRefundFee()).mul(new BN(2));
+            }
             console.log("[From BTC: REST.CreateInvoice] Base security deposit: ", baseSD.toString(10));
             const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(amountBD.sub(swapFee), this.swapContract.getNativeCurrencyAddress());
             console.log("[From BTC: REST.CreateInvoice] Swap output value in native currency: ", swapValueInNativeCurrency.toString(10));
@@ -343,7 +377,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
             const tsDelta = expiry.sub(startTimestampBD);
             const blocksDelta = tsDelta.div(this.config.bitcoinBlocktime).mul(safetyFactorBD);
             const totalBlock = blocksDelta.add(addBlockBD);
-            const totalClaimerBounty = totalBlock.mul(feePerBlockBD);
+            const totalClaimerBounty = addFeeBD.add(totalBlock.mul(feePerBlockBD));
 
             const data: T = await this.swapContract.createSwapData(
                 ChainSwapType.CHAIN,
@@ -360,6 +394,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 baseSD.add(variableSD),
                 totalClaimerBounty
             );
+
+            data.setTxoHash(this.getChainTxoHash(createdSwap).toString("hex"));
 
             createdSwap.data = data;
 
