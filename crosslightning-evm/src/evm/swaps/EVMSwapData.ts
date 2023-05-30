@@ -196,6 +196,14 @@ export class EVMSwapData extends SwapData {
         return this.txoHash==null ? null : this.txoHash.substring(2);
     }
 
+    setTxoHash(txoHash: string): void {
+        if(txoHash==null) {
+            this.txoHash = null;
+        } else {
+            this.txoHash = "0x"+txoHash;
+        }
+    }
+
     getBytes(): string {
         return utils.defaultAbiCoder.encode([
             "tuple(address offerer,address claimer,address token,uint256 amount,bytes32 paymentHash,uint256 data,uint256 securityDeposit,uint256 claimerBounty)"
