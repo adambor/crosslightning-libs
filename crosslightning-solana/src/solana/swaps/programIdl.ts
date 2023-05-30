@@ -113,18 +113,18 @@ export const programIdl: any = {
             "name": "offererInitializePayIn",
             "accounts": [
                 {
-                    "name": "initializer",
+                    "name": "offerer",
                     "isMut": true,
+                    "isSigner": true
+                },
+                {
+                    "name": "claimer",
+                    "isMut": false,
                     "isSigner": true
                 },
                 {
                     "name": "initializerDepositTokenAccount",
                     "isMut": true,
-                    "isSigner": false
-                },
-                {
-                    "name": "claimer",
-                    "isMut": false,
                     "isSigner": false
                 },
                 {
@@ -171,18 +171,9 @@ export const programIdl: any = {
                     "name": "tokenProgram",
                     "isMut": false,
                     "isSigner": false
-                },
-                {
-                    "name": "ixSysvar",
-                    "isMut": false,
-                    "isSigner": false
                 }
             ],
             "args": [
-                {
-                    "name": "nonce",
-                    "type": "u64"
-                },
                 {
                     "name": "initializerAmount",
                     "type": "u64"
@@ -235,23 +226,18 @@ export const programIdl: any = {
             "name": "offererInitialize",
             "accounts": [
                 {
-                    "name": "initializer",
+                    "name": "claimer",
                     "isMut": true,
+                    "isSigner": true
+                },
+                {
+                    "name": "offerer",
+                    "isMut": false,
                     "isSigner": true
                 },
                 {
                     "name": "userData",
                     "isMut": true,
-                    "isSigner": false
-                },
-                {
-                    "name": "offerer",
-                    "isMut": false,
-                    "isSigner": false
-                },
-                {
-                    "name": "claimer",
-                    "isMut": false,
                     "isSigner": false
                 },
                 {
@@ -278,18 +264,9 @@ export const programIdl: any = {
                     "name": "rent",
                     "isMut": false,
                     "isSigner": false
-                },
-                {
-                    "name": "ixSysvar",
-                    "isMut": false,
-                    "isSigner": false
                 }
             ],
             "args": [
-                {
-                    "name": "nonce",
-                    "type": "u64"
-                },
                 {
                     "name": "initializerAmount",
                     "type": "u64"
@@ -335,6 +312,14 @@ export const programIdl: any = {
                             32
                         ]
                     }
+                },
+                {
+                    "name": "securityDeposit",
+                    "type": "u64"
+                },
+                {
+                    "name": "claimerBounty",
+                    "type": "u64"
                 }
             ]
         },
@@ -347,7 +332,7 @@ export const programIdl: any = {
                     "isSigner": true
                 },
                 {
-                    "name": "initializer",
+                    "name": "claimer",
                     "isMut": true,
                     "isSigner": false
                 },
@@ -407,6 +392,11 @@ export const programIdl: any = {
                     "name": "signer",
                     "isMut": true,
                     "isSigner": true
+                },
+                {
+                    "name": "initializer",
+                    "isMut": true,
+                    "isSigner": false
                 },
                 {
                     "name": "escrowState",
@@ -548,10 +538,6 @@ export const programIdl: any = {
                         }
                     },
                     {
-                        "name": "initializerKey",
-                        "type": "publicKey"
-                    },
-                    {
                         "name": "payIn",
                         "type": "bool"
                     },
@@ -585,6 +571,14 @@ export const programIdl: any = {
                     },
                     {
                         "name": "expiry",
+                        "type": "u64"
+                    },
+                    {
+                        "name": "claimerBounty",
+                        "type": "u64"
+                    },
+                    {
+                        "name": "securityDeposit",
                         "type": "u64"
                     }
                 ]
@@ -820,6 +814,6 @@ export const programIdl: any = {
         }
     ],
     "metadata": {
-        "address": "BpVLd9ViKMbVnHhKJQbf5TBYGvkzTCTiwig8QffHvCmW"
+        "address": "8vowxbBrrfDU6Dz1bBCL4W9K5pTwsBLVAd8kJPsgLiLR"
     }
 };

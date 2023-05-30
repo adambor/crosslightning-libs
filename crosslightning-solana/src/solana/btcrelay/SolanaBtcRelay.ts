@@ -13,6 +13,8 @@ const BTC_RELAY_STATE_SEED = "state";
 
 const limit = 500;
 
+const SOL_PER_BLOCKHEADER = new BN(5000);
+
 export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcStoredHeader, {tx: Transaction, signers: Signer[]}, B> {
 
     provider: AnchorProvider;
@@ -28,10 +30,10 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
     readonly maxHeadersPerTx: number = 7;
     readonly maxForkHeadersPerTx: number = 6;
 
-    constructor(provider: AnchorProvider, bitcoinRpc: BitcoinRpc<B>) {
+    constructor(provider: AnchorProvider, bitcoinRpc: BitcoinRpc<B>, programAddress?: string) {
         this.provider = provider;
         this.programCoder = new BorshCoder(programIdl as any);
-        this.program = new Program(programIdl as any, programIdl.metadata.address, provider);
+        this.program = new Program(programIdl as any, programAddress || programIdl.metadata.address, provider);
         this.eventParser = new EventParser(this.program.programId, this.programCoder);
 
         this.bitcoinRpc = bitcoinRpc;
@@ -451,6 +453,21 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
                 mainState: this.BtcRelayMainState
             })
             .instruction();
+    }
+
+    async estimateSynchronizeFee(requiredBlockheight: number): Promise<BN> {
+        const tipData = await this.getTipData();
+        const currBlockheight = tipData.blockheight;
+
+        const blockheightDelta = requiredBlockheight-currBlockheight;
+
+        if(blockheightDelta<=0) return new BN(0);
+
+        return new BN(blockheightDelta).mul(SOL_PER_BLOCKHEADER);
+    }
+
+    getFeePerBlock(): Promise<BN> {
+        return Promise.resolve(SOL_PER_BLOCKHEADER);
     }
 
 }

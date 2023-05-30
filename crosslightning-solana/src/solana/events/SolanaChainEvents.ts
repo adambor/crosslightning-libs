@@ -6,6 +6,7 @@ import {SolanaSwapProgram} from "../swaps/SolanaSwapProgram";
 import {programIdl} from "../swaps/programIdl";
 import {IdlEvent} from "@coral-xyz/anchor/dist/esm/idl";
 import {ChainEvents, SwapEvent, EventListener, ClaimEvent, RefundEvent, InitializeEvent} from "crosslightning-base";
+import * as BN from "bn.js";
 
 
 const BLOCKHEIGHT_FILENAME = "/blockheight.txt";
@@ -110,19 +111,19 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
 
                 const txoHash: Buffer = Buffer.from(associatedEvent.data.txoHash);
 
-                let offerer: PublicKey;
+                let securityDeposit: BN = new BN(0);
+                let claimerBounty: BN = new BN(0);
                 let payIn: boolean;
                 if(ix.name === "offererInitializePayIn") {
-                    offerer = ix.accounts.initializer;
                     payIn = true;
                 } else {
-                    offerer = ix.accounts.offerer;
                     payIn = false;
+                    securityDeposit = ix.data.securityDeposit;
+                    claimerBounty = ix.data.claimerBounty;
                 }
 
                 const swapData: SolanaSwapData = new SolanaSwapData(
-                    ix.accounts.initializer,
-                    offerer,
+                    ix.accounts.offerer,
                     ix.accounts.claimer,
                     ix.accounts.mint,
                     ix.data.initializerAmount,
@@ -134,15 +135,17 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                     ix.data.kind,
                     payIn,
                     ix.accounts.claimerTokenAccount,
+                    securityDeposit,
+                    claimerBounty,
                     Buffer.from(ix.data.txoHash).toString('hex')
                 );
 
-                const usedNonce = ix.data.nonce.toNumber();
+                //const usedNonce = ix.data.nonce.toNumber();
 
                 parsedEvents.push(new InitializeEvent<SolanaSwapData>(
                     paymentHash.toString("hex"),
                     txoHash.toString("hex"),
-                    usedNonce,
+                    0,
                     swapData
                 ));
             }

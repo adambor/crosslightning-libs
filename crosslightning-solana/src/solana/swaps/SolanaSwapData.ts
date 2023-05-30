@@ -5,9 +5,8 @@ import {SwapData, ChainSwapType, TokenAddress} from "crosslightning-base";
 
 export class SolanaSwapData extends SwapData {
 
-    initializer?: PublicKey;
     offerer: PublicKey;
-    intermediary: PublicKey;
+    claimer: PublicKey;
     token: PublicKey;
     amount: BN;
     paymentHash: string;
@@ -18,12 +17,15 @@ export class SolanaSwapData extends SwapData {
     kind: number;
     payIn: boolean;
     claimerTokenAccount?: PublicKey;
+
+    securityDeposit: BN;
+    claimerBounty: BN;
+
     txoHash: string;
 
     constructor(
-        initializer: PublicKey,
         offerer: PublicKey,
-        intermediary: PublicKey,
+        claimer: PublicKey,
         token: PublicKey,
         amount: BN,
         paymentHash: string,
@@ -35,15 +37,18 @@ export class SolanaSwapData extends SwapData {
         kind: number,
         payIn: boolean,
         claimerTokenAccount: PublicKey,
+
+        securityDeposit: BN,
+        claimerBounty: BN,
+
         txoHash: string
     );
 
     constructor(data: any);
 
     constructor(
-        initializerOrData: PublicKey | any,
-        offerer?: PublicKey,
-        intermediary?: PublicKey,
+        offererOrData: PublicKey | any,
+        claimer?: PublicKey,
         token?: PublicKey,
         amount?: BN,
         paymentHash?: string,
@@ -54,15 +59,16 @@ export class SolanaSwapData extends SwapData {
         kind?: number,
         payIn?: boolean,
         claimerTokenAccount?: PublicKey,
+        securityDeposit?: BN,
+        claimerBounty?: BN,
         txoHash?: string,
     ) {
         super();
-        if(offerer!=null || intermediary!=null || token!=null || amount!=null || paymentHash!=null || expiry!=null ||
+        if(claimer!=null || token!=null || amount!=null || paymentHash!=null || expiry!=null ||
             nonce!=null || confirmations!=null || payOut!=null || kind!=null || payIn!=null || claimerTokenAccount!=null) {
 
-            this.initializer = initializerOrData;
-            this.offerer = offerer;
-            this.intermediary = intermediary;
+            this.offerer = offererOrData;
+            this.claimer = claimer;
             this.token = token;
             this.amount = amount;
             this.paymentHash = paymentHash;
@@ -73,22 +79,25 @@ export class SolanaSwapData extends SwapData {
             this.kind = kind;
             this.payIn = payIn;
             this.claimerTokenAccount = claimerTokenAccount;
+            this.securityDeposit = securityDeposit;
+            this.claimerBounty = claimerBounty;
             this.txoHash = txoHash;
         } else {
-            this.initializer = initializerOrData.initializer==null ? null : new PublicKey(initializerOrData.initializer);
-            this.offerer = initializerOrData.offerer==null ? null : new PublicKey(initializerOrData.offerer);
-            this.intermediary = initializerOrData.intermediary==null ? null : new PublicKey(initializerOrData.intermediary);
-            this.token = initializerOrData.token==null ? null : new PublicKey(initializerOrData.token);
-            this.amount = initializerOrData.amount==null ? null : new BN(initializerOrData.amount);
-            this.paymentHash = initializerOrData.paymentHash;
-            this.expiry = initializerOrData.expiry==null ? null : new BN(initializerOrData.expiry);
-            this.nonce = initializerOrData.nonce==null ? null : new BN(initializerOrData.nonce);
-            this.confirmations = initializerOrData.confirmations;
-            this.payOut = initializerOrData.payOut;
-            this.kind = initializerOrData.kind;
-            this.payIn = initializerOrData.payIn;
-            this.claimerTokenAccount = initializerOrData.claimerTokenAccount==null ? null : new PublicKey(initializerOrData.claimerTokenAccount);
-            this.txoHash = initializerOrData.txoHash;
+            this.offerer = offererOrData.offerer==null ? null : new PublicKey(offererOrData.offerer);
+            this.claimer = offererOrData.claimer==null ? null : new PublicKey(offererOrData.claimer);
+            this.token = offererOrData.token==null ? null : new PublicKey(offererOrData.token);
+            this.amount = offererOrData.amount==null ? null : new BN(offererOrData.amount);
+            this.paymentHash = offererOrData.paymentHash;
+            this.expiry = offererOrData.expiry==null ? null : new BN(offererOrData.expiry);
+            this.nonce = offererOrData.nonce==null ? null : new BN(offererOrData.nonce);
+            this.confirmations = offererOrData.confirmations;
+            this.payOut = offererOrData.payOut;
+            this.kind = offererOrData.kind;
+            this.payIn = offererOrData.payIn;
+            this.claimerTokenAccount = offererOrData.claimerTokenAccount==null ? null : new PublicKey(offererOrData.claimerTokenAccount);
+            this.securityDeposit = offererOrData.securityDeposit==null ? null : new BN(offererOrData.securityDeposit);
+            this.claimerBounty = offererOrData.claimerBounty==null ? null : new BN(offererOrData.claimerBounty);
+            this.txoHash = offererOrData.txoHash;
         }
     }
 
@@ -101,19 +110,18 @@ export class SolanaSwapData extends SwapData {
     }
 
     getClaimer(): string {
-        return this.intermediary.toBase58();
+        return this.claimer.toBase58();
     }
 
     setClaimer(newClaimer: string) {
-        this.intermediary = new PublicKey(newClaimer);
+        this.claimer = new PublicKey(newClaimer);
     }
 
     serialize(): any {
         return {
             type: "sol",
-            initializer: this.initializer==null ? null : this.initializer.toBase58(),
             offerer: this.offerer==null ? null : this.offerer.toBase58(),
-            intermediary: this.intermediary==null ? null : this.intermediary.toBase58(),
+            claimer: this.claimer==null ? null : this.claimer.toBase58(),
             token: this.token==null ? null : this.token.toBase58(),
             amount: this.amount==null ? null : this.amount.toString(10),
             paymentHash: this.paymentHash,
@@ -124,6 +132,8 @@ export class SolanaSwapData extends SwapData {
             kind: this.kind,
             payIn: this.payIn,
             claimerTokenAccount: this.claimerTokenAccount==null ? null : this.claimerTokenAccount.toBase58(),
+            securityDeposit: this.securityDeposit==null ? null : this.securityDeposit.toString(10),
+            claimerBounty: this.claimerBounty==null ? null : this.claimerBounty.toString(10),
             txoHash: this.txoHash
         }
     }
@@ -178,6 +188,22 @@ export class SolanaSwapData extends SwapData {
 
     getTxoHash(): string {
         return this.txoHash;
+    }
+
+    setTxoHash(txoHash: string): void {
+        this.txoHash = txoHash;
+    }
+
+    getSecurityDeposit() {
+        return this.securityDeposit;
+    }
+
+    getClaimerBounty() {
+        return this.claimerBounty;
+    }
+
+    getTotalDeposit() {
+        return this.claimerBounty.lt(this.securityDeposit) ? this.securityDeposit : this.claimerBounty;
     }
 
 }

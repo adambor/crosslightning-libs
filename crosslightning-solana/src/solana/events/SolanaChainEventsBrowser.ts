@@ -4,6 +4,7 @@ import {ChainEvents, ClaimEvent, EventListener, InitializeEvent, RefundEvent} fr
 import {IdlInstruction} from "@coral-xyz/anchor/dist/cjs/idl";
 import {SolanaSwapData} from "../swaps/SolanaSwapData";
 import {SolanaSwapProgram} from "../swaps/SolanaSwapProgram";
+import * as BN from "bn.js";
 
 export type IxWithAccounts = ({name: string, data: any, accounts: {[key: string]: PublicKey}});
 
@@ -87,19 +88,19 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
 
                     const txoHash: Buffer = Buffer.from(event.txoHash);
 
-                    let offerer: PublicKey;
+                    let securityDeposit: BN = new BN(0);
+                    let claimerBounty: BN = new BN(0);
                     let payIn: boolean;
                     if(ix.name === "offererInitializePayIn") {
-                        offerer = ix.accounts.initializer;
                         payIn = true;
                     } else {
-                        offerer = ix.accounts.offerer;
                         payIn = false;
+                        securityDeposit = ix.data.securityDeposit;
+                        claimerBounty = ix.data.claimerBounty;
                     }
 
                     const swapData: SolanaSwapData = new SolanaSwapData(
-                        ix.accounts.initializer,
-                        offerer,
+                        ix.accounts.offerer,
                         ix.accounts.claimer,
                         ix.accounts.mint,
                         ix.data.initializerAmount,
@@ -111,15 +112,17 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
                         ix.data.kind,
                         payIn,
                         ix.accounts.claimerTokenAccount,
+                        securityDeposit,
+                        claimerBounty,
                         Buffer.from(event.txoHash).toString("hex")
                     );
 
-                    const usedNonce = ix.data.nonce.toNumber();
+                    //const usedNonce = ix.data.nonce.toNumber();
 
                     parsedEvent = new InitializeEvent<SolanaSwapData>(
                         paymentHash.toString("hex"),
                         txoHash.toString("hex"),
-                        usedNonce,
+                        0,
                         swapData
                     );
                 }
