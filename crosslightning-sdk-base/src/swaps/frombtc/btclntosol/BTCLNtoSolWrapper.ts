@@ -55,7 +55,7 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
             null,
             false,
             true,
-            new BN(0),
+            result.securityDeposit,
             new BN(0)
         );
 

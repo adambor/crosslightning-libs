@@ -804,7 +804,8 @@ export class ClientSwapContract<T extends SwapData> {
         pr: string,
         swapFee: BN,
         total: BN,
-        intermediaryKey: string
+        intermediaryKey: string,
+        securityDeposit: BN
     }> {
 
         const secret = randomBytes(32);
@@ -854,11 +855,12 @@ export class ClientSwapContract<T extends SwapData> {
             pr: jsonBody.data.pr,
             swapFee: new BN(jsonBody.data.swapFee),
             total: new BN(jsonBody.data.total),
-            intermediaryKey: jsonBody.data.intermediaryKey
+            intermediaryKey: jsonBody.data.intermediaryKey,
+            securityDeposit: new BN(jsonBody.data.securityDeposit)
         };
     }
 
-    async getPaymentAuthorization(bolt11PaymentReq: string, url: string, requiredToken?: TokenAddress, requiredOffererKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, abortSignal?: AbortSignal): Promise<{
+    async getPaymentAuthorization(bolt11PaymentReq: string, url: string, requiredToken?: TokenAddress, requiredOffererKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, requiredSecurityDeposit?: BN, abortSignal?: AbortSignal): Promise<{
         is_paid: boolean,
 
         data?: T,
@@ -918,6 +920,10 @@ export class ClientSwapContract<T extends SwapData> {
                 }
             }
 
+            if(requiredSecurityDeposit!=null && !requiredSecurityDeposit.eq(data.getSecurityDeposit())) {
+                throw new IntermediaryError("Invalid security deposit!");
+            }
+
             await this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
 
             const paymentHashInTx = data.getHash().toLowerCase();
@@ -959,6 +965,7 @@ export class ClientSwapContract<T extends SwapData> {
         requiredOffererKey?: string,
         requiredBaseFee?: BN,
         requiredFeePPM?: BN,
+        requiredSecurityDeposit?: BN,
         abortSignal?: AbortSignal,
         intervalSeconds?: number,
     ) : Promise<{
@@ -973,7 +980,7 @@ export class ClientSwapContract<T extends SwapData> {
         }
 
         while(abortSignal==null || !abortSignal.aborted) {
-            const result = await this.getPaymentAuthorization(bolt11PaymentReq, url, requiredToken, requiredOffererKey, requiredBaseFee, requiredFeePPM, abortSignal);
+            const result = await this.getPaymentAuthorization(bolt11PaymentReq, url, requiredToken, requiredOffererKey, requiredBaseFee, requiredFeePPM, requiredSecurityDeposit, abortSignal);
             if(result.is_paid) return result as any;
             await timeoutPromise(intervalSeconds || 5);
         }

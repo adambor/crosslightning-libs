@@ -82,7 +82,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
             throw new Error("Must be in PR_CREATED state!");
         }
 
-        const result = await this.wrapper.contract.waitForIncomingPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM, abortSignal, checkIntervalSeconds);
+        const result = await this.wrapper.contract.waitForIncomingPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM, this.data.getSecurityDeposit(), abortSignal, checkIntervalSeconds);
 
         if(abortSignal.aborted) throw new Error("Aborted");
 
