@@ -45,7 +45,7 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
 
         const swapData: T = await this.contract.swapContract.createSwapData(
             ChainSwapType.HTLC,
-            requiredKey,
+            requiredKey || result.intermediaryKey,
             this.contract.swapContract.getAddress(),
             requiredToken,
             null,

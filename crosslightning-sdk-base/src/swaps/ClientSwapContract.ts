@@ -668,6 +668,14 @@ export class ClientSwapContract<T extends SwapData> {
 
         const addBlock = Math.max(currentBtcBlock-currentBtcRelayBlock, 0);
 
+        let addFee: BN;
+        if((this.swapContract as any).getRawClaimFee!=null) {
+            //Workaround for sol
+            addFee = await (this.swapContract as any).getRawClaimFee();
+        } else {
+            addFee = (await this.swapContract.getClaimFee()).mul(feeSafetyFactor || new BN(2));
+        }
+
         const response: Response = await fetch(url+"/getAddress", {
             method: "POST",
             body: JSON.stringify({
@@ -679,7 +687,8 @@ export class ClientSwapContract<T extends SwapData> {
                     feePerBlock: feePerBlock.toString(10),
                     safetyFactor: blockSafetyFactor,
                     startTimestamp: startTimestamp.toString(10),
-                    addBlock
+                    addBlock,
+                    addFee: addFee.toString(10)
                 }
             }),
             headers: {'Content-Type': 'application/json'}
@@ -703,7 +712,7 @@ export class ClientSwapContract<T extends SwapData> {
         const tsDelta = data.getExpiry().sub(startTimestamp);
         const blocksDelta = tsDelta.div(new BN(this.options.bitcoinBlocktime)).mul(new BN(blockSafetyFactor));
         const totalBlock = blocksDelta.add(new BN(addBlock));
-        const totalClaimerBounty = totalBlock.mul(feePerBlock);
+        const totalClaimerBounty = addFee.add(totalBlock.mul(feePerBlock));
 
         if(!data.getClaimerBounty().eq(totalClaimerBounty)) {
             throw new IntermediaryError("Invalid claimer bounty");
@@ -794,7 +803,8 @@ export class ClientSwapContract<T extends SwapData> {
         secret: Buffer,
         pr: string,
         swapFee: BN,
-        total: BN
+        total: BN,
+        intermediaryKey: string
     }> {
 
         const secret = randomBytes(32);
@@ -843,7 +853,8 @@ export class ClientSwapContract<T extends SwapData> {
             secret,
             pr: jsonBody.data.pr,
             swapFee: new BN(jsonBody.data.swapFee),
-            total: new BN(jsonBody.data.total)
+            total: new BN(jsonBody.data.total),
+            intermediaryKey: jsonBody.data.intermediaryKey
         };
     }
 
