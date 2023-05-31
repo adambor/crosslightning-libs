@@ -11,6 +11,7 @@ import {ChainEvents, ClaimEvent, InitializeEvent,
 import {AuthenticatedLnd} from "lightning";
 import * as bitcoin from "bitcoinjs-lib";
 import {createHash} from "crypto";
+import {expressHandlerWrapper, FieldType, FieldTypeEnum, parseBN, verifySchema} from "../../utils/Utils";
 
 export type FromBtcConfig = {
     authorizationTimeout: number,
@@ -33,6 +34,9 @@ export type FromBtcConfig = {
 
 const secondsInYear = new BN(365*24*60*60);
 
+/**
+ * Swap handler handling from BTC swaps using PTLCs (proof-time locked contracts) and btc relay (on-chain bitcoin SPV)
+ */
 export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T>, T> {
 
     readonly type = SwapHandlerType.FROM_BTC;
@@ -56,7 +60,14 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
         this.config = anyConfig;
     }
 
-    getTxoHash(address: string, amount: BN, bitcoinNetwork: bitcoin.networks.Network): Buffer {
+    /**
+     * Returns the TXO hash of the specific address and amount - sha256(u64le(amount) + outputScript(address))
+     *
+     * @param address
+     * @param amount
+     * @param bitcoinNetwork
+     */
+    private getTxoHash(address: string, amount: BN, bitcoinNetwork: bitcoin.networks.Network): Buffer {
         const parsedOutputScript = bitcoin.address.toOutputScript(address, bitcoinNetwork);
 
         return createHash("sha256").update(Buffer.concat([
@@ -65,20 +76,41 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
         ])).digest();
     }
 
-    getHash(address: string, nonce: BN, amount: BN, bitcoinNetwork: bitcoin.networks.Network): Buffer {
+    /**
+     * Returns the payment hash of the swap, takes swap nonce into account. Payment hash is chain-specific.
+     *
+     * @param address
+     * @param nonce
+     * @param amount
+     * @param bitcoinNetwork
+     */
+    private getHash(address: string, nonce: BN, amount: BN, bitcoinNetwork: bitcoin.networks.Network): Buffer {
         const parsedOutputScript = bitcoin.address.toOutputScript(address, bitcoinNetwork);
         return this.swapContract.getHashForOnchain(parsedOutputScript, amount, nonce);
     }
 
-    getChainHash(swap: FromBtcSwapAbs<T>): Buffer {
+    /**
+     * Returns payment hash of the swap (hash WITH using payment nonce)
+     *
+     * @param swap
+     */
+    private getChainHash(swap: FromBtcSwapAbs<T>): Buffer {
         return this.getHash(swap.address, new BN(0), swap.amount, this.config.bitcoinNetwork);
     }
 
-    getChainTxoHash(swap: FromBtcSwapAbs<T>): Buffer {
+    /**
+     * Returns TXO hash of the swap (hash without using payment nonce)
+     *
+     * @param swap
+     */
+    private getChainTxoHash(swap: FromBtcSwapAbs<T>): Buffer {
         return this.getTxoHash(swap.address, swap.amount, this.config.bitcoinNetwork);
     }
 
-    async checkPastSwaps() {
+    /**
+     * Checks past swaps, refunds and deletes ones that are already expired.
+     */
+    private async checkPastSwaps() {
 
         const removeSwaps: Buffer[] = [];
         const refundSwaps: FromBtcSwapAbs<T>[] = [];
@@ -86,19 +118,23 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
         for(let key in this.storageManager.data) {
             const swap = this.storageManager.data[key];
 
+            //Current time, minus maximum chain time skew
             const currentTime = new BN(Math.floor(Date.now()/1000)-this.config.maxSkew);
 
+            //Once authorization expires in CREATED state, the user can no more commit it on-chain
             if(swap.state===FromBtcSwapState.CREATED) {
-                //Invoice is expired
-                if(swap.authorizationExpiry.lt(currentTime)) {
+                const isExpired = swap.authorizationExpiry.lt(currentTime);
+                if(isExpired) {
                     removeSwaps.push(this.getChainHash(swap));
                 }
                 continue;
             }
 
             const expiryTime = swap.data.getExpiry();
+            //Check if commited swap expired by now
             if(swap.state===FromBtcSwapState.COMMITED) {
-                if(expiryTime.lt(currentTime)) {
+                const isExpired = expiryTime.lt(currentTime);
+                if(isExpired) {
                     const isCommited = await this.swapContract.isCommited(swap.data);
 
                     if(isCommited) {
@@ -123,7 +159,12 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
         }
     }
 
-    async processEvent(eventData: SwapEvent<T>[]): Promise<boolean> {
+    /**
+     * Chain event processor
+     *
+     * @param eventData
+     */
+    private async processEvent(eventData: SwapEvent<T>[]): Promise<boolean> {
 
         for(let event of eventData) {
 
@@ -146,17 +187,20 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 const paymentHashBuffer = Buffer.from(paymentHash, "hex");
                 const savedSwap = this.storageManager.data[paymentHash];
 
-                if (savedSwap != null) {
+                const isSwapFound = savedSwap != null;
+                if (isSwapFound) {
                     savedSwap.state = FromBtcSwapState.COMMITED;
                 }
 
                 const usedNonce = event.signatureNonce;
                 const tokenAdress = event.swapData.getToken().toString();
-                if (usedNonce > this.nonce.getNonce(tokenAdress)) {
+
+                const hasHigherNonce = usedNonce > this.nonce.getNonce(tokenAdress);
+                if (hasHigherNonce) {
                     await this.nonce.saveNonce(tokenAdress, usedNonce);
                 }
 
-                if (savedSwap != null) {
+                if (isSwapFound) {
                     savedSwap.data = event.swapData;
                     await this.storageManager.saveData(paymentHashBuffer.toString("hex"), savedSwap);
                 }
@@ -169,7 +213,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
                 const savedSwap = this.storageManager.data[paymentHashHex];
 
-                if (savedSwap == null) {
+                const isSwapNotFound = savedSwap == null;
+                if (isSwapNotFound) {
                     continue;
                 }
 
@@ -185,7 +230,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
                 const savedSwap = this.storageManager.data[event.paymentHash];
 
-                if (savedSwap == null) {
+                const isSwapNotFound = savedSwap == null;
+                if (isSwapNotFound) {
                     continue;
                 }
 
@@ -198,9 +244,14 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
         return true;
     }
 
+    /**
+     * Sets up required listeners for the REST server
+     *
+     * @param restServer
+     */
     startRestServer(restServer: Express) {
 
-        restServer.post(this.path+"/getAddress", async (req, res) => {
+        restServer.post(this.path+"/getAddress", expressHandlerWrapper(async (req, res) => {
             /**
              * address: string              solana address of the recipient
              * amount: string               amount (in sats) of the invoice
@@ -213,121 +264,49 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
              *  - addFee: string                Additional fee to add to the final claimer bounty
              */
 
-            if(
-                req.body==null ||
-
-                req.body.claimerBounty==null ||
-                typeof(req.body.claimerBounty)!=="object" ||
-
-                req.body.claimerBounty.feePerBlock==null ||
-                typeof(req.body.claimerBounty.feePerBlock)!=="string" ||
-
-                req.body.claimerBounty.safetyFactor==null ||
-                typeof(req.body.claimerBounty.safetyFactor)!=="number" ||
-
-                req.body.claimerBounty.startTimestamp==null ||
-                typeof(req.body.claimerBounty.startTimestamp)!=="string" ||
-
-                req.body.claimerBounty.addBlock==null ||
-                typeof(req.body.claimerBounty.addBlock)!=="number" ||
-
-                req.body.token==null ||
-                typeof(req.body.token)!=="string" ||
-                !this.allowedTokens.has(req.body.token)
-            ) {
-                res.status(400).json({
-                    msg: "Invalid request body (token)"
-                });
-                return;
-            }
-
-            if(
-                req.body.address==null ||
-                typeof(req.body.address)!=="string"
-            ) {
-                res.status(400).json({
-                    msg: "Invalid request body (address)"
-                });
-                return;
-            }
-
-            try {
-                if(!this.swapContract.isValidAddress(req.body.address)) {
-                    res.status(400).json({
-                        msg: "Invalid request body (address)"
-                    });
-                    return;
+            const parsedBody = verifySchema(req.body, {
+                address: (val: string) => val!=null &&
+                        typeof(val)==="string" &&
+                        this.swapContract.isValidAddress(val) ? val : null,
+                amount: FieldTypeEnum.BN,
+                token: (val: string) => val!=null &&
+                        typeof(val)==="string" &&
+                        this.allowedTokens.has(val) ? val : null,
+                claimerBounty: {
+                    feePerBlock: FieldTypeEnum.BN,
+                    safetyFactor: FieldTypeEnum.BN,
+                    startTimestamp: FieldTypeEnum.BN,
+                    addBlock: FieldTypeEnum.BN,
+                    addFee: FieldTypeEnum.BN,
                 }
-            } catch (e) {
+            });
+
+            if(parsedBody==null) {
                 res.status(400).json({
-                    msg: "Invalid request body (address)"
+                    msg: "Invalid request body"
                 });
                 return;
             }
 
-            if(
-                req.body.amount==null ||
-                typeof(req.body.amount)!=="string"
-            ) {
-                res.status(400).json({
-                    msg: "Invalid request body (amount)"
-                });
-                return;
-            }
-
-            let amountBD: BN;
-            try {
-                amountBD = new BN(req.body.amount);
-            } catch (e) {
-                res.status(400).json({
-                    msg: "Invalid request body (amount)"
-                });
-                return;
-            }
-
-            let feePerBlockBD: BN;
-            try {
-                feePerBlockBD = new BN(req.body.claimerBounty.feePerBlock);
-            } catch (e) {
-                res.status(400).json({
-                    msg: "Invalid request body (feePerBlock)"
-                });
-                return;
-            }
-
-            let startTimestampBD: BN;
-            try {
-                startTimestampBD = new BN(req.body.claimerBounty.startTimestamp);
-            } catch (e) {
-                res.status(400).json({
-                    msg: "Invalid request body (startTimestamp)"
-                });
-                return;
-            }
-
-            const safetyFactorBD: BN = new BN(req.body.claimerBounty.safetyFactor);
-            const addBlockBD: BN = new BN(req.body.claimerBounty.addBlock);
-            const addFeeBD: BN = new BN(req.body.claimerBounty.addFee);
-
-            if(amountBD.lt(this.config.min)) {
+            if(parsedBody.amount.lt(this.config.min)) {
                 res.status(400).json({
                     msg: "Amount too low"
                 });
                 return;
             }
 
-            if(amountBD.gt(this.config.max)) {
+            if(parsedBody.amount.gt(this.config.max)) {
                 res.status(400).json({
                     msg: "Amount too high"
                 });
                 return;
             }
 
-            const useToken = this.swapContract.toTokenAddress(req.body.token);
+            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
-            const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
+            const swapFee = this.config.baseFee.add(parsedBody.amount.mul(this.config.feePPM).div(new BN(1000000)));
 
-            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(amountBD, useToken);
+            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount, useToken);
             const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken);
 
             const balance = await this.swapContract.getBalance(useToken, true);
@@ -339,7 +318,6 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 return;
             }
 
-
             const {address: receiveAddress} = await lncli.createChainAddress({
                 lnd: this.LND,
                 format: "p2wpkh"
@@ -347,7 +325,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
             console.log("[From BTC: REST.CreateInvoice] Created receiving address: ", receiveAddress);
 
-            const createdSwap: FromBtcSwapAbs<T> = new FromBtcSwapAbs<T>(receiveAddress, amountBD, swapFee);
+            const createdSwap: FromBtcSwapAbs<T> = new FromBtcSwapAbs<T>(receiveAddress, parsedBody.amount, swapFee);
 
             const paymentHash = this.getChainHash(createdSwap);
 
@@ -365,24 +343,25 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 baseSD = (await this.swapContract.getRefundFee()).mul(new BN(2));
             }
             console.log("[From BTC: REST.CreateInvoice] Base security deposit: ", baseSD.toString(10));
-            const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(amountBD.sub(swapFee), this.swapContract.getNativeCurrencyAddress());
+            const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount.sub(swapFee), this.swapContract.getNativeCurrencyAddress());
             console.log("[From BTC: REST.CreateInvoice] Swap output value in native currency: ", swapValueInNativeCurrency.toString(10));
             const apyPPM = new BN(Math.floor(this.config.securityDepositAPY*1000000));
             console.log("[From BTC: REST.CreateInvoice] APY PPM: ", apyPPM.toString(10));
             console.log("[From BTC: REST.CreateInvoice] Expiry timeout: ", expiryTimeout.toString(10));
             const variableSD = swapValueInNativeCurrency.mul(apyPPM).mul(expiryTimeout).div(new BN(1000000)).div(secondsInYear);
             console.log("[From BTC: REST.CreateInvoice] Variable security deposit: ", variableSD.toString(10));
+            const totalSecurityDeposit = baseSD.add(variableSD);
 
             //Calculate claimer bounty
-            const tsDelta = expiry.sub(startTimestampBD);
-            const blocksDelta = tsDelta.div(this.config.bitcoinBlocktime).mul(safetyFactorBD);
-            const totalBlock = blocksDelta.add(addBlockBD);
-            const totalClaimerBounty = addFeeBD.add(totalBlock.mul(feePerBlockBD));
+            const tsDelta = expiry.sub(parsedBody.claimerBounty.startTimestamp);
+            const blocksDelta = tsDelta.div(this.config.bitcoinBlocktime).mul(parsedBody.claimerBounty.safetyFactor);
+            const totalBlock = blocksDelta.add(parsedBody.claimerBounty.addBlock);
+            const totalClaimerBounty = parsedBody.claimerBounty.addFee.add(totalBlock.mul(parsedBody.claimerBounty.feePerBlock));
 
             const data: T = await this.swapContract.createSwapData(
                 ChainSwapType.CHAIN,
                 this.swapContract.getAddress(),
-                req.body.address,
+                parsedBody.address,
                 useToken,
                 amountInToken.sub(swapFeeInToken),
                 paymentHash.toString("hex"),
@@ -391,7 +370,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 this.config.confirmations,
                 false,
                 true,
-                baseSD.add(variableSD),
+                totalSecurityDeposit,
                 totalClaimerBounty
             );
 
@@ -421,31 +400,43 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 }
             });
 
-        });
+        }));
 
         console.log("[From BTC: REST] Started at path: ", this.path);
     }
 
-    subscribeToEvents() {
+    /**
+     * Initializes chain events subscription
+     */
+    private subscribeToEvents() {
         this.chainEvents.registerListener(this.processEvent.bind(this));
 
         console.log("[From BTC: Solana.Events] Subscribed to Solana events");
     }
 
+    /**
+     * Starts the checkPastSwaps watchdog
+     */
     async startWatchdog() {
         let rerun;
         rerun = async () => {
-            await this.checkPastSwaps();
+            await this.checkPastSwaps().catch( e => console.error(e));
             setTimeout(rerun, this.config.refundInterval);
         };
         await rerun();
     }
 
+    /**
+     * Initializes swap handler, loads data and subscribes to chain events
+     */
     async init() {
         await this.storageManager.loadData(FromBtcSwapAbs);
         this.subscribeToEvents();
     }
 
+    /**
+     * Returns swap handler info
+     */
     getInfo(): { swapFeePPM: number, swapBaseFee: number, min: number, max: number, data?: any, tokens: string[] } {
         return {
             swapFeePPM: this.config.feePPM.toNumber(),

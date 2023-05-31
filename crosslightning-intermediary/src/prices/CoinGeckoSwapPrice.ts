@@ -22,6 +22,13 @@ export class CoinGeckoSwapPrice implements ISwapPrice {
         }
     } = {};
 
+    /**
+     * Generate a new coinmap based on the token addresses of the tokens
+     *
+     * @param usdcAddress
+     * @param usdtAddress
+     * @param wbtcAddress
+     */
     static generateCoinMap(usdcAddress?: string, usdtAddress?: string, wbtcAddress?: string): {
         [address: string]: {
             coinId: string,

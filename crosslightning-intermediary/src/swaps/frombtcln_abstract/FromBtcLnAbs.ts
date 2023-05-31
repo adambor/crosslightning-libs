@@ -20,8 +20,7 @@ import {
     TokenAddress
 } from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
-
-const HEX_REGEX = /[0-9a-fA-F]+/;
+import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
 
 export type FromBtcLnConfig = {
     authorizationTimeout: number,
@@ -43,6 +42,9 @@ export type FromBtcLnConfig = {
 
 const secondsInYear = new BN(365*24*60*60);
 
+/**
+ * Swap handler handling from BTCLN swaps using submarine swaps
+ */
 export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapAbs<T>, T> {
 
     readonly type = SwapHandlerType.FROM_BTCLN;
@@ -64,9 +66,11 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
         this.config = config;
     }
 
-    async checkPastSwaps() {
+    /**
+     * Checks past swaps, refunds and deletes ones that are already expired.
+     */
+    private async checkPastSwaps() {
 
-        const removeSwaps: string[] = [];
         const settleInvoices: string[] = [];
         const cancelInvoices: string[] = [];
         const refundSwaps: FromBtcLnSwapAbs<T>[] = [];
@@ -82,21 +86,19 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     lnd: this.LND
                 });
 
-                if(invoice.is_held) {
-                    //Is being paid
+                const isBeingPaid = invoice.is_held;
+                if(isBeingPaid) {
                     //Adjust the state of the swap and expiry
                     try {
                         await this.htlcReceived(swap, invoice);
                         //Result is either FromBtcLnSwapState.RECEIVED or FromBtcLnSwapState.CANCELED
                     } catch (e) {
-
+                        console.error(e);
                     }
                 } else {
                     //Not paid
-                    if(parsedPR.timeExpireDate<Date.now()/1000) {
-                        //Invoice is expired
-                        //Remove
-                        //removeSwaps.push(parsedPR.tagsObject.payment_hash);
+                    const isInvoiceExpired = parsedPR.timeExpireDate<Date.now()/1000;
+                    if(isInvoiceExpired) {
                         cancelInvoices.push(parsedPR.tagsObject.payment_hash);
                         continue;
                     }
@@ -118,7 +120,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 continue;
             }
 
-            if(expiryTime!=null && expiryTime.lt(currentTime)) {
+            const isExpired = expiryTime!=null && expiryTime.lt(currentTime);
+            if(isExpired) {
                 const isCommited = await this.swapContract.isCommited(swap.data);
 
                 if(isCommited) {
@@ -128,10 +131,6 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
                 cancelInvoices.push(swap.data.getHash());
             }
-        }
-
-        for(let swapHash of removeSwaps) {
-            await this.storageManager.removeData(swapHash);
         }
 
         for(let refundSwap of refundSwaps) {
@@ -176,7 +175,12 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
         }
     }
 
-    async processEvent(eventData: SwapEvent<T>[]): Promise<boolean> {
+    /**
+     * Chain event handler
+     *
+     * @param eventData
+     */
+    private async processEvent(eventData: SwapEvent<T>[]): Promise<boolean> {
 
         for(let event of eventData) {
             if(event instanceof InitializeEvent) {
@@ -199,17 +203,19 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
                 const savedSwap = this.storageManager.data[paymentHash];
 
-                if (savedSwap != null) {
+                const isSwapFound = savedSwap != null;
+                if (isSwapFound) {
                     savedSwap.state = FromBtcLnSwapState.COMMITED;
                 }
 
                 const usedNonce = event.signatureNonce;
                 const tokenAdress = event.swapData.getToken().toString();
-                if (usedNonce > this.nonce.getNonce(tokenAdress)) {
+                const shouldUpdateNonce = usedNonce > this.nonce.getNonce(tokenAdress);
+                if (shouldUpdateNonce) {
                     await this.nonce.saveNonce(tokenAdress,usedNonce);
                 }
 
-                if (savedSwap != null) {
+                if (isSwapFound) {
                     savedSwap.data = event.swapData;
                     await this.storageManager.saveData(paymentHashBuffer.toString("hex"), savedSwap);
                 }
@@ -226,7 +232,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
                 const savedSwap = this.storageManager.data[paymentHashHex];
 
-                if (savedSwap == null) {
+                const isSwapFound = savedSwap != null;
+                if (!isSwapFound) {
                     continue;
                 }
 
@@ -257,7 +264,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
                 const savedSwap = this.storageManager.data[event.paymentHash];
 
-                if (savedSwap == null) {
+                const isSwapFound = savedSwap != null;
+                if (!isSwapFound) {
                     continue;
                 }
 
@@ -281,7 +289,13 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
         return true;
     }
 
-    async htlcReceived(invoiceData: FromBtcLnSwapAbs<T>, invoice: any) {
+    /**
+     * Saves the state of received HTLC of the lightning payment
+     *
+     * @param invoiceData
+     * @param invoice
+     */
+    private async htlcReceived(invoiceData: FromBtcLnSwapAbs<T>, invoice: any) {
         const useToken: TokenAddress = invoiceData.data.getToken();
 
         const balance: BN = await this.swapContract.getBalance(useToken, true);
@@ -304,9 +318,10 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             await this.storageManager.removeData(invoice.id);
         };
 
-        if (balance.lt(sendAmount)) {
+        const hasEnoughBalance = balance.gte(sendAmount);
+        if (!hasEnoughBalance) {
             await cancelAndRemove();
-            console.error("[From BTC-LN: REST.GetInvoicePaymentAuth] ERROR Not enough balance on SOL to honor the request");
+            console.error("[From BTC-LN: REST.GetInvoicePaymentAuth] ERROR Not enough balance on smart chain to honor the request");
             throw {
                 code: 20001,
                 msg: "Not enough liquidity"
@@ -321,7 +336,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
         const blockDelta = new BN(timeout - current_block_height);
 
-        if(blockDelta.lt(this.config.minCltv)) {
+        const htlcExpiresTooSoon = blockDelta.lt(this.config.minCltv);
+        if(htlcExpiresTooSoon) {
             await cancelAndRemove();
             console.error("[From BTC-LN: REST.GetInvoicePaymentAuth] Receive HTLC expires too soon (required: "+this.config.minCltv.toString(10)+", got: "+blockDelta.toString(10)+")");
             throw {
@@ -334,19 +350,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
         const expiryTimeout = this.config.minCltv.mul(this.config.bitcoinBlocktime.div(this.config.safetyFactor)).sub(this.config.gracePeriod);
 
-        //Cap expiryTimeout to minCltv, for predictable security deposit
-
         console.log("[From BTC-LN: REST.GetInvoicePaymentAuth] expiry timeout: ", expiryTimeout.toString(10));
 
-        /*
-        {
-            intermediary: new PublicKey(invoice.description),
-            token: WBTC_ADDRESS,
-            amount: sendAmount,
-            paymentHash: req.body.paymentHash,
-            expiry: new BN(Math.floor(Date.now() / 1000)).add(expiryTimeout)
-        }
-         */
         const payInvoiceObject: T = await this.swapContract.createSwapData(
             ChainSwapType.HTLC,
             this.swapContract.getAddress(),
@@ -372,7 +377,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
     startRestServer(restServer: Express) {
 
-        restServer.post(this.path+"/createInvoice", async (req, res) => {
+        restServer.post(this.path+"/createInvoice", expressHandlerWrapper(async (req, res) => {
             /**
              * address: string              solana address of the recipient
              * paymentHash: string          payment hash of the to-be-created invoice
@@ -380,121 +385,74 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
              * expiry: number               expiry time of the invoice (in seconds)
              * token: string                Desired token to swap
              */
-            if(
-                req.body==null ||
-                req.body.token==null ||
-                typeof(req.body.token)!=="string" ||
-                !this.allowedTokens.has(req.body.token)
-            ) {
+
+            const parsedBody = verifySchema(req.body, {
+                address: (val: string) => val!=null &&
+                            typeof(val)==="string" &&
+                            this.swapContract.isValidAddress(val) ? val : null,
+                paymentHash: (val: string) => val!=null &&
+                            typeof(val)==="string" &&
+                            val.length===64 &&
+                            HEX_REGEX.test(val) ? val: null,
+                amount: FieldTypeEnum.BN,
+                expiry: FieldTypeEnum.Number,
+                token: (val: string) => val!=null &&
+                        typeof(val)!=="string" &&
+                        this.allowedTokens.has(val) ? val : null
+            });
+
+            if(parsedBody==null) {
                 res.status(400).json({
-                    msg: "Invalid request body (token)"
+                    msg: "Invalid request body"
                 });
                 return;
             }
 
-            if(
-                req.body.address==null ||
-                typeof(req.body.address)!=="string"
-            ) {
-                res.status(400).json({
-                    msg: "Invalid request body (address)"
-                });
-                return;
-            }
-
-            try {
-                if(!this.swapContract.isValidAddress(req.body.address)) {
-                    res.status(400).json({
-                        msg: "Invalid request body (address)"
-                    });
-                    return;
-                }
-            } catch (e) {
-                res.status(400).json({
-                    msg: "Invalid request body (address)"
-                });
-                return;
-            }
-
-            if(
-                req.body.paymentHash==null ||
-                typeof(req.body.paymentHash)!=="string" ||
-                req.body.paymentHash.length!==64 ||
-                !HEX_REGEX.test(req.body.paymentHash)
-            ) {
-                res.status(400).json({
-                    msg: "Invalid request body (paymentHash)"
-                });
-                return;
-            }
-
-            if(
-                req.body.amount==null ||
-                typeof(req.body.amount)!=="string"
-            ) {
-                res.status(400).json({
-                    msg: "Invalid request body (amount)"
-                });
-                return;
-            }
-
-            let amountBD: BN;
-            try {
-                amountBD = new BN(req.body.amount);
-            } catch (e) {
-                res.status(400).json({
-                    msg: "Invalid request body (amount)"
-                });
-                return;
-            }
-
-            if(amountBD.lt(this.config.min)) {
+            if(parsedBody.amount.lt(this.config.min)) {
                 res.status(400).json({
                     msg: "Amount too low"
                 });
                 return;
             }
 
-            if(amountBD.gt(this.config.max)) {
+            if(parsedBody.amount.gt(this.config.max)) {
                 res.status(400).json({
                     msg: "Amount too high"
                 });
                 return;
             }
 
-            const useToken = this.swapContract.toTokenAddress(req.body.token);
-            const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
-
-            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(amountBD, useToken);
-            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken);
-
-            const balance = await this.swapContract.getBalance(useToken, true);
-
-            if(amountInToken.sub(swapFeeInToken).gt(balance)) {
-                res.status(400).json({
-                    msg: "Not enough liquidity"
-                });
-                return;
-            }
-
-            if(
-                req.body.expiry==null ||
-                typeof(req.body.expiry)!=="number" ||
-                isNaN(req.body.expiry) ||
-                req.body.expiry<=0
-            ) {
+            if(parsedBody.expiry<=0) {
                 res.status(400).json({
                     msg: "Invalid request body (expiry)"
                 });
                 return;
             }
 
+            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
+            const swapFee = this.config.baseFee.add(parsedBody.amount.mul(this.config.feePPM).div(new BN(1000000)));
+
+            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount, useToken);
+            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken);
+
+            const balance = await this.swapContract.getBalance(useToken, true);
+
+            const totalSwapOut = amountInToken.sub(swapFeeInToken);
+
+            const hasEnoughBalance = balance.gte(totalSwapOut);
+            if(!hasEnoughBalance) {
+                res.status(400).json({
+                    msg: "Not enough liquidity"
+                });
+                return;
+            }
+
             const hodlInvoiceObj: any = {
-                description: req.body.address,
+                description: parsedBody.address,
                 cltv_delta: this.config.minCltv.add(new BN(5)).toString(10),
-                expires_at: new Date(Date.now()+(req.body.expiry*1000)).toISOString(),
-                id: req.body.paymentHash,
-                tokens: amountBD.toString(10)
+                expires_at: new Date(Date.now()+(parsedBody.expiry*1000)).toISOString(),
+                id: parsedBody.paymentHash,
+                tokens: parsedBody.amount.toString(10)
             };
 
             console.log("[From BTC-LN: REST.CreateInvoice] creating hodl invoice: ", hodlInvoiceObj);
@@ -505,7 +463,6 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
             console.log("[From BTC-LN: REST.CreateInvoice] hodl invoice created: ", hodlInvoice);
 
-            const paymentHash = Buffer.from(req.body.paymentHash, "hex");
             const createdSwap = new FromBtcLnSwapAbs<T>(hodlInvoice.request, swapFee);
 
             //Pre-compute the security deposit
@@ -519,64 +476,62 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 baseSD = (await this.swapContract.getRefundFee()).mul(new BN(2));
             }
 
-            const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(amountBD.sub(swapFee), this.swapContract.getNativeCurrencyAddress());
+            const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount.sub(swapFee), this.swapContract.getNativeCurrencyAddress());
             const apyPPM = new BN(Math.floor(this.config.securityDepositAPY*1000000));
             const variableSD = swapValueInNativeCurrency.mul(apyPPM).mul(expiryTimeout).div(new BN(1000000)).div(secondsInYear);
+
+            const totalSecurityDeposit = baseSD.add(variableSD);
 
             createdSwap.data = await this.swapContract.createSwapData(
                 ChainSwapType.HTLC,
                 this.swapContract.getAddress(),
-                req.body.address, useToken,
+                parsedBody.address,
+                useToken,
                 null,
-                req.body.paymentHash,
+                parsedBody.paymentHash,
                 null,
                 null,
                 0,
                 false,
                 true,
-                baseSD.add(variableSD),
+                totalSecurityDeposit,
                 new BN(0)
             );
 
-            await this.storageManager.saveData(req.body.paymentHash, createdSwap);
+            await this.storageManager.saveData(parsedBody.paymentHash, createdSwap);
 
             res.status(200).json({
                 msg: "Success",
                 data: {
                     pr: hodlInvoice.request,
                     swapFee: swapFeeInToken.toString(10),
-                    total: amountInToken.sub(swapFeeInToken).toString(10),
+                    total: totalSwapOut.toString(10),
                     intermediaryKey: this.swapContract.getAddress(),
-                    securityDeposit: baseSD.add(variableSD).toString(10)
+                    securityDeposit: totalSecurityDeposit.toString(10)
                 }
             });
 
-        });
+        }));
 
 
-        restServer.post(this.path+"/getInvoiceStatus", async (req, res) => {
+        restServer.post(this.path+"/getInvoiceStatus", expressHandlerWrapper(async (req, res) => {
             /**
              * paymentHash: string          payment hash of the invoice
              */
-            if (
-                req.body == null ||
-
-                req.body.paymentHash == null ||
-                typeof(req.body.paymentHash) !== "string" ||
-                req.body.paymentHash.length !== 64
-            ) {
-                res.status(400).json({
-                    msg: "Invalid request body (paymentHash)"
-                });
-                return;
-            }
+            const parsedBody = verifySchema(req.body, {
+                paymentHash: (val: string) => val!=null &&
+                        typeof(val)==="string" &&
+                        val.length===64 &&
+                        HEX_REGEX.test(val) ? val: null,
+            });
 
             const invoice = await lncli.getInvoice({
-                id: req.body.paymentHash,
+                id: parsedBody.paymentHash,
                 lnd: this.LND
             });
 
-            if(invoice==null) {
+            const isInvoiceFound = invoice!=null;
+            if(!isInvoiceFound) {
                 res.status(200).json({
                     code: 10001,
                     msg: "Invoice expired/canceled"
@@ -584,15 +539,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 return;
             }
 
-            try {
-                if(!this.swapContract.isValidAddress(invoice.description)) {
-                    res.status(200).json({
-                        code: 10001,
-                        msg: "Invoice expired/canceled"
-                    });
-                    return;
-                }
-            } catch (e) {
+            if(!this.swapContract.isValidAddress(invoice.description)) {
                 res.status(200).json({
                     code: 10001,
                     msg: "Invoice expired/canceled"
@@ -600,7 +547,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 return;
             }
 
-            if (!invoice.is_held) {
+            const isBeingPaid = invoice.is_held;
+            if (!isBeingPaid) {
                 if (invoice.is_canceled) {
                     res.status(200).json({
                         code: 10001,
@@ -624,133 +572,115 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 msg: "Success"
             });
 
-        });
+        }));
 
-        restServer.post(this.path+"/getInvoicePaymentAuth", async (req, res) => {
-            try {
-                /**
-                 * paymentHash: string          payment hash of the invoice
-                 */
-                if (
-                    req.body == null ||
+        restServer.post(this.path+"/getInvoicePaymentAuth", expressHandlerWrapper(async (req, res) => {
+            /**
+             * paymentHash: string          payment hash of the invoice
+             */
+            const parsedBody = verifySchema(req.body, {
+                paymentHash: (val: string) => val!=null &&
+                            typeof(val)==="string" &&
+                            val.length===64 &&
+                            HEX_REGEX.test(val) ? val: null,
+            });
 
-                    req.body.paymentHash == null ||
-                    typeof(req.body.paymentHash) !== "string" ||
-                    req.body.paymentHash.length !== 64
-                ) {
-                    res.status(400).json({
-                        msg: "Invalid request body (paymentHash)"
-                    });
-                    return;
-                }
+            const invoice = await lncli.getInvoice({
+                id: parsedBody.paymentHash,
+                lnd: this.LND
+            });
 
-                const invoice = await lncli.getInvoice({
-                    id: req.body.paymentHash,
-                    lnd: this.LND
+            const isInvoiceFound = invoice!=null;
+            if (!isInvoiceFound) {
+                res.status(200).json({
+                    code: 10001,
+                    msg: "Invoice expired/canceled"
                 });
+                return;
+            }
 
-                if (invoice == null) {
+            if (!this.swapContract.isValidAddress(invoice.description)) {
+                res.status(200).json({
+                    code: 10001,
+                    msg: "Invoice expired/canceled"
+                });
+                return;
+            }
+
+            const isBeingPaid = invoice.is_held;
+            if (!isBeingPaid) {
+                if (invoice.is_canceled) {
                     res.status(200).json({
                         code: 10001,
                         msg: "Invoice expired/canceled"
                     });
-                    return;
+                } else if (invoice.is_confirmed) {
+                    res.status(200).json({
+                        code: 10002,
+                        msg: "Invoice already paid"
+                    });
+                } else {
+                    res.status(200).json({
+                        code: 10003,
+                        msg: "Invoice yet unpaid"
+                    });
                 }
+                return;
+            }
+
+            const invoiceData: FromBtcLnSwapAbs<T> = this.storageManager.data[req.body.paymentHash];
+
+            const isSwapFound = invoiceData != null;
+            if (!isSwapFound) {
+                res.status(200).json({
+                    code: 10001,
+                    msg: "Invoice expired/canceled"
+                });
+                return;
+            }
+
+            if (invoiceData.state === FromBtcLnSwapState.CREATED) {
+                console.log("[From BTC-LN: REST.GetInvoicePaymentAuth] held ln invoice: ", invoice);
 
                 try {
-                    if (!this.swapContract.isValidAddress(invoice.description)) {
-                        res.status(200).json({
-                            code: 10001,
-                            msg: "Invoice expired/canceled"
-                        });
-                        return;
-                    }
+                    await this.htlcReceived(invoiceData, invoice);
                 } catch (e) {
-                    res.status(200).json({
-                        code: 10001,
-                        msg: "Invoice expired/canceled"
-                    });
+                    res.status(200).json(e);
                     return;
                 }
-
-                if (!invoice.is_held) {
-                    if (invoice.is_canceled) {
-                        res.status(200).json({
-                            code: 10001,
-                            msg: "Invoice expired/canceled"
-                        });
-                    } else if (invoice.is_confirmed) {
-                        res.status(200).json({
-                            code: 10002,
-                            msg: "Invoice already paid"
-                        });
-                    } else {
-                        res.status(200).json({
-                            code: 10003,
-                            msg: "Invoice yet unpaid"
-                        });
-                    }
-                    return;
-                }
-
-                const invoiceData: FromBtcLnSwapAbs<T> = this.storageManager.data[req.body.paymentHash];
-
-                if (invoiceData == null) {
-                    res.status(200).json({
-                        code: 10001,
-                        msg: "Invoice expired/canceled"
-                    });
-                    return;
-                }
-
-                if (invoiceData.state === FromBtcLnSwapState.CREATED) {
-                    console.log("[From BTC-LN: REST.GetInvoicePaymentAuth] held ln invoice: ", invoice);
-
-                    try {
-                        await this.htlcReceived(invoiceData, invoice);
-                    } catch (e) {
-                        res.status(200).json(e);
-                        return;
-                    }
-                }
-
-                if (invoiceData.state === FromBtcLnSwapState.CANCELED) {
-                    res.status(200).json({
-                        code: 10001,
-                        msg: "Invoice expired/canceled"
-                    });
-                    return;
-                }
-
-                if (invoiceData.state === FromBtcLnSwapState.COMMITED) {
-                    res.status(200).json({
-                        code: 10004,
-                        msg: "Invoice already committed"
-                    });
-                    return;
-                }
-
-                const sigData = await this.swapContract.getInitSignature(invoiceData.data, this.nonce, this.config.authorizationTimeout);
-
-                res.status(200).json({
-                    code: 10000,
-                    msg: "Success",
-                    data: {
-                        address: this.swapContract.getAddress(),
-                        data: invoiceData.serialize().data,
-                        nonce: sigData.nonce,
-                        prefix: sigData.prefix,
-                        timeout: sigData.timeout,
-                        signature: sigData.signature
-                    }
-                });
-            } catch (e) {
-                console.error(e);
-                res.status(500).json({
-                    msg: "Internal server error"
-                });
             }
-        });
+
+            if (invoiceData.state === FromBtcLnSwapState.CANCELED) {
+                res.status(200).json({
+                    code: 10001,
+                    msg: "Invoice expired/canceled"
+                });
+                return;
+            }
+
+            if (invoiceData.state === FromBtcLnSwapState.COMMITED) {
+                res.status(200).json({
+                    code: 10004,
+                    msg: "Invoice already committed"
+                });
+                return;
+            }
+
+            const sigData = await this.swapContract.getInitSignature(invoiceData.data, this.nonce, this.config.authorizationTimeout);
+
+            res.status(200).json({
+                code: 10000,
+                msg: "Success",
+                data: {
+                    address: this.swapContract.getAddress(),
+                    data: invoiceData.serialize().data,
+                    nonce: sigData.nonce,
+                    prefix: sigData.prefix,
+                    timeout: sigData.timeout,
+                    signature: sigData.signature
+                }
+            });
+        }));
 
         console.log("[From BTC-LN: REST] Started at path: ", this.path);
     }
@@ -764,7 +694,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
     async startWatchdog() {
         let rerun;
         rerun = async () => {
-            await this.checkPastSwaps();
+            await this.checkPastSwaps().catch( e => console.error(e));
             setTimeout(rerun, this.config.refundInterval);
         };
         await rerun();

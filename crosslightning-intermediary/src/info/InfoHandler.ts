@@ -17,6 +17,9 @@ type InfoHandlerResponse = {
     signature: string
 }
 
+/**
+ * Handles info requests to POST /info returning information about fees, swap params, etc.
+ */
 export class InfoHandler<T extends SwapData> {
 
     readonly swapContract: SwapContract<T, any>;
@@ -30,6 +33,11 @@ export class InfoHandler<T extends SwapData> {
         this.swapHandlers = swapHandlers;
     }
 
+    /**
+     * Adds a listener to POST /info
+     *
+     * @param restServer
+     */
     startRestServer(restServer: Express) {
 
         restServer.post(this.path+"/info", async (req, res) => {

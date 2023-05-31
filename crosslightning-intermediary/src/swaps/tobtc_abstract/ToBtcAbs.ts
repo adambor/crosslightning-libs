@@ -13,8 +13,7 @@ import {
     RefundEvent, SwapContract, SwapData, SwapEvent, ChainSwapType, TokenAddress} from "crosslightning-base";
 import {BitcoinRpc, BtcBlock} from "crosslightning-base/dist";
 import {AuthenticatedLnd} from "lightning";
-import {ToBtcLnSwapAbs} from "../..";
-import {createHash} from "crypto";
+import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
 
 const OUTPUT_SCRIPT_MAX_LENGTH = 200;
 
@@ -44,6 +43,9 @@ export type ToBtcConfig = {
     swapCheckInterval: number
 }
 
+/**
+ * Handler for to BTC swaps, utilizing PTLCs (proof-time locked contracts) using btc relay (on-chain bitcoin SPV)
+ */
 export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T>  {
 
     readonly type = SwapHandlerType.TO_BTC;
@@ -70,16 +72,36 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         this.config = config;
     }
 
-    getHash(address: string, nonce: BN, amount: BN, bitcoinNetwork: bitcoin.networks.Network): Buffer {
+    /**
+     * Returns the payment hash of the swap, takes swap nonce into account. Payment hash is chain-specific.
+     *
+     * @param address
+     * @param nonce
+     * @param amount
+     * @param bitcoinNetwork
+     */
+    private getHash(address: string, nonce: BN, amount: BN, bitcoinNetwork: bitcoin.networks.Network): Buffer {
         const parsedOutputScript = bitcoin.address.toOutputScript(address, bitcoinNetwork);
         return this.swapContract.getHashForOnchain(parsedOutputScript, amount, nonce);
     }
 
-    getChainHash(swap: ToBtcSwapAbs<T>): Buffer {
+    /**
+     * Returns payment hash of the swap (hash WITH using payment nonce)
+     *
+     * @param swap
+     */
+    private getChainHash(swap: ToBtcSwapAbs<T>): Buffer {
         return this.getHash(swap.address, swap.nonce, swap.amount, this.config.bitcoinNetwork);
     }
 
-    async processPaymentResult(tx: {blockhash: string, confirmations: number, txid: string, hex: string}, payment: ToBtcSwapAbs<T>, vout: number): Promise<boolean> {
+    /**
+     * Tries to claim the swap after our transaction was confirmed
+     *
+     * @param tx
+     * @param payment
+     * @param vout
+     */
+    private async processPaymentResult(tx: {blockhash: string, confirmations: number, txid: string, hex: string}, payment: ToBtcSwapAbs<T>, vout: number): Promise<boolean> {
         //Set flag that we are sending the transaction already, so we don't end up with race condition
         const blockHeader = await this.bitcoinRpc.getBlockHeader(tx.blockhash);
 
@@ -94,7 +116,10 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         return true;
     }
 
-    async checkPastSwaps() {
+    /**
+     * Checks past swaps, deletes ones that are already expired.
+     */
+    private async checkPastSwaps() {
 
         for(let key in this.storageManager.data) {
             const payment: ToBtcSwapAbs<T> = this.storageManager.data[key];
@@ -126,7 +151,10 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
     }
 
-    async checkBtcTxs() {
+    /**
+     * Checks active sent out bitcoin transactions
+     */
+    private async checkBtcTxs() {
 
         const removeTxIds = [];
 
@@ -144,10 +172,10 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                     continue;
                 }
 
-                if(tx.confirmations==null) tx.confirmations = 0;
+                tx.confirmations = tx.confirmations || 0;
 
-                if(tx.confirmations<payment.data.getConfirmations()) {
-                    //not enough confirmations
+                const hasEnoughConfirmations = tx.confirmations>=payment.data.getConfirmations();
+                if(!hasEnoughConfirmations) {
                     continue;
                 }
 
@@ -179,14 +207,25 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             delete this.activeSubscriptions[txId];
         });
 
-        if(removeTxIds.length>0) console.log("[ToBtc: Bitcoin.CheckTransactions] Still subscribed to: ", Object.keys(this.activeSubscriptions));
+        //if(removeTxIds.length>0) console.log("[ToBtc: Bitcoin.CheckTransactions] Still subscribed to: ", Object.keys(this.activeSubscriptions));
     }
 
-    subscribeToPayment(payment: ToBtcSwapAbs<T>) {
+    /**
+     * Subscribes to and periodically checks txId used to send out funds for the swap for enough confirmations
+     *
+     * @param payment
+     */
+    private subscribeToPayment(payment: ToBtcSwapAbs<T>) {
         this.activeSubscriptions[payment.txId] = payment;
     }
 
-    async processInitialized(payment: ToBtcSwapAbs<T>, data: T) {
+    /**
+     * Called after swap was successfully committed, will check if bitcoin tx is already sent, if not tries to send it and subscribes to it
+     *
+     * @param payment
+     * @param data
+     */
+    private async processInitialized(payment: ToBtcSwapAbs<T>, data: T) {
 
         if(payment.state===ToBtcSwapState.BTC_SENDING) {
             //Payment was signed (maybe also sent)
@@ -197,7 +236,9 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 console.error(e);
             }
 
-            if(tx==null) {
+            const isTxSent = tx!=null;
+
+            if(!isTxSent) {
                 //Reset the state to COMMITED
                 payment.state = ToBtcSwapState.COMMITED;
             } else {
@@ -232,7 +273,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             const minRequiredCLTV = this.getExpiryFromCLTV(payment.preferedConfirmationTarget, payment.data.getConfirmations());
 
-            if(tsDelta.lt(minRequiredCLTV)) {
+            const hasRequiredCLTVDelta = tsDelta.gte(minRequiredCLTV);
+            if(!hasRequiredCLTVDelta) {
                 console.error("[To BTC: Solana.Initialize] TS delta too low, required: "+minRequiredCLTV.toString(10)+" has: "+tsDelta.toString(10));
                 await setNonPayableAndSave();
                 return;
@@ -320,7 +362,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             //Check tx fee
             const txFee = new BN(psbt.getFee());
-            if(maxNetworkFee.lt(txFee)) {
+            const swapPaysEnoughNetworkFee = maxNetworkFee.gte(txFee);
+            if(!swapPaysEnoughNetworkFee) {
                 //TODO: Here we can maybe retry with a bit different confirmation target
                 console.error("[To BTC: Solana.Initialize] Fee changed too much! Max possible fee: "+maxNetworkFee.toString(10)+" required transaction fee: "+txFee.toString(10));
                 await unlockUtxos();
@@ -365,7 +408,12 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
     }
 
-    async processEvent(eventData: SwapEvent<T>[]): Promise<boolean> {
+    /**
+     * Chain event handler
+     *
+     * @param eventData
+     */
+    private async processEvent(eventData: SwapEvent<T>[]): Promise<boolean> {
         for(let event of eventData) {
             if(event instanceof InitializeEvent) {
                 if(!this.swapContract.areWeClaimer(event.swapData)) {
@@ -409,7 +457,6 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             }
             if(event instanceof ClaimEvent) {
                 const paymentHash = event.paymentHash;
-                const paymentHashBuffer = Buffer.from(event.paymentHash, "hex");
 
                 const savedInvoice = this.storageManager.data[paymentHash];
 
@@ -426,7 +473,6 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             }
             if(event instanceof RefundEvent) {
                 const paymentHash = event.paymentHash;
-                const paymentHashBuffer = Buffer.from(event.paymentHash, "hex");
 
                 const savedInvoice = this.storageManager.data[paymentHash];
 
@@ -446,7 +492,13 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         return true;
     }
 
-    getExpiryFromCLTV(confirmationTarget, confirmations) {
+    /**
+     * Returns required expiry delta for swap params
+     *
+     * @param confirmationTarget
+     * @param confirmations
+     */
+    private getExpiryFromCLTV(confirmationTarget: number, confirmations: number): BN {
         //Blocks = 10 + (confirmations + confirmationTarget)*2
         //Time = 3600 + (600*blocks*2)
         const cltv = this.config.minChainCltv.add(
@@ -458,7 +510,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
     }
 
     startRestServer(restServer: Express) {
-        restServer.post(this.path+"/payInvoice", async (req, res) => {
+        restServer.post(this.path+"/payInvoice", expressHandlerWrapper(async (req, res) => {
             /**
              * address: string                      Bitcoin destination address
              * amount: string                       Amount to send (in satoshis)
@@ -467,621 +519,373 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
              * nonce: string                        Nonce for the swap (used for replay protection)
              * token: string                        Desired token to use
              * offerer: string                      Address of the caller
+             * exactIn: boolean                     Whether the swap should be an exact in instead of exact out swap
              */
-            if (
-                req.body == null ||
+            const parsedBody = verifySchema(req.body, {
+                address: FieldTypeEnum.String,
+                amount: FieldTypeEnum.BN,
+                confirmationTarget: FieldTypeEnum.Number,
+                confirmations: FieldTypeEnum.Number,
+                nonce: FieldTypeEnum.BN,
+                token: (val: string) => val!=null &&
+                        typeof(val)==="string" &&
+                        this.allowedTokens.has(val) ? val : null,
+                offerer: (val: string) => val!=null &&
+                        typeof(val)==="string" &&
+                        this.swapContract.isValidAddress(val) ? val : null,
+                exactIn: FieldTypeEnum.Boolean
+            });
 
-                req.body.address == null ||
-                typeof(req.body.address) !== "string" ||
-
-                req.body.amount == null ||
-                typeof(req.body.amount) !== "string" ||
-
-                req.body.confirmationTarget == null ||
-                typeof(req.body.confirmationTarget) !== "number" ||
-
-                req.body.confirmations == null ||
-                typeof(req.body.confirmations) !== "number" ||
-
-                req.body.nonce == null ||
-                typeof(req.body.nonce) !== "string" ||
-
-                req.body.token == null ||
-                typeof(req.body.token) !== "string" ||
-
-                req.body.offerer == null ||
-                typeof(req.body.offerer) !== "string"
-            ) {
+            if (parsedBody==null) {
                 res.status(400).json({
-                    msg: "Invalid request body (address/amount/confirmationTarget/confirmations/nonce/token/offerer)"
+                    msg: "Invalid request body"
                 });
                 return;
             }
 
-            if(!this.swapContract.isValidAddress(req.body.offerer)) {
+            if(parsedBody.nonce.isNeg()) {
                 res.status(400).json({
-                    msg: "Invalid request body (offerer)"
+                    msg: "Invalid request body (nonce - cannot be parsed)"
                 });
                 return;
             }
 
-            if(!this.allowedTokens.has(req.body.token)) {
+            const nonceBuffer = Buffer.from(parsedBody.nonce.toArray("be", 8));
+            const firstPart = new BN(nonceBuffer.slice(0, 5), "be");
+
+            const maxAllowedValue = new BN(Math.floor(Date.now()/1000)-600000000);
+            if(firstPart.gt(maxAllowedValue)) {
                 res.status(400).json({
-                    msg: "Invalid request body (token)"
+                    msg: "Invalid request body (nonce - too high)"
                 });
                 return;
             }
+
+            if(parsedBody.confirmationTarget>this.config.maxConfTarget) {
+                res.status(400).json({
+                    msg: "Invalid request body (confirmationTarget - too high)"
+                });
+                return;
+            }
+            if(parsedBody.confirmationTarget<this.config.minConfTarget) {
+                res.status(400).json({
+                    msg: "Invalid request body (confirmationTarget - too low)"
+                });
+                return;
+            }
+
+            if(parsedBody.confirmations>this.config.maxConfirmations) {
+                res.status(400).json({
+                    msg: "Invalid request body (confirmations - too high)"
+                });
+                return;
+            }
+            if(parsedBody.confirmations<this.config.minConfirmations) {
+                res.status(400).json({
+                    msg: "Invalid request body (confirmations - too low)"
+                });
+                return;
+            }
+
+            let parsedOutputScript;
+
+            try {
+                parsedOutputScript = bitcoin.address.toOutputScript(parsedBody.address, this.config.bitcoinNetwork);
+            } catch (e) {
+                res.status(400).json({
+                    msg: "Invalid request body (address - cannot be parsed)"
+                });
+                return;
+            }
+
+            if(parsedOutputScript.length > OUTPUT_SCRIPT_MAX_LENGTH) {
+                res.status(400).json({
+                    msg: "Invalid request body (address's output script - too long)"
+                });
+                return;
+            }
+
+            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
             let amountBD: BN;
-
-            try {
-                amountBD = new BN(req.body.amount);
-            } catch (e) {
-                res.status(400).json({
-                    msg: "Invalid request body (amount - cannot be parsed)"
-                });
-                return;
-            }
-
-            let nonce: BN;
-
-            try {
-                nonce = new BN(req.body.nonce);
-            } catch (e) {
-                res.status(400).json({
-                    msg: "Invalid request body (nonce - cannot be parsed)"
-                });
-                return;
-            }
-
-            const nonceBuffer = Buffer.from(nonce.toArray("be", 8));
-            const firstPart = new BN(nonceBuffer.slice(0, 5), "be");
-
-            const maxAllowedValue = new BN(Math.floor(Date.now()/1000)-600000000);
-            if(firstPart.gt(maxAllowedValue)) {
-                res.status(400).json({
-                    msg: "Invalid request body (nonce - too high)"
-                });
-                return;
-            }
-
-            if(req.body.confirmationTarget>this.config.maxConfTarget) {
-                res.status(400).json({
-                    msg: "Invalid request body (confirmationTarget - too high)"
-                });
-                return;
-            }
-            if(req.body.confirmationTarget<this.config.minConfTarget) {
-                res.status(400).json({
-                    msg: "Invalid request body (confirmationTarget - too low)"
-                });
-                return;
-            }
-
-            if(req.body.confirmations>this.config.maxConfirmations) {
-                res.status(400).json({
-                    msg: "Invalid request body (confirmations - too high)"
-                });
-                return;
-            }
-            if(req.body.confirmations<this.config.minConfirmations) {
-                res.status(400).json({
-                    msg: "Invalid request body (confirmations - too low)"
-                });
-                return;
-            }
-
-            let parsedOutputScript;
-
-            try {
-                parsedOutputScript = bitcoin.address.toOutputScript(req.body.address, this.config.bitcoinNetwork);
-            } catch (e) {
-                res.status(400).json({
-                    msg: "Invalid request body (address - cannot be parsed)"
-                });
-                return;
-            }
-
-            if(parsedOutputScript.length > OUTPUT_SCRIPT_MAX_LENGTH) {
-                res.status(400).json({
-                    msg: "Invalid request body (address's output script - too long)"
-                });
-                return;
-            }
-
-            if(amountBD.lt(this.config.min)) {
-                res.status(400).json({
-                    code: 20003,
-                    msg: "Amount too low!",
-                    data: {
-                        min: this.config.min.toString(10),
-                        max: this.config.max.toString(10)
-                    }
-                });
-                return;
-            }
-            if(amountBD.gt(this.config.max)) {
-                res.status(400).json({
-                    code: 20004,
-                    msg: "Amount too high!",
-                    data: {
-                        min: this.config.min.toString(10),
-                        max: this.config.max.toString(10)
-                    }
-                });
-                return;
-            }
-
-            const expirySeconds = this.getExpiryFromCLTV(req.body.confirmationTarget, req.body.confirmations).add(new BN(this.config.gracePeriod)); //Add grace period another time, so the user has 1 hour to commit
-
-            let chainFeeResp;
-            try {
-                chainFeeResp = await lncli.getChainFeeEstimate({
-                    lnd: this.LND,
-                    send_to: [
-                        {
-                            address: req.body.address,
-                            tokens: parseInt(req.body.amount)
-                        }
-                    ],
-                    target_confirmations: req.body.confirmationTarget,
-                    utxo_confirmations: 0
-                });
-            } catch (e) {
-                console.error(e);
-            }
-
-            if(chainFeeResp==null) {
-                res.status(400).json({
-                    code: 20002,
-                    msg: "Insufficient liquidity!"
-                });
-            }
-
-            const networkFee = chainFeeResp.fee;
-            const feeSatsPervByte = chainFeeResp.tokens_per_vbyte;
-
-            console.log("[To BTC: REST.PayInvoice] Total network fee: ", networkFee);
-            console.log("[To BTC: REST.PayInvoice] Network fee (sats/vB): ", feeSatsPervByte);
-
-            const networkFeeAdjusted = new BN(networkFee).mul(this.config.networkFeeMultiplierPPM).div(new BN(1000000));
-            const feeSatsPervByteAdjusted = new BN(feeSatsPervByte).mul(this.config.networkFeeMultiplierPPM).div(new BN(1000000));
-
-            console.log("[To BTC: REST.PayInvoice] Adjusted total network fee: ", networkFeeAdjusted.toString(10));
-            console.log("[To BTC: REST.PayInvoice] Adjusted network fee (sats/vB): ", feeSatsPervByteAdjusted.toString(10));
-
-            const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
-
-            const useToken = this.swapContract.toTokenAddress(req.body.token);
-
-            const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(networkFeeAdjusted, useToken);
-            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken);
-            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(amountBD, useToken);
-
-            const total = amountInToken.add(swapFeeInToken).add(networkFeeInToken);
-
-            const currentTimestamp = new BN(Math.floor(Date.now()/1000));
-            const minRequiredExpiry = currentTimestamp.add(expirySeconds);
-
-            const payObject: T = await this.swapContract.createSwapData(
-                ChainSwapType.CHAIN_NONCED,
-                req.body.offerer,
-                this.swapContract.getAddress(),
-                useToken,
-                total,
-                this.getHash(req.body.address, nonce, amountBD, this.config.bitcoinNetwork).toString("hex"),
-                minRequiredExpiry,
-                nonce,
-                req.body.confirmations,
-                true,
-                false,
-                new BN(0),
-                new BN(0)
-            );
-
-            const sigData = await this.swapContract.getClaimInitSignature(payObject, this.nonce, this.config.authorizationTimeout);
-
-            const createdSwap = new ToBtcSwapAbs<T>(req.body.address, amountBD, swapFee, networkFeeAdjusted, nonce, req.body.confirmationTarget, new BN(sigData.timeout));
-            const paymentHash = this.getChainHash(createdSwap);
-            createdSwap.data = payObject;
-
-            await this.storageManager.saveData(paymentHash.toString("hex"), createdSwap);
-
-            res.status(200).json({
-                code: 20000,
-                msg: "Success",
-                data: {
-                    address: this.swapContract.getAddress(),
-                    satsPervByte: feeSatsPervByteAdjusted.toString(10),
-                    networkFee: networkFeeInToken.toString(10),
-                    swapFee: swapFeeInToken.toString(10),
-                    totalFee: swapFeeInToken.add(networkFeeInToken).toString(10),
-                    total: total.toString(10),
-                    minRequiredExpiry: minRequiredExpiry.toString(),
-
-                    data: payObject.serialize(),
-
-                    nonce: sigData.nonce,
-                    prefix: sigData.prefix,
-                    timeout: sigData.timeout,
-                    signature: sigData.signature
-                }
-            });
-
-        });
-
-        restServer.post(this.path+"/payInvoiceExactIn", async (req, res) => {
-            /**
-             * address: string                      Bitcoin destination address
-             * amount: string                       Amount to send (in desired token's base units)
-             * confirmationTarget: number           Desired confirmation target for the swap, how big of a fee should be assigned to TX
-             * confirmations: number                Required number of confirmations for us to claim the swap
-             * nonce: string                        Nonce for the swap (used for replay protection)
-             * token: string                        Desired token to use
-             * offerer: string                      Address of the caller
-             */
-            if (
-                req.body == null ||
-
-                req.body.address == null ||
-                typeof(req.body.address) !== "string" ||
-
-                req.body.amount == null ||
-                typeof(req.body.amount) !== "string" ||
-
-                req.body.confirmationTarget == null ||
-                typeof(req.body.confirmationTarget) !== "number" ||
-
-                req.body.confirmations == null ||
-                typeof(req.body.confirmations) !== "number" ||
-
-                req.body.nonce == null ||
-                typeof(req.body.nonce) !== "string" ||
-
-                req.body.token == null ||
-                typeof(req.body.token) !== "string" ||
-
-                req.body.offerer == null ||
-                typeof(req.body.offerer) !== "string"
-            ) {
-                res.status(400).json({
-                    msg: "Invalid request body (address/amount/confirmationTarget/confirmations/nonce/token/offerer)"
-                });
-                return;
-            }
-
-            if(!this.swapContract.isValidAddress(req.body.offerer)) {
-                res.status(400).json({
-                    msg: "Invalid request body (offerer)"
-                });
-                return;
-            }
-
-            if(!this.allowedTokens.has(req.body.token)) {
-                res.status(400).json({
-                    msg: "Invalid request body (token)"
-                });
-                return;
-            }
-
-            let tokenAmountBD: BN;
-
-            try {
-                tokenAmountBD = new BN(req.body.amount);
-            } catch (e) {
-                res.status(400).json({
-                    msg: "Invalid request body (amount - cannot be parsed)"
-                });
-                return;
-            }
-
-            let nonce: BN;
-
-            try {
-                nonce = new BN(req.body.nonce);
-            } catch (e) {
-                res.status(400).json({
-                    msg: "Invalid request body (nonce - cannot be parsed)"
-                });
-                return;
-            }
-
-            const nonceBuffer = Buffer.from(nonce.toArray("be", 8));
-            const firstPart = new BN(nonceBuffer.slice(0, 5), "be");
-
-            const maxAllowedValue = new BN(Math.floor(Date.now()/1000)-600000000);
-            if(firstPart.gt(maxAllowedValue)) {
-                res.status(400).json({
-                    msg: "Invalid request body (nonce - too high)"
-                });
-                return;
-            }
-
-            if(req.body.confirmationTarget>this.config.maxConfTarget) {
-                res.status(400).json({
-                    msg: "Invalid request body (confirmationTarget - too high)"
-                });
-                return;
-            }
-            if(req.body.confirmationTarget<this.config.minConfTarget) {
-                res.status(400).json({
-                    msg: "Invalid request body (confirmationTarget - too low)"
-                });
-                return;
-            }
-
-            if(req.body.confirmations>this.config.maxConfirmations) {
-                res.status(400).json({
-                    msg: "Invalid request body (confirmations - too high)"
-                });
-                return;
-            }
-            if(req.body.confirmations<this.config.minConfirmations) {
-                res.status(400).json({
-                    msg: "Invalid request body (confirmations - too low)"
-                });
-                return;
-            }
-
-            let parsedOutputScript;
-
-            try {
-                parsedOutputScript = bitcoin.address.toOutputScript(req.body.address, this.config.bitcoinNetwork);
-            } catch (e) {
-                res.status(400).json({
-                    msg: "Invalid request body (address - cannot be parsed)"
-                });
-                return;
-            }
-
-            if(parsedOutputScript.length > OUTPUT_SCRIPT_MAX_LENGTH) {
-                res.status(400).json({
-                    msg: "Invalid request body (address's output script - too long)"
-                });
-                return;
-            }
-
-            const useToken = this.swapContract.toTokenAddress(req.body.token);
-
-            let amountBD = await this.swapPricing.getToBtcSwapAmount(tokenAmountBD, useToken);
-
-            //Decrease by base fee
-            amountBD = amountBD.sub(this.config.baseFee);
-
-            const expirySeconds = this.getExpiryFromCLTV(req.body.confirmationTarget, req.body.confirmations).add(new BN(this.config.gracePeriod)); //Add grace period another time, so the user has 1 hour to commit
-
-            let chainFeeResp;
-            try {
-                chainFeeResp = await lncli.getChainFeeEstimate({
-                    lnd: this.LND,
-                    send_to: [
-                        {
-                            address: req.body.address,
-                            tokens: amountBD.toNumber()
-                        }
-                    ],
-                    target_confirmations: req.body.confirmationTarget,
-                    utxo_confirmations: 0
-                });
-            } catch (e) {
-                console.error(e);
-            }
-
-            if(chainFeeResp==null) {
-                res.status(400).json({
-                    code: 20002,
-                    msg: "Insufficient liquidity!"
-                });
-            }
-
-            const networkFee = chainFeeResp.fee;
-            const feeSatsPervByte = chainFeeResp.tokens_per_vbyte;
-
-            console.log("[To BTC: REST.PayInvoice] Total network fee: ", networkFee);
-            console.log("[To BTC: REST.PayInvoice] Network fee (sats/vB): ", feeSatsPervByte);
-
-            const networkFeeAdjusted = new BN(networkFee).mul(this.config.networkFeeMultiplierPPM).div(new BN(1000000));
-            const feeSatsPervByteAdjusted = new BN(feeSatsPervByte).mul(this.config.networkFeeMultiplierPPM).div(new BN(1000000));
-
-            console.log("[To BTC: REST.PayInvoice] Adjusted total network fee: ", networkFeeAdjusted.toString(10));
-            console.log("[To BTC: REST.PayInvoice] Adjusted network fee (sats/vB): ", feeSatsPervByteAdjusted.toString(10));
-
-            //Decrease by network fee
-            amountBD = amountBD.sub(networkFeeAdjusted);
-
-            //Decrease by percentage fee
-            amountBD = amountBD.mul(new BN(1000000)).div(this.config.feePPM.add(new BN(1000000)));
-
-            if(amountBD.lt(this.config.min)) {
-                res.status(400).json({
-                    code: 20003,
-                    msg: "Amount too low!",
-                    data: {
-                        min: this.config.min.toString(10),
-                        max: this.config.max.toString(10)
-                    }
-                });
-                return;
-            }
-            if(amountBD.gt(this.config.max)) {
-                res.status(400).json({
-                    code: 20004,
-                    msg: "Amount too high!",
-                    data: {
-                        min: this.config.min.toString(10),
-                        max: this.config.max.toString(10)
-                    }
-                });
-                return;
-            }
-
-            const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
-
-            const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(networkFeeAdjusted, useToken);
-            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken);
-            const amountInToken = tokenAmountBD.sub(swapFeeInToken).sub(networkFeeInToken);
-
-            const total = amountInToken.add(swapFeeInToken).add(networkFeeInToken);
-
-            const currentTimestamp = new BN(Math.floor(Date.now()/1000));
-            const minRequiredExpiry = currentTimestamp.add(expirySeconds);
-
-            const payObject: T = await this.swapContract.createSwapData(
-                ChainSwapType.CHAIN_NONCED,
-                req.body.offerer,
-                this.swapContract.getAddress(),
-                useToken,
-                total,
-                this.getHash(req.body.address, nonce, amountBD, this.config.bitcoinNetwork).toString("hex"),
-                minRequiredExpiry,
-                nonce,
-                req.body.confirmations,
-                true,
-                false,
-                new BN(0),
-                new BN(0)
-            );
-
-            const sigData = await this.swapContract.getClaimInitSignature(payObject, this.nonce, this.config.authorizationTimeout);
-
-            const createdSwap = new ToBtcSwapAbs<T>(req.body.address, amountBD, swapFee, networkFeeAdjusted, nonce, req.body.confirmationTarget, new BN(sigData.timeout));
-            const paymentHash = this.getChainHash(createdSwap);
-            createdSwap.data = payObject;
-
-            await this.storageManager.saveData(paymentHash.toString("hex"), createdSwap);
-
-            res.status(200).json({
-                code: 20000,
-                msg: "Success",
-                data: {
-                    address: this.swapContract.getAddress(),
-                    amount: amountBD.toString(10),
-                    satsPervByte: feeSatsPervByteAdjusted.toString(10),
-                    networkFee: networkFeeInToken.toString(10),
-                    swapFee: swapFeeInToken.toString(10),
-                    totalFee: swapFeeInToken.add(networkFeeInToken).toString(10),
-                    total: total.toString(10),
-                    minRequiredExpiry: minRequiredExpiry.toString(),
-
-                    data: payObject.serialize(),
-
-                    nonce: sigData.nonce,
-                    prefix: sigData.prefix,
-                    timeout: sigData.timeout,
-                    signature: sigData.signature
-                }
-            });
-
-        });
-
-        restServer.post(this.path+"/getRefundAuthorization", async (req, res) => {
-            try {
-                /**
-                 * paymentHash: string              Payment hash identifier of the swap
-                 */
-                if (
-                    req.body == null ||
-
-                    req.body.paymentHash == null ||
-                    typeof(req.body.paymentHash) !== "string"
-                ) {
+            if(parsedBody.exactIn) {
+                amountBD = await this.swapPricing.getToBtcSwapAmount(parsedBody.amount, useToken);
+
+                //Decrease by base fee
+                amountBD = amountBD.sub(this.config.baseFee);
+            } else {
+                amountBD = parsedBody.amount;
+
+                if(amountBD.lt(this.config.min)) {
                     res.status(400).json({
-                        msg: "Invalid request body (paymentHash)"
-                    });
-                    return;
-                }
-
-                const payment = this.storageManager.data[req.body.paymentHash];
-
-                if (payment == null || payment.state === ToBtcSwapState.SAVED) {
-                    res.status(200).json({
-                        code: 20007,
-                        msg: "Payment not found"
-                    });
-                    return;
-                }
-
-                if (payment.state === ToBtcSwapState.COMMITED) {
-                    res.status(200).json({
-                        code: 20008,
-                        msg: "Payment processing"
-                    });
-                    return;
-                }
-
-                if (payment.state === ToBtcSwapState.BTC_SENT || payment.state===ToBtcSwapState.BTC_SENDING) {
-                    res.status(200).json({
-                        code: 20006,
-                        msg: "Already paid",
+                        code: 20003,
+                        msg: "Amount too low!",
                         data: {
-                            txId: payment.txId
+                            min: this.config.min.toString(10),
+                            max: this.config.max.toString(10)
                         }
                     });
                     return;
                 }
-
-                if (payment.state === ToBtcSwapState.NON_PAYABLE) {
-                    const hash = Buffer.from(req.body.paymentHash, "hex");
-
-                    const isCommited = await this.swapContract.isCommited(payment.data);
-
-                    if (!isCommited) {
-                        res.status(400).json({
-                            code: 20005,
-                            msg: "Not committed"
-                        });
-                        return;
-                    }
-
-                    const refundResponse = await this.swapContract.getRefundSignature(payment.data, this.config.authorizationTimeout);
-
-                    res.status(200).json({
-                        code: 20000,
-                        msg: "Success",
+                if(amountBD.gt(this.config.max)) {
+                    res.status(400).json({
+                        code: 20004,
+                        msg: "Amount too high!",
                         data: {
-                            address: this.swapContract.getAddress(),
-                            prefix: refundResponse.prefix,
-                            timeout: refundResponse.timeout,
-                            signature: refundResponse.signature
+                            min: this.config.min.toString(10),
+                            max: this.config.max.toString(10)
                         }
                     });
                     return;
                 }
+            }
 
-                res.status(500).json({
-                    code: 20009,
-                    msg: "Invalid payment status"
+            let chainFeeResp;
+            try {
+                chainFeeResp = await lncli.getChainFeeEstimate({
+                    lnd: this.LND,
+                    send_to: [
+                        {
+                            address: parsedBody.address,
+                            tokens: amountBD.toString(10)
+                        }
+                    ],
+                    target_confirmations: parsedBody.confirmationTarget,
+                    utxo_confirmations: 0
                 });
             } catch (e) {
                 console.error(e);
-                res.status(500).json({
-                    msg: "Internal server error"
-                });
             }
-        });
+
+            const hasEnoughFunds = chainFeeResp!=null;
+            if(!hasEnoughFunds) {
+                res.status(400).json({
+                    code: 20002,
+                    msg: "Insufficient liquidity!"
+                });
+                return;
+            }
+
+            const networkFee = chainFeeResp.fee;
+            const feeSatsPervByte = chainFeeResp.tokens_per_vbyte;
+
+            console.log("[To BTC: REST.PayInvoice] Total network fee: ", networkFee);
+            console.log("[To BTC: REST.PayInvoice] Network fee (sats/vB): ", feeSatsPervByte);
+
+            const networkFeeAdjusted = new BN(networkFee).mul(this.config.networkFeeMultiplierPPM).div(new BN(1000000));
+            const feeSatsPervByteAdjusted = new BN(feeSatsPervByte).mul(this.config.networkFeeMultiplierPPM).div(new BN(1000000));
+
+            console.log("[To BTC: REST.PayInvoice] Adjusted total network fee: ", networkFeeAdjusted.toString(10));
+            console.log("[To BTC: REST.PayInvoice] Adjusted network fee (sats/vB): ", feeSatsPervByteAdjusted.toString(10));
+
+            if(parsedBody.exactIn) {
+                //Decrease by network fee
+                amountBD = amountBD.sub(networkFeeAdjusted);
+
+                //Decrease by percentage fee
+                amountBD = amountBD.mul(new BN(1000000)).div(this.config.feePPM.add(new BN(1000000)));
+
+                if(amountBD.lt(this.config.min)) {
+                    res.status(400).json({
+                        code: 20003,
+                        msg: "Amount too low!",
+                        data: {
+                            min: this.config.min.toString(10),
+                            max: this.config.max.toString(10)
+                        }
+                    });
+                    return;
+                }
+                if(amountBD.gt(this.config.max)) {
+                    res.status(400).json({
+                        code: 20004,
+                        msg: "Amount too high!",
+                        data: {
+                            min: this.config.min.toString(10),
+                            max: this.config.max.toString(10)
+                        }
+                    });
+                    return;
+                }
+            }
+
+            const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
+
+            const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(networkFeeAdjusted, useToken);
+            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken);
+
+            let amountInToken: BN;
+            let total: BN;
+            if(parsedBody.exactIn) {
+                amountInToken = parsedBody.amount.sub(swapFeeInToken).sub(networkFeeInToken);
+                total = parsedBody.amount;
+            } else {
+                amountInToken = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount, useToken);
+                total = amountInToken.add(swapFeeInToken).add(networkFeeInToken);
+            }
+
+            //Add grace period another time, so the user has 1 hour to commit
+            const expirySeconds = this.getExpiryFromCLTV(parsedBody.confirmationTarget, parsedBody.confirmations).add(new BN(this.config.gracePeriod));
+            const currentTimestamp = new BN(Math.floor(Date.now()/1000));
+            const minRequiredExpiry = currentTimestamp.add(expirySeconds);
+
+            const payObject: T = await this.swapContract.createSwapData(
+                ChainSwapType.CHAIN_NONCED,
+                parsedBody.offerer,
+                this.swapContract.getAddress(),
+                useToken,
+                total,
+                this.getHash(parsedBody.address, parsedBody.nonce, amountBD, this.config.bitcoinNetwork).toString("hex"),
+                minRequiredExpiry,
+                parsedBody.nonce,
+                parsedBody.confirmations,
+                true,
+                false,
+                new BN(0),
+                new BN(0)
+            );
+
+            const sigData = await this.swapContract.getClaimInitSignature(payObject, this.nonce, this.config.authorizationTimeout);
+
+            const createdSwap = new ToBtcSwapAbs<T>(parsedBody.address, amountBD, swapFee, networkFeeAdjusted, parsedBody.nonce, parsedBody.confirmationTarget, new BN(sigData.timeout));
+            const paymentHash = this.getChainHash(createdSwap);
+            createdSwap.data = payObject;
+
+            await this.storageManager.saveData(paymentHash.toString("hex"), createdSwap);
+
+            res.status(200).json({
+                code: 20000,
+                msg: "Success",
+                data: {
+                    address: this.swapContract.getAddress(),
+                    satsPervByte: feeSatsPervByteAdjusted.toString(10),
+                    networkFee: networkFeeInToken.toString(10),
+                    swapFee: swapFeeInToken.toString(10),
+                    totalFee: swapFeeInToken.add(networkFeeInToken).toString(10),
+                    total: total.toString(10),
+                    minRequiredExpiry: minRequiredExpiry.toString(),
+
+                    data: payObject.serialize(),
+
+                    nonce: sigData.nonce,
+                    prefix: sigData.prefix,
+                    timeout: sigData.timeout,
+                    signature: sigData.signature
+                }
+            });
+
+        }));
+
+        restServer.post(this.path+"/getRefundAuthorization", expressHandlerWrapper(async (req, res) => {
+            /**
+             * paymentHash: string              Payment hash identifier of the swap
+             */
+            const parsedBody = verifySchema(req.body, {
+                paymentHash: (val: string) => val!=null &&
+                            typeof(val)==="string" &&
+                            val.length===64 &&
+                            HEX_REGEX.test(val) ? val: null,
+            });
+
+            if (parsedBody==null) {
+                res.status(400).json({
+                    msg: "Invalid request body (paymentHash)"
+                });
+                return;
+            }
+
+            const payment = this.storageManager.data[parsedBody.paymentHash];
+
+            if (payment == null || payment.state === ToBtcSwapState.SAVED) {
+                res.status(200).json({
+                    code: 20007,
+                    msg: "Payment not found"
+                });
+                return;
+            }
+
+            if (payment.state === ToBtcSwapState.COMMITED) {
+                res.status(200).json({
+                    code: 20008,
+                    msg: "Payment processing"
+                });
+                return;
+            }
+
+            if (payment.state === ToBtcSwapState.BTC_SENT || payment.state===ToBtcSwapState.BTC_SENDING) {
+                res.status(200).json({
+                    code: 20006,
+                    msg: "Already paid",
+                    data: {
+                        txId: payment.txId
+                    }
+                });
+                return;
+            }
+
+            if (payment.state === ToBtcSwapState.NON_PAYABLE) {
+                const isCommited = await this.swapContract.isCommited(payment.data);
+
+                if (!isCommited) {
+                    res.status(400).json({
+                        code: 20005,
+                        msg: "Not committed"
+                    });
+                    return;
+                }
+
+                const refundResponse = await this.swapContract.getRefundSignature(payment.data, this.config.authorizationTimeout);
+
+                res.status(200).json({
+                    code: 20000,
+                    msg: "Success",
+                    data: {
+                        address: this.swapContract.getAddress(),
+                        prefix: refundResponse.prefix,
+                        timeout: refundResponse.timeout,
+                        signature: refundResponse.signature
+                    }
+                });
+                return;
+            }
+
+            res.status(500).json({
+                code: 20009,
+                msg: "Invalid payment status"
+            });
+        }));
 
         console.log("[To BTC: REST] Started at path: ", this.path);
     }
 
+    /**
+     * Subscribes to on-chain events
+     */
     subscribeToEvents() {
         this.chainEvents.registerListener(this.processEvent.bind(this));
 
         console.log("[To BTC: Solana.Events] Subscribed to Solana events");
     }
 
-    async startPastSwapsTimer() {
+    /**
+     * Starts watchdog checking past swaps
+     */
+    private async startPastSwapsTimer() {
         let rerun;
         rerun = async () => {
-            await this.checkPastSwaps();
+            await this.checkPastSwaps().catch( e => console.error(e));
             setTimeout(rerun, this.config.swapCheckInterval);
         };
         await rerun();
     }
 
-    async startTxTimer() {
+    /**
+     * Starts watchdog checking sent bitcoin transactions
+     */
+    private async startTxTimer() {
         let rerun;
         rerun = async () => {
-            await this.checkBtcTxs();
+            await this.checkBtcTxs().catch( e => console.error(e));
             setTimeout(rerun, this.config.txCheckInterval);
         };
         await rerun();

@@ -21,6 +21,9 @@ export type SwapHandlerInfoType = {
     data?: any,
 };
 
+/**
+ * An abstract class defining a singular swap service
+ */
 export abstract class SwapHandler<V extends StorageObject, T extends SwapData> {
 
     abstract readonly type: SwapHandlerType;
@@ -46,9 +49,26 @@ export abstract class SwapHandler<V extends StorageObject, T extends SwapData> {
         this.swapPricing = swapPricing;
     }
 
+    /**
+     * Initializes swap handler, loads data and subscribes to chain events
+     */
     abstract init(): Promise<void>;
+
+    /**
+     * Starts the watchdog checking past swaps for expiry or claim eligibility.
+     */
     abstract startWatchdog(): Promise<void>;
+
+    /**
+     * Sets up required listeners for the REST server
+     *
+     * @param restServer
+     */
     abstract startRestServer(restServer: Express): void;
+
+    /**
+     * Returns swap handler info
+     */
     abstract getInfo(): SwapHandlerInfoType;
 
 }
