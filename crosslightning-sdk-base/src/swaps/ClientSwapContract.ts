@@ -160,7 +160,8 @@ export class ClientSwapContract<T extends SwapData> {
                 confirmations,
                 nonce: nonce.toString(10),
                 token: requiredToken==null ? null : requiredToken.toString(),
-                offerer: this.swapContract.getAddress()
+                offerer: this.swapContract.getAddress(),
+                exactIn: false
             }),
             headers: {'Content-Type': 'application/json'}
         });
@@ -280,7 +281,7 @@ export class ClientSwapContract<T extends SwapData> {
             throw new UserError("Invalid address specified");
         }
 
-        const response: Response = await fetch(url+"/payInvoiceExactIn", {
+        const response: Response = await fetch(url+"/payInvoice", {
             method: "POST",
             body: JSON.stringify({
                 address,
@@ -289,7 +290,8 @@ export class ClientSwapContract<T extends SwapData> {
                 confirmations,
                 nonce: nonce.toString(10),
                 token: requiredToken==null ? null : requiredToken.toString(),
-                offerer: this.swapContract.getAddress()
+                offerer: this.swapContract.getAddress(),
+                exactIn: true
             }),
             headers: {'Content-Type': 'application/json'}
         });
@@ -402,7 +404,11 @@ export class ClientSwapContract<T extends SwapData> {
         confidence: string,
         maxFee: BN,
         swapFee: BN,
+
+        routingFeeSats: BN,
+
         data: T,
+
         prefix: string,
         timeout: string,
         signature: string,
@@ -448,6 +454,12 @@ export class ClientSwapContract<T extends SwapData> {
 
         let jsonBody: any = await response.json();
 
+        const routingFeeSats = new BN(jsonBody.data.routingFeeSats);
+
+        if(routingFeeSats.gt(maxFee)) {
+            throw new IntermediaryError("Invalid max fee sats returned");
+        }
+
         const maxFeeInToken = new BN(jsonBody.data.maxFee);
         const swapFee = new BN(jsonBody.data.swapFee);
         const totalFee = swapFee.add(maxFeeInToken);
@@ -471,7 +483,7 @@ export class ClientSwapContract<T extends SwapData> {
                 throw new IntermediaryError("Invalid data returned - token");
             }
             if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                if(!(await this.swapPrice.isValidAmountSend(sats, requiredBaseFee.add(maxFee), requiredFeePPM, total, data.getToken()))) {
+                if(!(await this.swapPrice.isValidAmountSend(sats, requiredBaseFee.add(routingFeeSats), requiredFeePPM, total, data.getToken()))) {
                     throw new IntermediaryError("Fee too high");
                 }
             }
@@ -518,7 +530,11 @@ export class ClientSwapContract<T extends SwapData> {
             confidence: jsonBody.data.confidence,
             maxFee: maxFeeInToken,
             swapFee: swapFee,
+
+            routingFeeSats,
+
             data,
+
             prefix: jsonBody.data.prefix,
             timeout: jsonBody.data.timeout,
             signature: jsonBody.data.signature,

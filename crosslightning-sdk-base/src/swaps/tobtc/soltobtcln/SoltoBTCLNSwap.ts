@@ -11,6 +11,7 @@ export class SoltoBTCLNSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
 
     //State: PR_CREATED
     readonly pr: string;
+    readonly routingFeeSats: BN;
 
     constructor(
         wrapper: SoltoBTCLNWrapper<T>,
@@ -22,7 +23,8 @@ export class SoltoBTCLNSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
         signature: string,
         nonce: number,
         url: string,
-        confidence: string
+        confidence: string,
+        routingFeeSats: BN
     );
     constructor(wrapper: SoltoBTCLNWrapper<T>, obj: any);
 
@@ -37,15 +39,18 @@ export class SoltoBTCLNSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
         nonce?: number,
         url?: string,
         confidence?: string,
+        routingFeeSats?: BN
     ) {
         if(typeof(prOrObject)==="string") {
             super(wrapper, data, swapFee, prefix, timeout, signature, nonce, url);
             this.confidence = parseFloat(confidence);
             this.pr = prOrObject;
+            this.routingFeeSats = routingFeeSats;
         } else {
             super(wrapper, prOrObject);
             this.confidence = prOrObject.confidence;
             this.pr = prOrObject.pr;
+            this.routingFeeSats = prOrObject.routingFeeSats==null ? null : new BN(prOrObject.routingFeeSats);
         }
     }
 
@@ -72,7 +77,15 @@ export class SoltoBTCLNSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
         const partialSerialized = super.serialize();
         partialSerialized.pr = this.pr;
         partialSerialized.confidence = this.confidence;
+        partialSerialized.routingFeeSats = this.routingFeeSats==null ? null : this.routingFeeSats.toString(10);
         return partialSerialized;
+    }
+
+    /**
+     * Returns routing fee in satoshis
+     */
+    getRoutingFee(): BN {
+        return this.routingFeeSats;
     }
 
     /**
