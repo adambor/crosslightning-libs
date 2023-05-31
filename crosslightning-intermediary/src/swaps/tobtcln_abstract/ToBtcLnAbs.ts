@@ -523,9 +523,9 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
-            const routingFeeInToken = await this.swapPricing.getFromBtcSwapAmount(actualRoutingFee, useToken);
-            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken);
-            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(amountBD, useToken);
+            const routingFeeInToken = await this.swapPricing.getFromBtcSwapAmount(actualRoutingFee, useToken, true);
+            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true);
+            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(amountBD, useToken, true);
 
             const total = amountInToken.add(routingFeeInToken).add(swapFeeInToken);
 
@@ -562,7 +562,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     confidence: obj.route.confidence/1000000,
                     address: this.swapContract.getAddress(),
 
-                    routingFeeSats: actualRoutingFee,
+                    routingFeeSats: actualRoutingFee.toString(10),
 
                     data: payObject.serialize(),
 

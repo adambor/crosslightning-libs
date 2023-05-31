@@ -8,15 +8,17 @@ export interface ISwapPrice {
      *
      * @param fromAmount        Amount of the token
      * @param fromToken         Token
+     * @param roundUp           Whether result should be rounded up
      */
-    getToBtcSwapAmount(fromAmount:BN, fromToken: TokenAddress): Promise<BN>;
+    getToBtcSwapAmount(fromAmount:BN, fromToken: TokenAddress, roundUp?: boolean): Promise<BN>;
 
     /**
      * Returns amount of {toToken} that are equivalent to {fromAmount} satoshis
      *
      * @param fromAmount        Amount of satoshis
      * @param toToken           Token
+     * @param roundUp           Whether result be rounded up
      */
-    getFromBtcSwapAmount(fromAmount:BN, toToken: TokenAddress): Promise<BN>;
+    getFromBtcSwapAmount(fromAmount:BN, toToken: TokenAddress, roundUp?: boolean): Promise<BN>;
 
 }

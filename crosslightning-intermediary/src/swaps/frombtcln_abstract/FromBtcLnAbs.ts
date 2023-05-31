@@ -304,7 +304,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
         const fee: BN = invoiceData.swapFee;
 
         const invoiceAmountInToken = await this.swapPricing.getFromBtcSwapAmount(invoiceAmount, useToken);
-        const feeInToken = await this.swapPricing.getFromBtcSwapAmount(fee, useToken);
+        const feeInToken = await this.swapPricing.getFromBtcSwapAmount(fee, useToken, true);
 
         const sendAmount: BN = invoiceAmountInToken.sub(feeInToken);
 
@@ -433,7 +433,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             const swapFee = this.config.baseFee.add(parsedBody.amount.mul(this.config.feePPM).div(new BN(1000000)));
 
             const amountInToken = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount, useToken);
-            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken);
+            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true);
 
             const balance = await this.swapContract.getBalance(useToken, true);
 
@@ -476,7 +476,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 baseSD = (await this.swapContract.getRefundFee()).mul(new BN(2));
             }
 
-            const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount.sub(swapFee), this.swapContract.getNativeCurrencyAddress());
+            const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount.sub(swapFee), this.swapContract.getNativeCurrencyAddress(), true);
             const apyPPM = new BN(Math.floor(this.config.securityDepositAPY*1000000));
             const variableSD = swapValueInNativeCurrency.mul(apyPPM).mul(expiryTimeout).div(new BN(1000000)).div(secondsInYear);
 

@@ -136,7 +136,7 @@ export class CoinGeckoSwapPrice implements ISwapPrice {
         return result;
     }
 
-    async getFromBtcSwapAmount(fromAmount: BN, toToken: TokenAddress): Promise<BN> {
+    async getFromBtcSwapAmount(fromAmount: BN, toToken: TokenAddress, roundUp?: boolean): Promise<BN> {
         let tokenAddress: string = toToken.toString();
 
         const coin = this.COINS_MAP[tokenAddress];
@@ -148,10 +148,11 @@ export class CoinGeckoSwapPrice implements ISwapPrice {
         return fromAmount
             .mul(new BN(10).pow(new BN(coin.decimals)))
             .mul(new BN(1000)) //To msat
+            .add(roundUp ? price.sub(new BN(1)) : new BN(0))
             .div(price)
     }
 
-    async getToBtcSwapAmount(fromAmount: BN, fromToken: TokenAddress): Promise<BN> {
+    async getToBtcSwapAmount(fromAmount: BN, fromToken: TokenAddress, roundUp?: boolean): Promise<BN> {
         let tokenAddress: string = fromToken.toString();
 
         const coin = this.COINS_MAP[tokenAddress];
@@ -162,8 +163,9 @@ export class CoinGeckoSwapPrice implements ISwapPrice {
 
         return fromAmount
             .mul(price)
-            .div(new BN(1000))
-            .div(new BN(10).pow(new BN(coin.decimals)));
+            .div(new BN(10).pow(new BN(coin.decimals)))
+            .add(roundUp ? new BN(999) : new BN(0))
+            .div(new BN(1000));
     }
 
 }

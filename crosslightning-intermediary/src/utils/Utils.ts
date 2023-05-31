@@ -61,7 +61,7 @@ export function verifySchema<T extends RequestSchema>(req: any, schema: T): Requ
             if(isNaN(val as number)) return null;
             resultSchema[fieldName] = val;
         } else if(type===FieldTypeEnum.BN) {
-            const result = parseBN(val)!=null;
+            const result = parseBN(val);
             if(result==null) return null;
             resultSchema[fieldName] = result;
         } else if(type===FieldTypeEnum.String) {

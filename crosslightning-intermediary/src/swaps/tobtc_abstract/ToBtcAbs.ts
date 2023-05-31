@@ -711,8 +711,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
 
-            const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(networkFeeAdjusted, useToken);
-            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken);
+            const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(networkFeeAdjusted, useToken, true);
+            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true);
 
             let amountInToken: BN;
             let total: BN;
@@ -720,7 +720,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 amountInToken = parsedBody.amount.sub(swapFeeInToken).sub(networkFeeInToken);
                 total = parsedBody.amount;
             } else {
-                amountInToken = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount, useToken);
+                amountInToken = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount, useToken, true);
                 total = amountInToken.add(swapFeeInToken).add(networkFeeInToken);
             }
 
