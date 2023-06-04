@@ -279,6 +279,36 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
         });
     }
 
+
+    async saveInitialHeader(header: BtcBlock, epochStart: number, pastBlocksTimestamps: number[]): Promise<{ tx: Transaction; signers: Signer[]; }> {
+        if(pastBlocksTimestamps.length!==10) {
+            throw new Error("Invalid prevBlocksTimestamps");
+        }
+
+        const serializedBlock = SolanaBtcRelay.serializeBlockHeader(header);
+
+        const tx = await this.program.methods
+            .initialize(
+                serializedBlock,
+                header.getHeight(),
+                header.getChainWork(),
+                epochStart,
+                pastBlocksTimestamps
+            )
+            .accounts({
+                signer: this.provider.publicKey,
+                mainState: this.BtcRelayMainState,
+                headerTopic: this.BtcRelayHeader(serializedBlock.hash),
+                systemProgram: SystemProgram.programId
+            })
+            .transaction();
+
+        return {
+            tx,
+            signers: []
+        };
+    }
+
     async saveMainHeaders(mainHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader) {
         const blockHeaderObj = mainHeaders.map(SolanaBtcRelay.serializeBlockHeader);
 
@@ -425,7 +455,13 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
     }
 
     async getTipData(): Promise<{ commitHash: string; blockhash: string, chainWork: Buffer, blockheight: number }> {
-        const acc = await this.program.account.mainState.fetch(this.BtcRelayMainState);
+        let acc;
+        try {
+            acc = await this.program.account.mainState.fetch(this.BtcRelayMainState);
+        } catch (e) {
+            if(e.message.startsWith("Account does not exist or has no data")) return null;
+            throw e;
+        }
 
         const spvTipCommitment = Buffer.from(acc.tipCommitHash);
         const blockHashTip = Buffer.from(acc.tipBlockHash);

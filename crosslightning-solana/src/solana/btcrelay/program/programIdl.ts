@@ -656,6 +656,6 @@ export const programIdl = {
         }
     ],
     "metadata": {
-        "address": "8DMFpUfCk8KPkNLtE25XHuCSsT1GqYxuLdGzu59QK3Rt"
+        "address": "De2dsY5K3DXBDNzKUjE6KguVP5JUhveKNpMVRmRkazff"
     }
 };
