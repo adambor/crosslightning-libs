@@ -80,4 +80,8 @@ export class MempoolBitcoinBlock implements BtcBlock {
         return this.version;
     }
 
+    getChainWork(): Buffer {
+        throw new Error("Unsupported");
+    }
+
 }
