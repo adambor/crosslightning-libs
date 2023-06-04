@@ -413,7 +413,7 @@ contract BTCRelay {
         } else {
             uint256 pos = startHeight-blockHeight;
             if(pos>=PRUNING_FACTOR) return 0;
-            return pos;
+            return PRUNING_FACTOR-pos;
         }
     }
 
