@@ -216,7 +216,14 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
 
                 const events = this.eventParser.parseLogs(tx.meta.logMessages);
 
+                const _events = [];
                 for(let log of events) {
+                    _events.push(log);
+                }
+
+                _events.reverse();
+
+                for(let log of _events) {
                     if(log.name==="StoreFork" || log.name==="StoreHeader") {
                         const blockHash = Buffer.from(log.data.blockHash);
                         try {
