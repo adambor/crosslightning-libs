@@ -467,6 +467,10 @@ contract CrossLightningSwaps {
     }
 
     function claimer_claim(AtomicSwapStruct memory payReq, bytes32 secret) public {
+        claimer_claim_extAddress(payReq, secret, msg.sender);
+    }
+
+    function claimer_claim_extAddress(AtomicSwapStruct memory payReq, bytes32 secret, address claimerBountyAddress) public {
         uint256 expiry = payReq.data & 0xFFFFFFFFFFFFFFFF;
         require(payReq.claimer==msg.sender, "Sender must be claimer");
         require(expiry>=block.timestamp, "Not claimable anymore"); //Not sure if this is necessary, but improves security for payer
@@ -494,7 +498,7 @@ contract CrossLightningSwaps {
 
         uint256 payIn = (payReq.data >> 152) & 0xFF;
         if(payIn==0) {
-            payOutClaimerBounty(payReq, msg.sender);
+            payOutClaimerBounty(payReq, claimerBountyAddress);
         } else {
             uint256 rep = reputation[payReq.claimer][payReq.token][kind].success;
             uint256 amount = (rep & 0x00000000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)+payReq.amount;
@@ -508,6 +512,10 @@ contract CrossLightningSwaps {
     }
 
     function claimer_claimWithTxData(AtomicSwapStruct memory payReq, uint256 vout, bytes memory txData, TransactionProof calldata proof) public {
+        claimer_claimWithTxData_extAddress(payReq, vout, txData, proof, msg.sender);
+    }
+
+    function claimer_claimWithTxData_extAddress(AtomicSwapStruct memory payReq, uint256 vout, bytes memory txData, TransactionProof calldata proof, address claimerBountyAddress) public {
         uint256 expiry = payReq.data & 0xFFFFFFFFFFFFFFFF;
         require(expiry>=block.timestamp, "Not claimable anymore"); //Not sure if this is necessary, but improves security for payer
 
@@ -547,24 +555,27 @@ contract CrossLightningSwaps {
         }
 
 
-        uint256 confirmations = (payReq.data >> 128) & 0xFFFF;
-
-        require(
-            btcRelay.verifyTX(txId, proof.blockheight, proof.txPos, proof.merkleProof, confirmations, proof.committedHeader),
-            "Tx verification failed"
-        );
-
-        uint256 payOut = (payReq.data >> 160) & 0xFF;
-        if(payOut>0) {
-            transferOut(payReq.token, payReq.claimer, payReq.amount);
-        } else {
-            balances[payReq.claimer][payReq.token] += payReq.amount;
+        {
+            uint256 confirmations = (payReq.data >> 128) & 0xFFFF;
+            require(
+                btcRelay.verifyTX(txId, proof.blockheight, proof.txPos, proof.merkleProof, confirmations, proof.committedHeader),
+                "Tx verification failed"
+            );
         }
-        commitments[payReq.paymentHash] = bytes32(uint256(0x100));
+
+        {
+            uint256 payOut = (payReq.data >> 160) & 0xFF;
+            if(payOut>0) {
+                transferOut(payReq.token, payReq.claimer, payReq.amount);
+            } else {
+                balances[payReq.claimer][payReq.token] += payReq.amount;
+            }
+            commitments[payReq.paymentHash] = bytes32(uint256(0x100));
+        }
 
         uint256 payIn = (payReq.data >> 152) & 0xFF;
         if(payIn==0) {
-            payOutClaimerBounty(payReq, msg.sender);
+            payOutClaimerBounty(payReq, claimerBountyAddress);
         } else {
             uint256 rep = reputation[payReq.claimer][payReq.token][kind].success;
             uint256 amount = (rep & 0x00000000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)+payReq.amount;
