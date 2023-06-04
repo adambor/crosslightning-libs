@@ -11,7 +11,7 @@ type EVMBtcStoredHeaderType = {
     data2: BigNumber
 }
 
-function reverseBigNumber(num: BigNumber): BigNumber {
+export function reverseBigNumber(num: BigNumber): BigNumber {
     const buffer = Buffer.alloc(4);
     buffer.writeUint32LE(num.toNumber());
     return BigNumber.from("0x"+buffer.toString("hex"));

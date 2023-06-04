@@ -29,6 +29,25 @@ export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHea
         this.bitcoinRpc = bitcoinRpc;
     }
 
+    async saveInitialHeader(header: B, epochStart: number, pastBlocksTimestamps: number[]): Promise<UnsignedTransaction> {
+        if(pastBlocksTimestamps.length!==10) {
+            throw new Error("Invalid prevBlocksTimestamps");
+        }
+
+        const serializedBlock = EVMBtcRelay.serializeBlockHeader(header);
+
+        const unsignedTx = await this.contract.populateTransaction.setInitialParent(
+            serializedBlock.serializeToStruct(),
+            BigNumber.from(header.getHeight()),
+            "0x"+header.getChainWork().toString('hex'),
+            BigNumber.from(epochStart),
+            pastBlocksTimestamps.map(e => BigNumber.from(e))
+        );
+        unsignedTx.gasLimit = BigNumber.from(150000);
+
+        return unsignedTx;
+    }
+
     async retrieveLogAndBlockheight(blockData: {blockhash: string, height: number}, requiredBlockheight?: number): Promise<{
         header: EVMBtcStoredHeader,
         height: number
@@ -298,18 +317,22 @@ export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHea
 
     async getTipData(): Promise<{ commitHash: string, chainWork: Buffer, blockheight: number }> {
 
-        const spvTipCommitment: string = await this.contract.getLatestMainChainCommitmentHash();
         const highScoreAndBlockHeight: BigNumber = await this.contract._highScoreAndBlockHeight();
 
         const chainWork: Buffer = Buffer.from(
             highScoreAndBlockHeight.and(BigNumber.from("0x00000000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")).toHexString().substring(2).padStart(64, "0"),
             "hex"
         );
+        const blockheight: number = highScoreAndBlockHeight.shr(224).toNumber();
+
+        if(blockheight===0) return null;
+
+        const spvTipCommitment: string = await this.contract.getLatestMainChainCommitmentHash();
 
         return {
             commitHash: spvTipCommitment.substring(2),
             chainWork,
-            blockheight: highScoreAndBlockHeight.shr(224).toNumber()
+            blockheight
         }
     }
 
