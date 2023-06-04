@@ -397,7 +397,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 amount: FieldTypeEnum.BN,
                 expiry: FieldTypeEnum.Number,
                 token: (val: string) => val!=null &&
-                        typeof(val)!=="string" &&
+                        typeof(val)==="string" &&
                         this.allowedTokens.has(val) ? val : null
             });
 

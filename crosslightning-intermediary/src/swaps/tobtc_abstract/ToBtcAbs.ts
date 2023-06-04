@@ -483,6 +483,13 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
                 console.log("[To BTC: Solana.RefundEvent] Transaction refunded! Event: ", event);
 
+                //Also remove transaction from active subscriptions
+                if(savedInvoice.txId!=null) {
+                    if(this.activeSubscriptions[savedInvoice.txId]!=null) {
+                        delete this.activeSubscriptions[savedInvoice.txId];
+                    }
+                }
+
                 await this.storageManager.removeData(paymentHash);
 
                 continue;

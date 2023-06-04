@@ -595,7 +595,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const data = this.storageManager.data[parsedBody.paymentHash];
 
             const isSwapFound = data!=null;
-            if(!isSwapFound) {
+            if(isSwapFound) {
                 if(data.state===ToBtcLnSwapState.NON_PAYABLE) {
                     const isCommited = await this.swapContract.isCommited(data.data);
 
