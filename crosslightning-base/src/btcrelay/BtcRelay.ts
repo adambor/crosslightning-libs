@@ -25,7 +25,7 @@ export interface BtcRelay<V extends BtcStoredHeader<any>, T, B extends BtcBlock>
     }>;
     //retrieveOnchainTip(): Promise<B>;
 
-
+    saveInitialHeader(header: B, epochStart: number, pastBlocksTimestamps: number[]): Promise<T>;
     saveMainHeaders(mainHeaders: B[], storedHeader: V): Promise<{
         forkId: number,
         lastStoredHeader: V,

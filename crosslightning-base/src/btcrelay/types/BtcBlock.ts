@@ -9,5 +9,6 @@ export interface BtcBlock {
     getNonce(): number;
     getHash(): string;
     getHeight(): number;
+    getChainWork(): Buffer;
 
 }
