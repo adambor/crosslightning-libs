@@ -202,7 +202,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             if(token!=null && token.equals(WSOL_ADDRESS)) {
                 let balanceLamports: BN = new BN(await this.signer.connection.getBalance(this.signer.publicKey));
                 if(!ataExists) balanceLamports = balanceLamports.sub(await this.getATARentExemptLamports());
-                balanceLamports = balanceLamports.sub(this.getCommitFee()); //Discount commit fee
+                balanceLamports = balanceLamports.sub(await this.getCommitFee()); //Discount commit fee
                 balanceLamports = balanceLamports.sub(new BN(5000)); //Discount refund fee
                 if(!balanceLamports.isNeg()) sum = sum.add(balanceLamports);
             }
@@ -1310,9 +1310,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     async initPayIn(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
         let result = await this.txsInitPayIn(swapData,timeout,prefix,signature,nonce);
 
-        const [txSignature] = await this.sendAndConfirm(result, waitForConfirmation, abortSignal);
+        const signatures = await this.sendAndConfirm(result, waitForConfirmation, abortSignal);
 
-        return txSignature;
+        return signatures[signatures.length-1];
     }
 
     async txsInitPayIn(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<SolTx[]> {
@@ -1328,7 +1328,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         const ata = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
         const ataIntermediary = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
 
-        const tx = new Transaction();
+        const txs: SolTx[] = [];
 
         if(swapData.token.equals(WSOL_ADDRESS)) {
             let balance = new BN(0);
@@ -1341,6 +1341,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 }
             } catch (e) {}
             if(balance.lt(swapData.amount)) {
+                const tx = new Transaction();
                 //Need to wrap some more
                 const remainder = swapData.amount.sub(balance);
                 if(!accountExists) {
@@ -1353,12 +1354,20 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                     lamports: remainder.toNumber()
                 }));
                 tx.add(SplToken.createSyncNativeInstruction(ata));
+
+                txs.push({
+                    tx,
+                    signers: []
+                });
             }
+
         }
 
         const paymentHash = Buffer.from(swapData.paymentHash, "hex");
 
         const [recentBlockhash, signatureStr] = signature.split(";");
+
+        const tx = new Transaction();
 
         const ix = await this.program.methods
             .offererInitializePayIn(
@@ -1393,10 +1402,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         tx.recentBlockhash = recentBlockhash;
         tx.addSignature(swapData.claimer, Buffer.from(signatureStr, "hex"));
 
-        return [{
+        txs.push({
             tx,
             signers: []
-        }];
+        });
+
+        return txs;
 
     }
 
