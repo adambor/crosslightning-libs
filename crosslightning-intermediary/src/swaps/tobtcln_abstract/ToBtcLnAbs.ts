@@ -417,7 +417,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 return;
             }
 
-            if(parsedPR.timeExpireDate < ((Date.now()/1000)+(this.config.authorizationTimeout*2))) {
+            if(parsedPR.timeExpireDate < ((Date.now()/1000)+(this.config.authorizationTimeout+(2*60)))) {
                 res.status(400).json({
                     msg: "Invalid request body (pr - expired)"
                 });
@@ -525,6 +525,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     console.error(e);
                 }
 
+                console.log("[To BTC-LN: REST.payInvoice] Routing result: ", routingObj);
+
                 if(routingObj==null || routingObj.route==null) {
                     res.status(400).json({
                         code: 20002,
@@ -532,8 +534,6 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     });
                     return;
                 }
-
-                console.log("[To BTC-LN: REST.payInvoice] Routing result: ", routingObj);
 
                 obj = routingObj;
             }
