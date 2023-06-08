@@ -26,7 +26,9 @@ export type ToBtcLnConfig = {
 
     minSendCltv: BN,
 
-    swapCheckInterval: number
+    swapCheckInterval: number,
+
+    allowProbeFailedSwaps: boolean
 };
 
 /**
@@ -480,38 +482,60 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const { current_block_height } = await lncli.getHeight({lnd: this.LND});
 
             //Probe for a route
+            const parsedRequest = await lncli.parsePaymentRequest({
+                request: parsedBody.pr
+            });
+            console.log("[To BTC-LN: REST.payInvoice] Parsed PR: ", JSON.stringify(parsedRequest, null, 4));
+            const probeReq: any = {
+                destination: parsedPR.payeeNodeKey,
+                cltv_delta: parsedPR.tagsObject.min_final_cltv_expiry,
+                mtokens: parsedPR.millisatoshis,
+                max_fee_mtokens: parsedBody.maxFee.mul(new BN(1000)).toString(10),
+                max_timeout_height: new BN(current_block_height).add(maxUsableCLTV).toString(10),
+                payment: parsedRequest.payment,
+                total_mtokens: parsedPR.millisatoshis,
+                routes: parsedRequest.routes
+            };
+            //if(hints.length>0) req.routes = [hints];
+            console.log("[To BTC-LN: REST.payInvoice] Probe for route: ", JSON.stringify(probeReq, null, 4));
+            probeReq.lnd = this.LND;
+
             let obj;
             try {
-                const parsedRequest = await lncli.parsePaymentRequest({
-                    request: parsedBody.pr
-                });
-                console.log("[To BTC-LN: REST.payInvoice] Parsed PR: ", JSON.stringify(parsedRequest, null, 4));
-                const probeReq: any = {
-                    destination: parsedPR.payeeNodeKey,
-                    cltv_delta: parsedPR.tagsObject.min_final_cltv_expiry,
-                    mtokens: parsedPR.millisatoshis,
-                    max_fee_mtokens: parsedBody.maxFee.mul(new BN(1000)).toString(10),
-                    max_timeout_height: new BN(current_block_height).add(maxUsableCLTV).toString(10),
-                    payment: parsedRequest.payment,
-                    total_mtokens: parsedPR.millisatoshis,
-                    routes: parsedRequest.routes
-                };
-                //if(hints.length>0) req.routes = [hints];
-                console.log("[To BTC-LN: REST.payInvoice] Probe for route: ", JSON.stringify(probeReq, null, 4));
-                probeReq.lnd = this.LND;
                 obj = await lncli.probeForRoute(probeReq);
             } catch (e) {
-                console.log(e);
+                console.error(e);
             }
 
             console.log("[To BTC-LN: REST.payInvoice] Probe result: ", obj);
 
             if(obj==null || obj.route==null) {
-                res.status(400).json({
-                    code: 20002,
-                    msg: "Cannot route the payment!"
-                });
-                return;
+                if(!this.config.allowProbeFailedSwaps) {
+                    res.status(400).json({
+                        code: 20002,
+                        msg: "Cannot route the payment!"
+                    });
+                    return;
+                }
+
+                let routingObj;
+                try {
+                    routingObj = await lncli.getRouteToDestination(probeReq);
+                } catch (e) {
+                    console.error(e);
+                }
+
+                if(routingObj==null || routingObj.route==null) {
+                    res.status(400).json({
+                        code: 20002,
+                        msg: "Cannot route the payment!"
+                    });
+                    return;
+                }
+
+                console.log("[To BTC-LN: REST.payInvoice] Routing result: ", routingObj);
+
+                obj = routingObj;
             }
 
             let actualRoutingFee: BN = new BN(obj.route.fee_mtokens).mul(this.config.routingFeeMultiplier).div(new BN(1000));
