@@ -28,7 +28,8 @@ export type ToBtcLnConfig = {
 
     swapCheckInterval: number,
 
-    allowProbeFailedSwaps: boolean
+    allowProbeFailedSwaps: boolean,
+    allowShortExpiry: boolean
 };
 
 /**
@@ -417,11 +418,20 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 return;
             }
 
+            let zeroConfidence = false;
             if(parsedPR.timeExpireDate < ((Date.now()/1000)+(this.config.authorizationTimeout+(2*60)))) {
-                res.status(400).json({
-                    msg: "Invalid request body (pr - expired)"
-                });
-                return;
+                if(!this.config.allowShortExpiry) {
+                    res.status(400).json({
+                        msg: "Invalid request body (pr - expired)"
+                    });
+                    return;
+                } else if(parsedPR.timeExpireDate < Date.now()/1000) {
+                    res.status(400).json({
+                        msg: "Invalid request body (pr - expired)"
+                    });
+                    return;
+                }
+                zeroConfidence = true;
             }
 
             const currentTimestamp = new BN(Math.floor(Date.now()/1000));
@@ -583,7 +593,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     maxFee: routingFeeInToken.toString(10),
                     swapFee: swapFeeInToken.toString(10),
                     total: total.toString(10),
-                    confidence: obj.route.confidence/1000000,
+                    confidence: zeroConfidence ? 0 : obj.route.confidence/1000000,
                     address: this.swapContract.getAddress(),
 
                     routingFeeSats: actualRoutingFee.toString(10),
