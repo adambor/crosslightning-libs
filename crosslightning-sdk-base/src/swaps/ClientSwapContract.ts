@@ -494,7 +494,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         const queryParams = (payRequest.callback.includes("?") ? "&" : "?")+params.join("&");
 
-        const response: Response = await fetch(queryParams, {
+        const response: Response = await fetch(payRequest.callback+queryParams, {
             method: "GET",
         });
 
