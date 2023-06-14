@@ -55,6 +55,19 @@ export type ClientSwapContractOptions = {
 
 const BITCOIN_BLOCKTIME = 10*60;
 
+export type LNURLPay = {
+    type: "pay",
+    min: BN,
+    max: BN,
+    commentMaxLength: number
+}
+
+export type LNURLWithdraw= {
+    type: "withdraw",
+    min: BN,
+    max: BN
+}
+
 export class ClientSwapContract<T extends SwapData> {
 
     readonly btcRpc: BitcoinRpc<any>;
@@ -110,37 +123,25 @@ export class ClientSwapContract<T extends SwapData> {
         return findlnurl(str)!=null;
     }
 
-    async isLNURLPay(str: string): Promise<{
-        min: BN,
-        max: BN,
-        commentMaxLength: number
-    } | null> {
+    async getLNURLType(str: string): Promise<LNURLPay | LNURLWithdraw | null> {
         const lnurl = findlnurl(str);
         if(lnurl==null) return null;
         const res: any = await getParams(lnurl);
         if(res.tag==="payRequest") {
             const payRequest: LNURLPayParams = res;
             return {
+                type: "pay",
                 min: new BN(payRequest.minSendable).div(new BN(1000)),
                 max: new BN(payRequest.maxSendable).div(new BN(1000)),
                 commentMaxLength: payRequest.commentAllowed || 0
             }
         }
-        return null;
-    }
-
-    async isLNURLWithdraw(str: string): Promise<{
-        min: BN,
-        max: BN
-    } | null> {
-        const lnurl = findlnurl(str);
-        if(lnurl==null) return null;
-        const res: any = await getParams(lnurl);
         if(res.tag==="withdrawRequest") {
             const payRequest: LNURLWithdrawParams = res;
             return {
+                type: "withdraw",
                 min: new BN(payRequest.minWithdrawable).div(new BN(1000)),
-                max: new BN(payRequest.maxWithdrawable).div(new BN(1000)),
+                max: new BN(payRequest.maxWithdrawable).div(new BN(1000))
             }
         }
         return null;
