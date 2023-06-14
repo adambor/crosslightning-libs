@@ -9,6 +9,7 @@ import {IntermediaryError} from "../errors/IntermediaryError";
 import {ISwapPrice} from "./ISwapPrice";
 import {ChainSwapType, SignatureVerificationError, SwapCommitStatus, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
 import {BitcoinRpc, BtcRelay} from "crosslightning-base/dist";
+import {findlnurl, getParams, LNURLPayParams, LNURLWithdrawParams} from "js-lnurl/lib";
 
 export class PaymentAuthError extends Error {
 
@@ -103,6 +104,46 @@ export class ClientSwapContract<T extends SwapData> {
 
     init(): Promise<void> {
         return this.swapContract.start();
+    }
+
+    isLNURL(str: string): boolean {
+        return findlnurl(str)!=null;
+    }
+
+    async isLNURLPay(str: string): Promise<{
+        min: BN,
+        max: BN,
+        commentMaxLength: number
+    } | null> {
+        const lnurl = findlnurl(str);
+        if(lnurl==null) return null;
+        const res: any = await getParams(lnurl);
+        if(res.tag==="payRequest") {
+            const payRequest: LNURLPayParams = res;
+            return {
+                min: new BN(payRequest.minSendable).div(new BN(1000)),
+                max: new BN(payRequest.maxSendable).div(new BN(1000)),
+                commentMaxLength: payRequest.commentAllowed || 0
+            }
+        }
+        return null;
+    }
+
+    async isLNURLWithdraw(str: string): Promise<{
+        min: BN,
+        max: BN
+    } | null> {
+        const lnurl = findlnurl(str);
+        if(lnurl==null) return null;
+        const res: any = await getParams(lnurl);
+        if(res.tag==="withdrawRequest") {
+            const payRequest: LNURLWithdrawParams = res;
+            return {
+                min: new BN(payRequest.minWithdrawable).div(new BN(1000)),
+                max: new BN(payRequest.maxWithdrawable).div(new BN(1000)),
+            }
+        }
+        return null;
     }
 
     async payOnchain(
@@ -389,6 +430,107 @@ export class ClientSwapContract<T extends SwapData> {
             nonce: jsonBody.data.nonce,
             amount: amount
         };
+    }
+
+    async payLightningLNURL(
+        lnurl: string,
+        amount: BN,
+        comment: string,
+        expirySeconds: number,
+        maxFee: BN,
+        url: string,
+        requiredToken?: TokenAddress,
+        requiredClaimerKey?: string,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN
+    ): Promise<{
+        confidence: string,
+        maxFee: BN,
+        swapFee: BN,
+
+        routingFeeSats: BN,
+
+        data: T,
+
+        prefix: string,
+        timeout: string,
+        signature: string,
+        nonce: number
+    }> {
+        const foundLNURL = findlnurl(lnurl);
+        if(foundLNURL==null) return null;
+        const res: any = await getParams(foundLNURL);
+        if(res.tag!=="payRequest") {
+            throw new Error("Not a lnurl-pay");
+        }
+        const payRequest: LNURLPayParams = res;
+
+        const min = new BN(payRequest.minSendable).div(new BN(1000));
+        const max = new BN(payRequest.maxSendable).div(new BN(1000));
+
+        if(amount.lt(min)) {
+            throw new Error("Amount less than minimum");
+        }
+
+        if(amount.gt(max)) {
+            throw new Error("Amount more than maximum");
+        }
+
+        if(comment!=null) {
+            if(payRequest.commentAllowed==null || comment.length>payRequest.commentAllowed) {
+                throw new Error("Comment not allowed or too long");
+            }
+        }
+
+        const params = [
+            "amount="+amount.mul(new BN(1000)).toString(10)
+        ];
+        if(comment!=null) {
+            params.push("comment="+encodeURIComponent(comment));
+        }
+
+        const queryParams = (payRequest.callback.includes("?") ? "&" : "?")+params.join("&");
+
+        const response: Response = await fetch(queryParams, {
+            method: "GET",
+        });
+
+        if(response.status!==200) {
+            let resp: string;
+            try {
+                resp = await response.text();
+            } catch (e) {
+                throw new Error(response.statusText);
+            }
+            throw new Error(resp);
+        }
+
+        let jsonBody: any = await response.json();
+
+        if(jsonBody.status==="ERROR") {
+            throw new Error("LNURL callback error: "+jsonBody.reason);
+        }
+
+        const invoice = jsonBody.pr;
+
+        const parsedPR = bolt11.decode(invoice);
+
+        const invoiceMSats = new BN(parsedPR.millisatoshis);
+
+        if(!invoiceMSats.eq(amount.mul(new BN(1000)))) {
+            throw new Error("Invalid lightning invoice received!");
+        }
+
+        return this.payLightning(
+            invoice,
+            expirySeconds,
+            maxFee,
+            url,
+            requiredToken,
+            requiredClaimerKey,
+            requiredBaseFee,
+            requiredFeePPM
+        );
     }
 
     async payLightning(
