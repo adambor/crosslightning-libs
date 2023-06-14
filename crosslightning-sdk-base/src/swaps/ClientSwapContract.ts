@@ -68,6 +68,8 @@ export type LNURLWithdraw= {
     max: BN
 }
 
+export const MAIL_REGEX = /(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|"(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21\x23-\x5b\x5d-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])*")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\[(?:(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9]))\.){3}(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9])|[a-z0-9-]*[a-z0-9]:(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21-\x5a\x53-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])+)\])/;
+
 export class ClientSwapContract<T extends SwapData> {
 
     readonly btcRpc: BitcoinRpc<any>;
@@ -119,14 +121,58 @@ export class ClientSwapContract<T extends SwapData> {
         return this.swapContract.start();
     }
 
+    private async getLNURL(str: string) : Promise<LNURLPayParams | LNURLWithdrawParams | null> {
+
+        let res: any;
+        if(MAIL_REGEX.test(str)) {
+            //lightning e-mail like address
+            const arr = str.split("@");
+            const username = arr[0];
+            const domain = arr[1];
+            let scheme = "https";
+            if(domain.endsWith(".onion")) {
+                scheme = "http";
+            }
+
+            const response: Response = await fetch(scheme+"://"+domain+"/.well-known/lnurlp/"+username, {
+                method: "GET"
+            });
+
+            if(response.status!==200) {
+                let resp: string;
+                try {
+                    resp = await response.text();
+                } catch (e) {
+                    throw new Error(response.statusText);
+                }
+                throw new Error(resp);
+            }
+
+            let jsonBody: any = await response.json();
+
+            if(jsonBody.status==="ERROR") {
+                return null;
+            }
+
+            res = jsonBody;
+            res.tag = "payRequest";
+        } else {
+            const lnurl = findlnurl(str);
+            if(lnurl==null) return null;
+            res = await getParams(lnurl);
+        }
+
+        return res;
+    }
+
     isLNURL(str: string): boolean {
-        return findlnurl(str)!=null;
+        return findlnurl(str)!=null || MAIL_REGEX.test(str);
     }
 
     async getLNURLType(str: string): Promise<LNURLPay | LNURLWithdraw | null> {
-        const lnurl = findlnurl(str);
-        if(lnurl==null) return null;
-        const res: any = await getParams(lnurl);
+
+        let res: any = await this.getLNURLType(str);
+
         if(res.tag==="payRequest") {
             const payRequest: LNURLPayParams = res;
             return {
@@ -460,12 +506,14 @@ export class ClientSwapContract<T extends SwapData> {
 
         invoice: string
     }> {
-        const foundLNURL = findlnurl(lnurl);
-        if(foundLNURL==null) return null;
-        const res: any = await getParams(foundLNURL);
+        let res: any = await this.getLNURLType(lnurl);
+        if(res==null) {
+            throw new Error("Invalid LNURL");
+        }
         if(res.tag!=="payRequest") {
             throw new Error("Not a lnurl-pay");
         }
+
         const payRequest: LNURLPayParams = res;
 
         const min = new BN(payRequest.minSendable).div(new BN(1000));
