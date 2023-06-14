@@ -456,7 +456,9 @@ export class ClientSwapContract<T extends SwapData> {
         prefix: string,
         timeout: string,
         signature: string,
-        nonce: number
+        nonce: number,
+
+        invoice: string
     }> {
         const foundLNURL = findlnurl(lnurl);
         if(foundLNURL==null) return null;
@@ -522,7 +524,7 @@ export class ClientSwapContract<T extends SwapData> {
             throw new Error("Invalid lightning invoice received!");
         }
 
-        return this.payLightning(
+        const resp: any = await this.payLightning(
             invoice,
             expirySeconds,
             maxFee,
@@ -532,6 +534,10 @@ export class ClientSwapContract<T extends SwapData> {
             requiredBaseFee,
             requiredFeePPM
         );
+
+        resp.invoice = invoice;
+
+        return resp;
     }
 
     async payLightning(

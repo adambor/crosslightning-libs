@@ -87,4 +87,61 @@ export class SoltoBTCLNWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> 
 
     }
 
+
+    /**
+     * Returns a newly created swap, paying for LNURL-pay
+     *
+     * @param lnurlPay          LNURL-pay link to use for payment
+     * @param amount            Amount in sats to pay
+     * @param comment           Optional comment for the payment request
+     * @param expirySeconds     Swap expiration in seconds, setting this too low might lead to unsuccessful payments, too high and you might lose access to your funds for longer than necessary
+     * @param url               Intermediary/Counterparty swap service url
+     * @param maxBaseFee        Max base fee for the payment routing
+     * @param maxPPMFee         Max proportional fee PPM (per million 0.1% == 1000) for routing
+     * @param requiredToken     Token that we want to send
+     * @param requiredKey       Required key of the Intermediary
+     * @param requiredBaseFee   Desired base fee reported by the swap intermediary
+     * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
+     */
+    async createViaLNURL(
+        lnurlPay: string,
+        amount: BN,
+        comment: string,
+        expirySeconds: number,
+        url: string,
+        maxBaseFee?: BN,
+        maxPPMFee?: BN,
+        requiredToken?: TokenAddress,
+        requiredKey?: string,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN
+    ): Promise<SoltoBTCLNSwap<T>> {
+
+        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
+
+        const fee = this.calculateFeeForAmount(amount, maxBaseFee, maxPPMFee);
+
+        const result = await this.contract.payLightningLNURL(lnurlPay, amount, comment, expirySeconds, fee, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
+
+        const swap = new SoltoBTCLNSwap(
+            this,
+            result.invoice,
+            result.data,
+            result.swapFee.add(result.maxFee),
+            result.prefix,
+            result.timeout,
+            result.signature,
+            result.nonce,
+            url,
+            result.confidence,
+            result.routingFeeSats
+        );
+
+        await swap.save();
+        this.swapData[result.data.getHash()] = swap;
+
+        return swap;
+
+    }
+
 }
