@@ -171,7 +171,7 @@ export class ClientSwapContract<T extends SwapData> {
 
     async getLNURLType(str: string): Promise<LNURLPay | LNURLWithdraw | null> {
 
-        let res: any = await this.getLNURLType(str);
+        let res: any = await this.getLNURL(str);
 
         if(res.tag==="payRequest") {
             const payRequest: LNURLPayParams = res;
@@ -506,7 +506,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         invoice: string
     }> {
-        let res: any = await this.getLNURLType(lnurl);
+        let res: any = await this.getLNURL(lnurl);
         if(res==null) {
             throw new Error("Invalid LNURL");
         }
