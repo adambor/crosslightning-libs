@@ -743,7 +743,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         const signedTxs = await this.signer.wallet.signAllTransactions(txs.map(e => e.tx));
 
         const options = {
-            //skipPreflight: true
+            skipPreflight: true
         };
 
         const signatures: string[] = [];
