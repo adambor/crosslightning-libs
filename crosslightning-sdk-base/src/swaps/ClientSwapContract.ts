@@ -161,6 +161,11 @@ export class ClientSwapContract<T extends SwapData> {
 
             res = jsonBody;
             res.tag = "payRequest";
+            try {
+                res.decodedMetadata = JSON.parse(res.metadata)
+            } catch (err) {
+                res.decodedMetadata = []
+            }
         } else {
             const lnurl = findlnurl(str);
             if(lnurl==null) return null;
