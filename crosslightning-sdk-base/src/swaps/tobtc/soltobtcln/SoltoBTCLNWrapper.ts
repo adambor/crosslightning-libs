@@ -134,7 +134,9 @@ export class SoltoBTCLNWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> 
             result.nonce,
             url,
             result.confidence,
-            result.routingFeeSats
+            result.routingFeeSats,
+            lnurlPay,
+            result.successAction
         );
 
         await swap.save();

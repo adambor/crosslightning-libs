@@ -9,7 +9,7 @@ import {IntermediaryError} from "../errors/IntermediaryError";
 import {ISwapPrice} from "./ISwapPrice";
 import {ChainSwapType, SignatureVerificationError, SwapCommitStatus, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
 import {BitcoinRpc, BtcRelay} from "crosslightning-base/dist";
-import {findlnurl, getParams, LNURLPayParams, LNURLWithdrawParams} from "js-lnurl/lib";
+import {findlnurl, getParams, LNURLPayParams, LNURLPaySuccessAction, LNURLWithdrawParams} from "js-lnurl/lib";
 
 export class PaymentAuthError extends Error {
 
@@ -55,11 +55,16 @@ export type ClientSwapContractOptions = {
 
 const BITCOIN_BLOCKTIME = 10*60;
 
+const BASE64_REGEX = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
 export type LNURLPay = {
     type: "pay",
     min: BN,
     max: BN,
-    commentMaxLength: number
+    commentMaxLength: number,
+    shortDescription: string,
+    longDescription?: string,
+    icon?: string
 }
 
 export type LNURLWithdraw= {
@@ -175,11 +180,33 @@ export class ClientSwapContract<T extends SwapData> {
 
         if(res.tag==="payRequest") {
             const payRequest: LNURLPayParams = res;
+            let shortDescription: string;
+            let longDescription: string;
+            let icon: string;
+            payRequest.decodedMetadata.forEach(data => {
+                 switch(data[0]) {
+                     case "text/plain":
+                         shortDescription = data[1];
+                         break;
+                     case "text/long-desc":
+                         longDescription = data[1];
+                         break;
+                     case "image/png;base64":
+                         icon = "data:"+data[0]+","+data[1];
+                         break;
+                     case "image/jpeg;base64":
+                         icon = "data:"+data[0]+","+data[1];
+                         break;
+                 }
+            });
             return {
                 type: "pay",
                 min: new BN(payRequest.minSendable).div(new BN(1000)),
                 max: new BN(payRequest.maxSendable).div(new BN(1000)),
-                commentMaxLength: payRequest.commentAllowed || 0
+                commentMaxLength: payRequest.commentAllowed || 0,
+                shortDescription,
+                longDescription,
+                icon
             }
         }
         if(res.tag==="withdrawRequest") {
@@ -504,7 +531,8 @@ export class ClientSwapContract<T extends SwapData> {
         signature: string,
         nonce: number,
 
-        invoice: string
+        invoice: string,
+        successAction: LNURLPaySuccessAction
     }> {
         let res: any = await this.getLNURL(lnurl);
         if(res==null) {
@@ -564,7 +592,40 @@ export class ClientSwapContract<T extends SwapData> {
 
         const invoice = jsonBody.pr;
 
+        const successAction: LNURLPaySuccessAction = jsonBody.successAction;
+
+        if(successAction!=null) {
+            switch(successAction.tag) {
+                case "message":
+                    if(successAction.message==null || successAction.message.length>144) {
+                        throw new Error("Invalid LNURL success action!");
+                    }
+                    break;
+                case "url":
+                    if(successAction.description==null || successAction.description.length>144 ||
+                        successAction.url==null || new URL(successAction.url).hostname!==payRequest.domain) {
+                        throw new Error("Invalid LNURL success action!");
+                    }
+                    break;
+                case "aes":
+                    if(successAction.description==null || successAction.description.length>144 ||
+                        successAction.ciphertext==null || successAction.ciphertext.length>4096 || !BASE64_REGEX.test(successAction.ciphertext) ||
+                        successAction.iv==null || successAction.iv.length>24 || !BASE64_REGEX.test(successAction.iv)) {
+                        throw new Error("Invalid LNURL success action!");
+                    }
+                    break;
+                default:
+                    throw new Error("Unsupported LNURL success action!");
+            }
+        }
+
         const parsedPR = bolt11.decode(invoice);
+
+        const descHash = createHash("sha256").update(payRequest.metadata).digest().toString("hex");
+
+        if(parsedPR.tagsObject.purpose_commit_hash!==descHash) {
+            throw new Error("Invalid invoice received!");
+        }
 
         const invoiceMSats = new BN(parsedPR.millisatoshis);
 
@@ -584,6 +645,7 @@ export class ClientSwapContract<T extends SwapData> {
         );
 
         resp.invoice = invoice;
+        resp.successAction = successAction;
 
         return resp;
     }
@@ -1010,6 +1072,68 @@ export class ClientSwapContract<T extends SwapData> {
             nonce: jsonBody.data.nonce
         };
 
+    }
+
+    async receiveLightningLNURL(lnurl: string, amount: BN, expirySeconds: number, url: string, requiredToken?: TokenAddress, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<{
+        secret: Buffer,
+        pr: string,
+        swapFee: BN,
+        total: BN,
+        intermediaryKey: string,
+        securityDeposit: BN
+    }> {
+        let res: any = await this.getLNURL(lnurl);
+        if(res==null) {
+            throw new Error("Invalid LNURL");
+        }
+        if(res.tag!=="payRequest") {
+            throw new Error("Not a lnurl-pay");
+        }
+
+        const withdrawRequest: LNURLWithdrawParams = res;
+
+        const min = new BN(withdrawRequest.minWithdrawable).div(new BN(1000));
+        const max = new BN(withdrawRequest.maxWithdrawable).div(new BN(1000));
+
+
+        if(amount.lt(min)) {
+            throw new Error("Amount less than minimum");
+        }
+
+        if(amount.gt(max)) {
+            throw new Error("Amount more than maximum");
+        }
+
+        const resp = await this.receiveLightning(amount, expirySeconds, url, requiredToken, requiredBaseFee, requiredFeePPM);
+
+        const params = [
+            "pr="+resp.pr,
+            "k1="+withdrawRequest.k1
+        ];
+
+        const queryParams = (withdrawRequest.callback.includes("?") ? "&" : "?")+params.join("&");
+
+        const response: Response = await fetch(withdrawRequest.callback+queryParams, {
+            method: "GET",
+        });
+
+        if(response.status!==200) {
+            let resp: string;
+            try {
+                resp = await response.text();
+            } catch (e) {
+                throw new Error(response.statusText);
+            }
+            throw new Error(resp);
+        }
+
+        let jsonBody: any = await response.json();
+
+        if(jsonBody.status==="ERROR") {
+            throw new Error("LNURL callback error: " + jsonBody.reason);
+        }
+
+        return resp;
     }
 
     async receiveLightning(amount: BN, expirySeconds: number, url: string, requiredToken?: TokenAddress, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<{

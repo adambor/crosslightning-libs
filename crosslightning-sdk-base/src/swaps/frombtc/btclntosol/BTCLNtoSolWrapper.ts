@@ -78,6 +78,60 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
     }
 
     /**
+     * Returns a newly created swap, receiving 'amount' from the lnurl-withdraw
+     *
+     * @param lnurl             LNURL-withdraw to withdraw funds from
+     * @param amount            Amount you wish to receive in base units (satoshis)
+     * @param expirySeconds     Swap expiration in seconds, setting this too low might lead to unsuccessful payments, too high and you might lose access to your funds for longer than necessary
+     * @param url               Intermediary/Counterparty swap service url
+     * @param requiredToken     Token that we want to receive
+     * @param requiredKey       Required key of the Intermediary
+     * @param requiredBaseFee   Desired base fee reported by the swap intermediary
+     * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
+     */
+    async createViaLNURL(lnurl: string, amount: BN, expirySeconds: number, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<BTCLNtoSolSwap<T>> {
+
+        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
+
+        const result = await this.contract.receiveLightningLNURL(lnurl, amount, expirySeconds, url, requiredToken, requiredBaseFee, requiredFeePPM);
+
+        const parsed = bolt11.decode(result.pr);
+
+        const swapData: T = await this.contract.swapContract.createSwapData(
+            ChainSwapType.HTLC,
+            requiredKey || result.intermediaryKey,
+            this.contract.swapContract.getAddress(),
+            requiredToken,
+            null,
+            parsed.tagsObject.payment_hash,
+            null,
+            null,
+            null,
+            false,
+            true,
+            result.securityDeposit,
+            new BN(0)
+        );
+
+        const total = result.total;
+
+        if(requiredKey!=null) {
+            const liquidity = await this.contract.swapContract.getIntermediaryBalance(requiredKey, requiredToken);
+            if(liquidity.lt(total)) {
+                throw new IntermediaryError("Intermediary doesn't have enough liquidity");
+            }
+        }
+
+        const swap = new BTCLNtoSolSwap<T>(this, result.pr, result.secret, url, swapData, result.swapFee, requiredBaseFee, requiredFeePPM, total, lnurl);
+
+        await swap.save();
+        this.swapData[swap.getPaymentHash().toString("hex")] = swap;
+
+        return swap;
+
+    }
+
+    /**
      * Initializes the wrapper, be sure to call this before taking any other actions.
      * Checks if any swaps are in progress.
      */

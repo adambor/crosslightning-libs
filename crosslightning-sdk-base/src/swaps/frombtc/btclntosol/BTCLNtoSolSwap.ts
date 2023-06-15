@@ -15,11 +15,12 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
     readonly requiredBaseFee: BN;
     readonly requiredFeePPM: BN;
     readonly expectedOut: BN;
+    readonly lnurl: string;
 
-    constructor(wrapper: BTCLNtoSolWrapper<T>, pr: string, secret: Buffer, url: string, data: T, swapFee: BN, requiredBaseFee: BN, requiredFeePPM: BN, expectedOut: BN);
+    constructor(wrapper: BTCLNtoSolWrapper<T>, pr: string, secret: Buffer, url: string, data: T, swapFee: BN, requiredBaseFee: BN, requiredFeePPM: BN, expectedOut: BN, lnurl?: string);
     constructor(wrapper: BTCLNtoSolWrapper<T>, obj: any);
 
-    constructor(wrapper: BTCLNtoSolWrapper<T>, prOrObject: string | any, secret?: Buffer, url?: string, data?: T, swapFee?: BN, requiredBaseFee?: BN, requiredFeePPM?: BN, expectedOut?: BN) {
+    constructor(wrapper: BTCLNtoSolWrapper<T>, prOrObject: string | any, secret?: Buffer, url?: string, data?: T, swapFee?: BN, requiredBaseFee?: BN, requiredFeePPM?: BN, expectedOut?: BN, lnurl?: string) {
         if(typeof(prOrObject)==="string") {
             super(wrapper, url, data, swapFee, null, null, null, null);
             this.state = BTCxtoSolSwapState.PR_CREATED;
@@ -29,6 +30,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
             this.requiredBaseFee = requiredBaseFee;
             this.requiredFeePPM = requiredFeePPM;
             this.expectedOut = expectedOut;
+            this.lnurl = lnurl;
         } else {
             super(wrapper, prOrObject);
             this.state = prOrObject.state;
@@ -38,6 +40,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
             this.requiredBaseFee = prOrObject.requiredBaseFee==null ? null : new BN(prOrObject.requiredBaseFee);
             this.requiredFeePPM = prOrObject.requiredFeePPM==null ? null : new BN(prOrObject.requiredFeePPM);
             this.expectedOut = prOrObject.expectedOut==null ? null : new BN(prOrObject.expectedOut);
+            this.lnurl = prOrObject.lnurl;
         }
     }
 
@@ -66,6 +69,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
         partiallySerialized.requiredBaseFee = this.requiredBaseFee==null ? null : this.requiredBaseFee.toString(10);
         partiallySerialized.requiredFeePPM = this.requiredFeePPM==null ? null : this.requiredFeePPM.toString(10);
         partiallySerialized.expectedOut = this.expectedOut==null ? null : this.expectedOut.toString(10);
+        partiallySerialized.lnurl = this.lnurl;
 
         return partiallySerialized;
     }
@@ -414,6 +418,20 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
         const commitFee = await this.getCommitFee();
         const claimFee = await this.getClaimFee();
         return commitFee.add(claimFee);
+    }
+
+    /**
+     * Is this an LNURL-pay swap?
+     */
+    isLNURL(): boolean {
+        return this.lnurl!=null;
+    }
+
+    /**
+     * Gets the used LNURL or null if this is not an LNURL-pay swap
+     */
+    getLNURL(): string | null {
+        return this.lnurl;
     }
 
 }
