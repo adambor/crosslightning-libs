@@ -1091,7 +1091,7 @@ export class ClientSwapContract<T extends SwapData> {
         if(res==null) {
             throw new Error("Invalid LNURL");
         }
-        if(res.tag!=="payRequest") {
+        if(res.tag!=="withdrawRequest") {
             throw new Error("Not a lnurl-pay");
         }
 
