@@ -1085,7 +1085,9 @@ export class ClientSwapContract<T extends SwapData> {
         swapFee: BN,
         total: BN,
         intermediaryKey: string,
-        securityDeposit: BN
+        securityDeposit: BN,
+
+        lnurlCallbackResult: Promise<void>
     }> {
         let res: any = await this.getLNURL(lnurl);
         if(res==null) {
@@ -1118,27 +1120,32 @@ export class ClientSwapContract<T extends SwapData> {
 
         const queryParams = (withdrawRequest.callback.includes("?") ? "&" : "?")+params.join("&");
 
-        const response: Response = await fetch(withdrawRequest.callback+queryParams, {
-            method: "GET",
-        });
+        const lnurlCallbackResult = (async() => {
+            const response: Response = await fetch(withdrawRequest.callback+queryParams, {
+                method: "GET",
+            });
 
-        if(response.status!==200) {
-            let resp: string;
-            try {
-                resp = await response.text();
-            } catch (e) {
-                throw new Error(response.statusText);
+            if(response.status!==200) {
+                let resp: string;
+                try {
+                    resp = await response.text();
+                } catch (e) {
+                    throw new Error(response.statusText);
+                }
+                throw new Error(resp);
             }
-            throw new Error(resp);
-        }
 
-        let jsonBody: any = await response.json();
+            let jsonBody: any = await response.json();
 
-        if(jsonBody.status==="ERROR") {
-            throw new Error("LNURL callback error: " + jsonBody.reason);
-        }
+            if(jsonBody.status==="ERROR") {
+                throw new Error("LNURL callback error: " + jsonBody.reason);
+            }
+        })();
 
-        return resp;
+        const anyResp: any = resp;
+        anyResp.lnurlCallbackResult = lnurlCallbackResult;
+
+        return anyResp;
     }
 
     async receiveLightning(amount: BN, expirySeconds: number, url: string, requiredToken?: TokenAddress, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<{
