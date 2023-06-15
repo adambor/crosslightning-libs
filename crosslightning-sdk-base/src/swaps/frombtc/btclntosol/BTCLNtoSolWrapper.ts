@@ -68,7 +68,7 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
             }
         }
 
-        const swap = new BTCLNtoSolSwap<T>(this, result.pr, result.secret, url, swapData, result.swapFee, requiredBaseFee, requiredFeePPM, total);
+        const swap = new BTCLNtoSolSwap<T>(this, result.pr, result.secret, url, swapData, result.swapFee, requiredBaseFee, requiredFeePPM, total, null, null);
 
         await swap.save();
         this.swapData[swap.getPaymentHash().toString("hex")] = swap;
@@ -90,7 +90,6 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
      * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
      */
     async createViaLNURL(lnurl: string, amount: BN, expirySeconds: number, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<BTCLNtoSolSwap<T>> {
-
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
         const result = await this.contract.receiveLightningLNURL(lnurl, amount, expirySeconds, url, requiredToken, requiredBaseFee, requiredFeePPM);
@@ -122,7 +121,7 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
             }
         }
 
-        const swap = new BTCLNtoSolSwap<T>(this, result.pr, result.secret, url, swapData, result.swapFee, requiredBaseFee, requiredFeePPM, total, lnurl);
+        const swap = new BTCLNtoSolSwap<T>(this, result.pr, result.secret, url, swapData, result.swapFee, requiredBaseFee, requiredFeePPM, total, lnurl, result.lnurlCallbackResult);
 
         await swap.save();
         this.swapData[swap.getPaymentHash().toString("hex")] = swap;

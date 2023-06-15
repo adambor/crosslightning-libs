@@ -16,11 +16,12 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
     readonly requiredFeePPM: BN;
     readonly expectedOut: BN;
     readonly lnurl: string;
+    readonly callbackPromise: Promise<void>;
 
-    constructor(wrapper: BTCLNtoSolWrapper<T>, pr: string, secret: Buffer, url: string, data: T, swapFee: BN, requiredBaseFee: BN, requiredFeePPM: BN, expectedOut: BN, lnurl?: string);
+    constructor(wrapper: BTCLNtoSolWrapper<T>, pr: string, secret: Buffer, url: string, data: T, swapFee: BN, requiredBaseFee: BN, requiredFeePPM: BN, expectedOut: BN, lnurl: string, callbackPromise: Promise<void>);
     constructor(wrapper: BTCLNtoSolWrapper<T>, obj: any);
 
-    constructor(wrapper: BTCLNtoSolWrapper<T>, prOrObject: string | any, secret?: Buffer, url?: string, data?: T, swapFee?: BN, requiredBaseFee?: BN, requiredFeePPM?: BN, expectedOut?: BN, lnurl?: string) {
+    constructor(wrapper: BTCLNtoSolWrapper<T>, prOrObject: string | any, secret?: Buffer, url?: string, data?: T, swapFee?: BN, requiredBaseFee?: BN, requiredFeePPM?: BN, expectedOut?: BN, lnurl?: string, callbackPromise?: Promise<void>) {
         if(typeof(prOrObject)==="string") {
             super(wrapper, url, data, swapFee, null, null, null, null);
             this.state = BTCxtoSolSwapState.PR_CREATED;
@@ -31,6 +32,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
             this.requiredFeePPM = requiredFeePPM;
             this.expectedOut = expectedOut;
             this.lnurl = lnurl;
+            this.callbackPromise = callbackPromise;
         } else {
             super(wrapper, prOrObject);
             this.state = prOrObject.state;
@@ -86,9 +88,26 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
             throw new Error("Must be in PR_CREATED state!");
         }
 
-        const result = await this.wrapper.contract.waitForIncomingPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM, this.data.getSecurityDeposit(), abortSignal, checkIntervalSeconds);
+        const abortController = new AbortController();
 
-        if(abortSignal.aborted) throw new Error("Aborted");
+        if(abortSignal!=null) abortSignal.onabort = () => abortController.abort();
+
+        const promises: Promise<any>[] = [
+            this.wrapper.contract.waitForIncomingPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM, this.data.getSecurityDeposit(), abortController.signal, checkIntervalSeconds)
+        ];
+
+        if(this.callbackPromise!=null) promises.push(this.callbackPromise);
+
+        let result;
+        try {
+            const arr = await Promise.all(promises);
+            result = arr[0];
+        } catch (e) {
+            abortController.abort();
+            throw e;
+        }
+
+        if(abortController.signal.aborted) throw new Error("Aborted");
 
         this.state = BTCxtoSolSwapState.PR_PAID;
 
