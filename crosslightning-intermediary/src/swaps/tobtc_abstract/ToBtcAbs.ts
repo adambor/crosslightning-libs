@@ -783,15 +783,15 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
         }));
 
-        restServer.post(this.path+"/getRefundAuthorization", expressHandlerWrapper(async (req, res) => {
+        const getRefundAuthorization = expressHandlerWrapper(async (req, res) => {
             /**
              * paymentHash: string              Payment hash identifier of the swap
              */
-            const parsedBody = verifySchema(req.body, {
+            const parsedBody = verifySchema(req.body || req.query, {
                 paymentHash: (val: string) => val!=null &&
-                            typeof(val)==="string" &&
-                            val.length===64 &&
-                            HEX_REGEX.test(val) ? val: null,
+                typeof(val)==="string" &&
+                val.length===64 &&
+                HEX_REGEX.test(val) ? val: null,
             });
 
             if (parsedBody==null) {
@@ -860,7 +860,10 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 code: 20009,
                 msg: "Invalid payment status"
             });
-        }));
+        });
+
+        restServer.post(this.path+"/getRefundAuthorization", getRefundAuthorization);
+        restServer.get(this.path+"/getRefundAuthorization", getRefundAuthorization);
 
         console.log("[To BTC: REST] Started at path: ", this.path);
     }

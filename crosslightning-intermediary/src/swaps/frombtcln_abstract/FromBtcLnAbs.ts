@@ -513,16 +513,15 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
         }));
 
-
-        restServer.post(this.path+"/getInvoiceStatus", expressHandlerWrapper(async (req, res) => {
+        const getInvoiceStatus = expressHandlerWrapper(async (req, res) => {
             /**
              * paymentHash: string          payment hash of the invoice
              */
-            const parsedBody = verifySchema(req.body, {
+            const parsedBody = verifySchema(req.body || req.query, {
                 paymentHash: (val: string) => val!=null &&
-                        typeof(val)==="string" &&
-                        val.length===64 &&
-                        HEX_REGEX.test(val) ? val: null,
+                typeof(val)==="string" &&
+                val.length===64 &&
+                HEX_REGEX.test(val) ? val: null,
             });
 
             const invoice = await lncli.getInvoice({
@@ -572,17 +571,20 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 msg: "Success"
             });
 
-        }));
+        });
 
-        restServer.post(this.path+"/getInvoicePaymentAuth", expressHandlerWrapper(async (req, res) => {
+        restServer.post(this.path+"/getInvoiceStatus", getInvoiceStatus);
+        restServer.get(this.path+"/getInvoiceStatus", getInvoiceStatus);
+
+        const getInvoicePaymentAuth = expressHandlerWrapper(async (req, res) => {
             /**
              * paymentHash: string          payment hash of the invoice
              */
-            const parsedBody = verifySchema(req.body, {
+            const parsedBody = verifySchema(req.body || req.query, {
                 paymentHash: (val: string) => val!=null &&
-                            typeof(val)==="string" &&
-                            val.length===64 &&
-                            HEX_REGEX.test(val) ? val: null,
+                typeof(val)==="string" &&
+                val.length===64 &&
+                HEX_REGEX.test(val) ? val: null,
             });
 
             const invoice = await lncli.getInvoice({
@@ -680,7 +682,10 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     signature: sigData.signature
                 }
             });
-        }));
+        });
+
+        restServer.post(this.path+"/getInvoicePaymentAuth", getInvoicePaymentAuth);
+        restServer.get(this.path+"/getInvoicePaymentAuth", getInvoicePaymentAuth);
 
         console.log("[From BTC-LN: REST] Started at path: ", this.path);
     }

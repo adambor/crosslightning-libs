@@ -608,15 +608,15 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             });
         }));
 
-        restServer.post(this.path+'/getRefundAuthorization', expressHandlerWrapper(async (req, res) => {
+        const getRefundAuthorization = expressHandlerWrapper(async (req, res) => {
             /**
              * paymentHash: string          Identifier of the swap
              */
             const parsedBody = verifySchema(req.body, {
                 paymentHash: (val: string) => val!=null &&
-                            typeof(val)==="string" &&
-                            val.length===64 &&
-                            HEX_REGEX.test(val) ? val: null,
+                typeof(val)==="string" &&
+                val.length===64 &&
+                HEX_REGEX.test(val) ? val: null,
             });
 
             if (parsedBody==null) {
@@ -716,7 +716,10 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     }
                 });
             }
-        }));
+        });
+
+        restServer.post(this.path+'/getRefundAuthorization', getRefundAuthorization);
+        restServer.get(this.path+'/getRefundAuthorization', getRefundAuthorization);
 
         console.log("[To BTC-LN: REST] Started at path: ", this.path);
     }
