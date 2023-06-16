@@ -129,7 +129,6 @@ export abstract class ISolToBTCxWrapper<T extends SwapData> {
 
         const changedSwaps = {};
 
-
         const processSwap: (swap: ISolToBTCxSwap<T>) => Promise<boolean> = async (swap: ISolToBTCxSwap<T>) => {
             if(swap.state===SolToBTCxSwapState.CREATED) {
                 //Check if it's already committed
@@ -155,7 +154,6 @@ export abstract class ISolToBTCxWrapper<T extends SwapData> {
                 try {
                     await this.contract.swapContract.isValidClaimInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce);
                 } catch (e) {
-                    console.error(e);
                     swap.state = SolToBTCxSwapState.FAILED;
                     return true;
                 }
@@ -220,7 +218,9 @@ export abstract class ISolToBTCxWrapper<T extends SwapData> {
 
         eventQueue = null;
 
-        await this.storage.saveSwapDataArr(Object.keys(changedSwaps).map(e => changedSwaps[e]));
+        const swapsToSave = Object.keys(changedSwaps).map(e => this.swapData[e]);
+
+        await this.storage.saveSwapDataArr(swapsToSave);
 
         this.isInitialized = true;
 
