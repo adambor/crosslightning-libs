@@ -517,7 +517,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             /**
              * paymentHash: string          payment hash of the invoice
              */
-            const parsedBody = verifySchema(req.body || req.query, {
+            const parsedBody = verifySchema({...req.body, ...req.query}, {
                 paymentHash: (val: string) => val!=null &&
                 typeof(val)==="string" &&
                 val.length===64 &&
@@ -580,7 +580,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             /**
              * paymentHash: string          payment hash of the invoice
              */
-            const parsedBody = verifySchema(req.body || req.query, {
+            const parsedBody = verifySchema({...req.body, ...req.query}, {
                 paymentHash: (val: string) => val!=null &&
                 typeof(val)==="string" &&
                 val.length===64 &&

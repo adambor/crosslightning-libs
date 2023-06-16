@@ -787,7 +787,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             /**
              * paymentHash: string              Payment hash identifier of the swap
              */
-            const parsedBody = verifySchema(req.body || req.query, {
+            const parsedBody = verifySchema({...req.body, ...req.query}, {
                 paymentHash: (val: string) => val!=null &&
                 typeof(val)==="string" &&
                 val.length===64 &&
