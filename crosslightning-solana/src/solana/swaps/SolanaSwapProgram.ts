@@ -277,6 +277,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     async getPaymentHashStatus(paymentHash: string): Promise<SwapCommitStatus> {
         const escrowStateKey = this.SwapEscrowState(Buffer.from(paymentHash, "hex"));
+
+        //Parallelize signature fetching
+        const signaturesPromise = this.signer.connection.getSignaturesForAddress(escrowStateKey, {
+            limit: 500
+        });
+
         try {
             const escrowState = await this.program.account.escrowState.fetch(escrowStateKey);
             if(escrowState!=null) {
@@ -287,9 +293,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         }
 
         //Check if paid or what
-        const signatures = await this.signer.connection.getSignaturesForAddress(escrowStateKey, {
-            limit: 500
-        });
+        const signatures = await signaturesPromise;
 
         for(let sig of signatures) {
             const tx = await this.signer.connection.getTransaction(sig.signature);
