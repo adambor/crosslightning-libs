@@ -630,7 +630,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 return;
             }
 
-            const invoiceData: FromBtcLnSwapAbs<T> = this.storageManager.data[req.body.paymentHash];
+            const invoiceData: FromBtcLnSwapAbs<T> = this.storageManager.data[parsedBody.paymentHash];
 
             const isSwapFound = invoiceData != null;
             if (!isSwapFound) {
