@@ -171,6 +171,40 @@ export class IntermediaryDiscovery<T extends SwapData> {
 
     }
 
+    async getReputation(node: {
+        url: string,
+        address: string,
+        info: InfoHandlerResponseEnvelope
+    }) {
+        const checkReputationTokens: Set<string> = new Set<string>();
+        if(node.info.services.TO_BTC!=null) {
+            if(node.info.services.TO_BTC.tokens!=null) for(let token of node.info.services.TO_BTC.tokens) {
+                checkReputationTokens.add(token);
+            }
+        }
+        if(node.info.services.TO_BTCLN!=null) {
+            if(node.info.services.TO_BTCLN.tokens!=null) for(let token of node.info.services.TO_BTCLN.tokens) {
+                checkReputationTokens.add(token);
+            }
+        }
+
+        const promises = [];
+        const reputation = {};
+        for(let token of checkReputationTokens) {
+            promises.push(this.swapContract.getIntermediaryReputation(node.address, this.swapContract.toTokenAddress(token)).then(result => {
+                reputation[token] = result;
+            }));
+        }
+
+        try {
+            await Promise.all(promises);
+        } catch (e) {
+            console.error(e);
+        }
+
+        return reputation;
+    }
+
     async init(abortSignal?: AbortSignal) {
 
         this.intermediaries = [];
@@ -198,39 +232,28 @@ export class IntermediaryDiscovery<T extends SwapData> {
             }
         }
 
-        await Promise.all(promises);
+        if(promises.length>0) await Promise.all(promises);
 
+        promises = [];
         for(let node of activeNodes) {
             //Fetch reputation
-            const checkReputationTokens: Set<string> = new Set<string>();
-            if(node.info.services.TO_BTC!=null) {
-                if(node.info.services.TO_BTC.tokens!=null) for(let token of node.info.services.TO_BTC.tokens) {
-                    checkReputationTokens.add(token);
+            promises.push(this.getReputation(node).then(reputation => {
+                const services: ServicesType = {};
+
+                for(let key in node.info.services) {
+                    services[swapHandlerTypeToSwapType(key as SwapHandlerType)] = node.info.services[key];
                 }
-            }
-            if(node.info.services.TO_BTCLN!=null) {
-                if(node.info.services.TO_BTCLN.tokens!=null) for(let token of node.info.services.TO_BTCLN.tokens) {
-                    checkReputationTokens.add(token);
-                }
-            }
 
-            const reputation = {};
-            for(let token of checkReputationTokens) {
-                try {
-                    reputation[token] = await this.swapContract.getIntermediaryReputation(node.address, this.swapContract.toTokenAddress(token));
-                } catch (e) {
-                    console.error(e);
-                }
+                this.intermediaries.push(new Intermediary(node.url, node.address, services, reputation));
+            }));
+
+            if(promises.length>=BATCH_SIZE) {
+                await Promise.all(promises);
+                promises = [];
             }
-
-            const services: ServicesType = {};
-
-            for(let key in node.info.services) {
-                services[swapHandlerTypeToSwapType(key as SwapHandlerType)] = node.info.services[key];
-            }
-
-            this.intermediaries.push(new Intermediary(node.url, node.address, services, reputation));
         }
+
+        if(promises.length>0) await Promise.all(promises);
 
         console.log("Swap intermediaries: ", this.intermediaries);
 
