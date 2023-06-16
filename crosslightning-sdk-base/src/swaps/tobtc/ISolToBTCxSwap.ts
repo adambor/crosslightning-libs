@@ -134,6 +134,8 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
             await this.wrapper.contract.swapContract.isValidClaimInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
         } catch (e) {
             console.error(e);
+            this.state = SolToBTCxSwapState.FAILED;
+            await this.save();
             throw new Error("Expired, please retry");
         }
 

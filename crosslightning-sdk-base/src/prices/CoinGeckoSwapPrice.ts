@@ -123,8 +123,7 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
         }
 
         const response: Response = await fetch(this.url+"/simple/price?ids="+coinId+"&vs_currencies=sats&precision=3", {
-            method: "GET",
-            headers: {'Content-Type': 'application/json'}
+            method: "GET"
         });
 
         if(response.status!==200) {

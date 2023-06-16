@@ -815,12 +815,8 @@ export class ClientSwapContract<T extends SwapData> {
         signature?: string
     }> {
 
-        const response: Response = await fetch(url+"/getRefundAuthorization", {
-            method: "POST",
-            body: JSON.stringify({
-                paymentHash: data.getHash()
-            }),
-            headers: {'Content-Type': 'application/json'}
+        const response: Response = await fetch(url+"/getRefundAuthorization?paymentHash="+encodeURIComponent(data.getHash()), {
+            method: "GET"
         });
 
         if(response.status!==200) {
@@ -1223,12 +1219,8 @@ export class ClientSwapContract<T extends SwapData> {
 
         const paymentHash = decodedPR.tagsObject.payment_hash;
 
-        const response: Response = await fetch(url+"/getInvoicePaymentAuth", {
-            method: "POST",
-            body: JSON.stringify({
-                paymentHash: paymentHash
-            }),
-            headers: {'Content-Type': 'application/json'}
+        const response: Response = await fetch(url+"/getInvoicePaymentAuth?paymentHash="+encodeURIComponent(paymentHash), {
+            method: "GET"
         });
 
         if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");

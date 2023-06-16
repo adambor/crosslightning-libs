@@ -150,6 +150,15 @@ export abstract class ISolToBTCxWrapper<T extends SwapData> {
                     swap.state = SolToBTCxSwapState.REFUNDABLE;
                     return true;
                 }
+
+                //Not committed yet, check if still valid
+                try {
+                    await this.contract.swapContract.isValidClaimInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce);
+                } catch (e) {
+                    console.error(e);
+                    swap.state = SolToBTCxSwapState.FAILED;
+                    return true;
+                }
             }
 
             if(swap.state===SolToBTCxSwapState.COMMITED) {
