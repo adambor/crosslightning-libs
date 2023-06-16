@@ -92,22 +92,27 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
 
         if(abortSignal!=null) abortSignal.onabort = () => abortController.abort();
 
-        const promises: Promise<any>[] = [
-            this.wrapper.contract.waitForIncomingPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM, this.data.getSecurityDeposit(), abortController.signal, checkIntervalSeconds)
-        ];
+        console.log("Waiting for payment....");
 
-        if(this.callbackPromise!=null) promises.push(this.callbackPromise);
+        let callbackError = null;
+
+        if(this.callbackPromise!=null) this.callbackPromise.catch(e => {
+            callbackError = e;
+            abortController.abort();
+        });
 
         let result;
         try {
-            const arr = await Promise.all(promises);
-            result = arr[0];
+            result = await this.wrapper.contract.waitForIncomingPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM, this.data.getSecurityDeposit(), abortController.signal, checkIntervalSeconds);
         } catch (e) {
-            abortController.abort();
+            if(callbackError!=null) throw callbackError;
             throw e;
         }
 
-        if(abortController.signal.aborted) throw new Error("Aborted");
+        if(abortController.signal.aborted) {
+            if(callbackError!=null) throw callbackError;
+            throw new Error("Aborted");
+        }
 
         this.state = BTCxtoSolSwapState.PR_PAID;
 

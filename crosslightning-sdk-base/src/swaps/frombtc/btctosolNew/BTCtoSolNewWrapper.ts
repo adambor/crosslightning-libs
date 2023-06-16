@@ -6,6 +6,7 @@ import {ClientSwapContract} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {SignatureVerificationError, SwapCommitStatus, SwapData, TokenAddress, ClaimEvent, InitializeEvent,
     RefundEvent, SwapEvent, ChainEvents, RelaySynchronizer} from "crosslightning-base";
+import {BTCLNtoSolSwap} from "../../..";
 
 export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> {
 
@@ -122,15 +123,13 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
 
         const changedSwaps = {};
 
-        for(let paymentHash in this.swapData) {
-            const swap = this.swapData[paymentHash] as BTCtoSolNewSwap<T>;
 
+        const processSwap: (swap: BTCtoSolNewSwap<T>) => Promise<boolean> = async (swap: BTCtoSolNewSwap<T>) => {
             if(swap.state===BTCtoSolNewSwapState.PR_CREATED) {
                 const status = await this.contract.swapContract.getCommitStatus(swap.data);
 
                 if(status===SwapCommitStatus.COMMITED) {
                     swap.state = BTCtoSolNewSwapState.CLAIM_COMMITED;
-                    changedSwaps[paymentHash] = swap;
                     //Check if payment already arrived
                     const tx = await ChainUtils.checkAddressTxos(swap.address, swap.getTxoHash());
                     if(tx!=null && tx.tx.status.confirmed) {
@@ -140,10 +139,9 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
                             swap.txId = tx.tx.txid;
                             swap.vout = tx.vout;
                             swap.state = BTCtoSolNewSwapState.BTC_TX_CONFIRMED;
-                            changedSwaps[paymentHash] = swap;
                         }
                     }
-                    continue;
+                    return true;
                 }
 
                 if(status===SwapCommitStatus.NOT_COMMITED) {
@@ -153,22 +151,20 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
                     } catch (e) {
                         if(e instanceof SignatureVerificationError) {
                             swap.state = BTCtoSolNewSwapState.FAILED;
-                            changedSwaps[paymentHash] = swap;
+                            return true;
                         }
                     }
-                    continue;
+                    return false;
                 }
 
                 if(status===SwapCommitStatus.EXPIRED) {
                     swap.state = BTCtoSolNewSwapState.FAILED;
-                    changedSwaps[paymentHash] = swap;
-                    continue;
+                    return true;
                 }
 
                 if(status===SwapCommitStatus.PAID) {
                     swap.state = BTCtoSolNewSwapState.CLAIM_CLAIMED;
-                    changedSwaps[paymentHash] = swap;
-                    continue;
+                    return true;
                 }
             }
 
@@ -177,13 +173,11 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
                 const commitStatus = await this.contract.swapContract.getCommitStatus(swap.data);
                 if(commitStatus===SwapCommitStatus.PAID) {
                     swap.state = BTCtoSolNewSwapState.CLAIM_CLAIMED;
-                    changedSwaps[paymentHash] = swap;
-                    continue;
+                    return true;
                 }
                 if(commitStatus===SwapCommitStatus.NOT_COMMITED || commitStatus===SwapCommitStatus.EXPIRED) {
                     swap.state = BTCtoSolNewSwapState.FAILED;
-                    changedSwaps[paymentHash] = swap;
-                    continue;
+                    return true;
                 }
                 if(commitStatus===SwapCommitStatus.COMMITED) {
                     //Check if payment already arrived
@@ -195,12 +189,28 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
                             swap.txId = tx.tx.txid;
                             swap.vout = tx.vout;
                             swap.state = BTCtoSolNewSwapState.BTC_TX_CONFIRMED;
-                            changedSwaps[paymentHash] = swap;
+                            return true;
                         }
                     }
                 }
             }
+        };
+
+        let promises = [];
+        for(let paymentHash in this.swapData) {
+            const swap = this.swapData[paymentHash] as BTCtoSolNewSwap<T>;
+
+            promises.push(processSwap(swap).then(changed => {
+                if(changed) changedSwaps[paymentHash] = true;
+            }));
+
+            if(promises.length>=this.MAX_CONCURRENT_REQUESTS) {
+                await Promise.all(promises);
+                promises = [];
+            }
         }
+
+        if(promises.length>0) await Promise.all(promises);
 
         for(let event of eventQueue) {
             await processEvent([event]);

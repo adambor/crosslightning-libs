@@ -5,9 +5,12 @@ import * as BN from "bn.js";
 import * as EventEmitter from "events";
 import {SwapCommitStatus, SwapData, TokenAddress, ChainEvents, RefundEvent, ClaimEvent,
     InitializeEvent, SwapEvent} from "crosslightning-base";
+import {BTCtoSolNewSwap} from "../..";
 
 
 export abstract class ISolToBTCxWrapper<T extends SwapData> {
+
+    readonly MAX_CONCURRENT_REQUESTS: number = 10;
 
     readonly storage: IWrapperStorage;
     readonly contract: ClientSwapContract<T>;
@@ -126,27 +129,26 @@ export abstract class ISolToBTCxWrapper<T extends SwapData> {
 
         const changedSwaps = {};
 
-        for(let paymentHash in this.swapData) {
-            const swap = this.swapData[paymentHash];
 
+        const processSwap: (swap: ISolToBTCxSwap<T>) => Promise<boolean> = async (swap: ISolToBTCxSwap<T>) => {
             if(swap.state===SolToBTCxSwapState.CREATED) {
                 //Check if it's already committed
                 const res = await this.contract.swapContract.getCommitStatus(swap.data);
                 if(res===SwapCommitStatus.PAID) {
                     swap.state = SolToBTCxSwapState.CLAIMED;
-                    changedSwaps[paymentHash] = swap;
+                    return true;
                 }
                 if(res===SwapCommitStatus.EXPIRED) {
                     swap.state = SolToBTCxSwapState.FAILED;
-                    changedSwaps[paymentHash] = swap;
+                    return true;
                 }
                 if(res===SwapCommitStatus.COMMITED) {
                     swap.state = SolToBTCxSwapState.COMMITED;
-                    changedSwaps[paymentHash] = swap;
+                    return true;
                 }
                 if(res===SwapCommitStatus.REFUNDABLE) {
                     swap.state = SolToBTCxSwapState.REFUNDABLE;
-                    changedSwaps[paymentHash] = swap;
+                    return true;
                 }
             }
 
@@ -159,7 +161,7 @@ export abstract class ISolToBTCxWrapper<T extends SwapData> {
                         if(refundAuth!=null) {
                             if(!refundAuth.is_paid) {
                                 swap.state = SolToBTCxSwapState.REFUNDABLE;
-                                changedSwaps[paymentHash] = swap;
+                                return true;
                             } else {
                                 swap.secret = refundAuth.secret;
                             }
@@ -170,22 +172,38 @@ export abstract class ISolToBTCxWrapper<T extends SwapData> {
                 }
                 if(res===SwapCommitStatus.NOT_COMMITED) {
                     swap.state = SolToBTCxSwapState.REFUNDED;
-                    changedSwaps[paymentHash] = swap;
+                    return true;
                 }
                 if(res===SwapCommitStatus.PAID) {
                     swap.state = SolToBTCxSwapState.CLAIMED;
-                    changedSwaps[paymentHash] = swap;
+                    return true;
                 }
                 if(res===SwapCommitStatus.EXPIRED) {
                     swap.state = SolToBTCxSwapState.FAILED;
-                    changedSwaps[paymentHash] = swap;
+                    return true;
                 }
                 if(res===SwapCommitStatus.REFUNDABLE) {
                     swap.state = SolToBTCxSwapState.REFUNDABLE;
-                    changedSwaps[paymentHash] = swap;
+                    return true;
                 }
             }
+        };
+
+        let promises = [];
+        for(let paymentHash in this.swapData) {
+            const swap: ISolToBTCxSwap<T> = this.swapData[paymentHash];
+
+            promises.push(processSwap(swap).then(changed => {
+                if(changed) changedSwaps[paymentHash] = true;
+            }));
+
+            if(promises.length>=this.MAX_CONCURRENT_REQUESTS) {
+                await Promise.all(promises);
+                promises = [];
+            }
         }
+
+        if(promises.length>0) await Promise.all(promises);
 
         for(let event of eventQueue) {
             await processEvent([event]);
