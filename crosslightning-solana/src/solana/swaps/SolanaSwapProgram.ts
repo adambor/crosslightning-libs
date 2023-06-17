@@ -3,7 +3,7 @@ import {AnchorProvider, BorshCoder, EventParser, Program} from "@coral-xyz/ancho
 import * as BN from "bn.js";
 import {
     Ed25519Program,
-    Keypair,
+    Keypair, ParsedAccountsModeBlockResponse,
     PublicKey,
     Signer,
     SystemProgram,
@@ -55,7 +55,28 @@ export class StoredDataAccount implements StorageObject {
 
 }
 
+const SLOT_TIME = 400;
+const SLOT_BUFFER = 30;
+
 export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
+
+    blockCache: {
+        [slotNumber: number]: ParsedAccountsModeBlockResponse
+    } = {};
+
+    //Parsed block caching
+    async getParsedBlock(slot: number): Promise<ParsedAccountsModeBlockResponse> {
+        if(this.blockCache[slot]==null) {
+            const latestBlock = await this.signer.connection.getParsedBlock(slot, {
+                transactionDetails: "none",
+                commitment: "confirmed",
+                rewards: false
+            });
+            this.blockCache[slot] = latestBlock;
+            return latestBlock;
+        }
+        return this.blockCache[slot];
+    }
 
     claimWithSecretTimeout: number = 45;
     claimWithTxDataTimeout: number = 120;
@@ -365,7 +386,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const txToSign = await this.getClaimInitMessage(swapData, useNonce, authPrefix, authTimeout.toString());
 
-        txToSign.recentBlockhash = (await this.signer.connection.getLatestBlockhash()).blockhash;
+        const latestSlot = await this.signer.connection.getSlot("confirmed");
+        const latestBlock = await this.getParsedBlock(latestSlot);
+
+        txToSign.recentBlockhash = latestBlock.blockhash;
         txToSign.sign(this.signer.signer);
 
         const sig = txToSign.signatures.find(e => e.publicKey.equals(this.signer.signer.publicKey));
@@ -374,7 +398,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             nonce: useNonce,
             prefix: authPrefix,
             timeout: authTimeout.toString(10),
-            signature: txToSign.recentBlockhash+";"+sig.signature.toString("hex")
+            signature: latestSlot+";"+sig.signature.toString("hex")
         };
     }
 
@@ -393,11 +417,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             throw new SignatureVerificationError("Authorization expired!");
         }
 
-        const [recentBlockhash, signatureString] = signature.split(";");
+        const [latestSlot, signatureString] = signature.split(";");
+        const latestBlock = await this.getParsedBlock(parseInt(latestSlot));
 
         const txToSign = await this.getClaimInitMessage(data, nonce, prefix, timeout);
 
-        txToSign.recentBlockhash = recentBlockhash;
+        txToSign.recentBlockhash = latestBlock.blockhash;
         txToSign.addSignature(data.claimer, Buffer.from(signatureString, "hex"));
 
         const valid = txToSign.verifySignatures(false);
@@ -406,8 +431,28 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             throw new SignatureVerificationError("Invalid signature!");
         }
 
-        return Buffer.from(recentBlockhash);
+        return Buffer.from(latestBlock.blockhash);
 
+    }
+
+    async getClaimInitAuthorizationExpiry(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<number> {
+        const [transactionSlotStr, signatureString] = signature.split(";");
+
+        const lastValidTransactionSlot = parseInt(transactionSlotStr)+150;
+
+        const latestSlot = await this.signer.connection.getSlot("processed");
+
+        const slotsLeft = lastValidTransactionSlot-latestSlot-SLOT_BUFFER;
+
+        const now = Date.now();
+
+        const expiry = Math.min(now + (slotsLeft*SLOT_TIME), (parseInt(timeout)-this.authGracePeriod)*1000);
+
+        if(expiry<now) {
+            return 0;
+        }
+
+        return expiry;
     }
 
     async getInitMessage(swapData: SolanaSwapData, nonce: number, prefix: string, timeout: string): Promise<Transaction> {
@@ -459,7 +504,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const txToSign = await this.getInitMessage(swapData, useNonce, authPrefix, authTimeout.toString(10));
 
-        txToSign.recentBlockhash = (await this.signer.connection.getLatestBlockhash()).blockhash;
+        const latestSlot = await this.signer.connection.getSlot("confirmed");
+        const latestBlock = await this.getParsedBlock(latestSlot);
+        txToSign.recentBlockhash = latestBlock.blockhash;
         txToSign.sign(this.signer.signer);
 
         const sig = txToSign.signatures.find(e => e.publicKey.equals(this.signer.signer.publicKey));
@@ -468,7 +515,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             nonce: useNonce,
             prefix: authPrefix,
             timeout: authTimeout.toString(10),
-            signature: txToSign.recentBlockhash+";"+sig.signature.toString("hex")
+            signature: latestSlot+";"+sig.signature.toString("hex")
         };
     }
 
@@ -493,13 +540,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             throw new SignatureVerificationError("Swap will expire too soon!");
         }
 
-        const [recentBlockhash, signatureString] = signature.split(";");
+        const [latestSlot, signatureString] = signature.split(";");
+        const latestBlock = await this.getParsedBlock(parseInt(latestSlot));
 
         const txToSign = await this.getInitMessage(data, nonce, prefix, timeout);
 
         //Check validity of recentBlockhash
 
-        txToSign.recentBlockhash = recentBlockhash;
+        txToSign.recentBlockhash = latestBlock.blockhash;
         txToSign.addSignature(data.offerer, Buffer.from(signatureString, "hex"));
 
         const valid = txToSign.verifySignatures(false);
@@ -508,8 +556,28 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             throw new SignatureVerificationError("Invalid signature!");
         }
 
-        return Buffer.from(recentBlockhash);
+        return Buffer.from(latestBlock.blockhash);
 
+    }
+
+    async getInitAuthorizationExpiry(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<number> {
+        const [transactionSlotStr, signatureString] = signature.split(";");
+
+        const lastValidTransactionSlot = parseInt(transactionSlotStr)+150;
+
+        const latestSlot = await this.signer.connection.getSlot("processed");
+
+        const slotsLeft = lastValidTransactionSlot-latestSlot-SLOT_BUFFER;
+
+        const now = Date.now();
+
+        const expiry = Math.min(now + (slotsLeft*SLOT_TIME), (parseInt(timeout)-this.authGracePeriod)*1000);
+
+        if(expiry<now) {
+            return 0;
+        }
+
+        return expiry;
     }
 
     getRefundMessage(swapData: SolanaSwapData, prefix: string, timeout: string): Buffer {
@@ -736,10 +804,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     }
 
     async sendAndConfirm(txs: SolTx[], waitForConfirmation?: boolean, abortSignal?: AbortSignal, parallel?: boolean): Promise<string[]> {
-        const {blockhash, lastValidBlockHeight} = await this.signer.connection.getLatestBlockhash();
+        let latestBlockData: {blockhash: string, lastValidBlockHeight: number} = null;
 
         for(let tx of txs) {
-            if(tx.tx.recentBlockhash==null) tx.tx.recentBlockhash = blockhash;
+            if(tx.tx.recentBlockhash==null) {
+                if(latestBlockData==null) latestBlockData = await this.signer.connection.getLatestBlockhash("confirmed");
+                tx.tx.recentBlockhash = latestBlockData.blockhash;
+                tx.tx.lastValidBlockHeight = latestBlockData.lastValidBlockHeight;
+            }
             tx.tx.feePayer = this.signer.publicKey;
             if(tx.signers!=null && tx.signers.length>0) for(let signer of tx.signers) tx.tx.sign(signer);
         }
@@ -760,7 +832,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                     promises.push(this.signer.connection.confirmTransaction({
                         signature: txResult,
                         blockhash: tx.recentBlockhash,
-                        lastValidBlockHeight: lastValidBlockHeight,
+                        lastValidBlockHeight: tx.lastValidBlockHeight || latestBlockData?.lastValidBlockHeight,
                         abortSignal
                     }, "confirmed"));
                 }
@@ -780,7 +852,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 await this.signer.connection.confirmTransaction({
                     signature: txResult,
                     blockhash: tx.recentBlockhash,
-                    lastValidBlockHeight: lastValidBlockHeight,
+                    lastValidBlockHeight: tx.lastValidBlockHeight || latestBlockData?.lastValidBlockHeight,
                     abortSignal
                 }, "confirmed");
                 signatures.push(txResult);
@@ -1369,7 +1441,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const paymentHash = Buffer.from(swapData.paymentHash, "hex");
 
-        const [recentBlockhash, signatureStr] = signature.split(";");
+        const [slotNumber, signatureStr] = signature.split(";");
+
+        const block = await this.getParsedBlock(parseInt(slotNumber));
 
         const tx = new Transaction();
 
@@ -1403,7 +1477,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         tx.add(ix);
         tx.feePayer = swapData.offerer;
-        tx.recentBlockhash = recentBlockhash;
+        tx.recentBlockhash = block.blockhash;
+        tx.lastValidBlockHeight = block.blockHeight + 150;
         tx.addSignature(swapData.claimer, Buffer.from(signatureStr, "hex"));
 
         txs.push({
@@ -1429,7 +1504,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const paymentHash = Buffer.from(swapData.paymentHash, "hex");
 
-        const [recentBlockhash, signatureStr] = signature.split(";");
+        const [slotNumber, signatureStr] = signature.split(";");
+
+        const block = await this.getParsedBlock(parseInt(slotNumber));
 
         const claimerAta = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
 
@@ -1464,7 +1541,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         tx.add(result);
         tx.feePayer = swapData.claimer;
-        tx.recentBlockhash = recentBlockhash;
+        tx.recentBlockhash = block.blockhash;
+        tx.lastValidBlockHeight = block.blockHeight + 150;
         tx.addSignature(swapData.offerer, Buffer.from(signatureStr, "hex"));
 
         return [{
