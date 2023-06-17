@@ -30,7 +30,8 @@ export class SoltoBTCSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
         timeout: string,
         signature: string,
         nonce: number,
-        url: string
+        url: string,
+        expiry: number
     );
     constructor(wrapper: SoltoBTCWrapper<T>, obj: any);
 
@@ -47,10 +48,11 @@ export class SoltoBTCSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
         timeout?: string,
         signature?: string,
         nonce?: number,
-        url?: string
+        url?: string,
+        expiry?: number
     ) {
         if(typeof(addressOrObject)==="string") {
-            super(wrapper, data, swapFee, prefix, timeout, signature, nonce, url);
+            super(wrapper, data, swapFee, prefix, timeout, signature, nonce, url, expiry);
 
             this.address = addressOrObject;
             this.amount = amount;

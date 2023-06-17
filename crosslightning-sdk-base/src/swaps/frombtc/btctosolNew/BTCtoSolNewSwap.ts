@@ -39,6 +39,7 @@ export class BTCtoSolNewSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
         timeout: string,
         signature: string,
         nonce: number,
+        expiry: number
     );
     constructor(wrapper: BTCtoSolNewWrapper<T>, obj: any);
 
@@ -53,9 +54,10 @@ export class BTCtoSolNewSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
         timeout?: string,
         signature?: string,
         nonce?: number,
+        expiry?: number
     ) {
         if(typeof(addressOrObject)==="string") {
-            super(wrapper, url, data, swapFee, prefix, timeout, signature, nonce);
+            super(wrapper, url, data, swapFee, prefix, timeout, signature, nonce, expiry);
             this.state = BTCtoSolNewSwapState.PR_CREATED;
 
             this.address = addressOrObject;

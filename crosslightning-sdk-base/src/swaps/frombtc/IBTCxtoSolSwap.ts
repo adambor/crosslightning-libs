@@ -10,6 +10,7 @@ import {SwapData, TokenAddress} from "crosslightning-base";
 export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
 
     readonly url: string;
+    expiry: number;
 
     //State: PR_PAID
     data: T;
@@ -41,6 +42,7 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
         timeout?: string,
         signature?: string,
         nonce?: number,
+        expiry?: number
     ) {
         this.wrapper = wrapper;
         this.events = new EventEmitter();
@@ -53,6 +55,7 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
             this.timeout = timeout;
             this.signature = signature;
             this.nonce = nonce;
+            this.expiry = expiry;
         } else {
             this.url = urlOrObject.url;
 
@@ -64,6 +67,7 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
             this.nonce = urlOrObject.nonce;
             this.commitTxId = urlOrObject.commitTxId;
             this.claimTxId = urlOrObject.claimTxId;
+            this.expiry = urlOrObject.expiry;
         }
     }
 
@@ -213,7 +217,8 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
             signature: this.signature,
             nonce: this.nonce,
             commitTxId: this.commitTxId,
-            claimTxId: this.claimTxId
+            claimTxId: this.claimTxId,
+            expiry: this.expiry
         };
     }
 
@@ -231,6 +236,10 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
 
     getTotalDeposit():BN {
         return this.data.getTotalDeposit();
+    }
+
+    getExpiry(): number {
+        return this.expiry;
     }
 
 }

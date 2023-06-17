@@ -50,7 +50,8 @@ export class SoltoBTCWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> {
             result.timeout,
             result.signature,
             result.nonce,
-            url
+            url,
+            result.expiry
         );
 
         await swap.save();
@@ -92,7 +93,8 @@ export class SoltoBTCWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> {
             result.timeout,
             result.signature,
             result.nonce,
-            url
+            url,
+            result.expiry
         );
 
         await swap.save();

@@ -13,6 +13,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
 
     readonly url: string;
 
+    readonly expiry: number;
     data: T;
 
     swapFee: BN;
@@ -45,6 +46,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
         signature?: string,
         nonce?: number,
         url?: string,
+        expiry?: number
     ) {
         this.wrapper = wrapper;
         this.events = new EventEmitter();
@@ -60,6 +62,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
             this.timeout = timeout;
             this.signature = signature;
             this.nonce = nonce;
+            this.expiry = expiry;
         } else {
             this.state = prOrObject.state;
 
@@ -76,6 +79,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
             this.nonce = prOrObject.nonce;
             this.commitTxId = prOrObject.commitTxId;
             this.refundTxId = prOrObject.refundTxId;
+            this.expiry = prOrObject.expiry;
         }
     }
 
@@ -344,6 +348,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
             nonce: this.nonce,
             commitTxId: this.commitTxId,
             refundTxId: this.refundTxId,
+            expiry: this.expiry
         };
     }
 
@@ -387,6 +392,12 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
         return this.getWrapper().contract.swapContract.getRefundFee();
     }
 
+    /**
+     * Returns expiry in UNIX millis
+     */
+    getExpiry(): number {
+        return this.expiry;
+    }
 }
 
 export enum SolToBTCxSwapState {

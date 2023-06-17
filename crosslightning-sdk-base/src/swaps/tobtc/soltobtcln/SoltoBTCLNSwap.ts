@@ -29,6 +29,7 @@ export class SoltoBTCLNSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
         url: string,
         confidence: string,
         routingFeeSats: BN,
+        expiry: number,
         lnurl?: string,
         successAction?: LNURLPaySuccessAction
     );
@@ -46,11 +47,12 @@ export class SoltoBTCLNSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
         url?: string,
         confidence?: string,
         routingFeeSats?: BN,
+        expiry?: number,
         lnurl?: string,
         successAction?: LNURLPaySuccessAction
     ) {
         if(typeof(prOrObject)==="string") {
-            super(wrapper, data, swapFee, prefix, timeout, signature, nonce, url);
+            super(wrapper, data, swapFee, prefix, timeout, signature, nonce, url, expiry);
             this.confidence = parseFloat(confidence);
             this.pr = prOrObject;
             this.routingFeeSats = routingFeeSats;

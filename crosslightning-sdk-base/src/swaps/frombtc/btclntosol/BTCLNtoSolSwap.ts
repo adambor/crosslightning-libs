@@ -23,7 +23,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
 
     constructor(wrapper: BTCLNtoSolWrapper<T>, prOrObject: string | any, secret?: Buffer, url?: string, data?: T, swapFee?: BN, requiredBaseFee?: BN, requiredFeePPM?: BN, expectedOut?: BN, lnurl?: string, callbackPromise?: Promise<void>) {
         if(typeof(prOrObject)==="string") {
-            super(wrapper, url, data, swapFee, null, null, null, null);
+            super(wrapper, url, data, swapFee, null, null, null, null, null);
             this.state = BTCxtoSolSwapState.PR_CREATED;
 
             this.pr = prOrObject;
@@ -121,6 +121,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
         this.timeout = result.timeout;
         this.signature = result.signature;
         this.nonce = result.nonce;
+        this.expiry = result.expiry;
 
         await this.save();
 

@@ -11,6 +11,8 @@ export interface ISwap {
     refundTxId?: string;
     claimTxId?: string;
 
+    expiry?: number;
+
     /**
      * Returns hash identifier of the swap
      */
@@ -45,6 +47,11 @@ export interface ISwap {
      * Get the estimated solana fee of the commit transaction
      */
     getCommitFee(): Promise<BN>;
+
+    /**
+     * Returns expiry in UNIX millis
+     */
+    getExpiry(): number;
 
     /**
      * Event emitter emitting "swapState" event when swap's state changes

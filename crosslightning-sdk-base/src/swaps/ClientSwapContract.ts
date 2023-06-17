@@ -243,7 +243,8 @@ export class ClientSwapContract<T extends SwapData> {
         prefix: string,
         timeout: string,
         signature: string,
-        nonce: number
+        nonce: number,
+        expiry: number
     }> {
         const firstPart = new BN(Math.floor((Date.now()/1000)) - 700000000);
 
@@ -360,7 +361,9 @@ export class ClientSwapContract<T extends SwapData> {
             prefix: jsonBody.data.prefix,
             timeout: jsonBody.data.timeout,
             signature: jsonBody.data.signature,
-            nonce: jsonBody.data.nonce
+            nonce: jsonBody.data.nonce,
+
+            expiry: await this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)
         };
     }
 
@@ -383,7 +386,8 @@ export class ClientSwapContract<T extends SwapData> {
         timeout: string,
         signature: string,
         nonce: number,
-        amount: BN
+        amount: BN,
+        expiry: number
     }> {
         const firstPart = new BN(Math.floor((Date.now()/1000)) - 700000000);
 
@@ -507,7 +511,9 @@ export class ClientSwapContract<T extends SwapData> {
             timeout: jsonBody.data.timeout,
             signature: jsonBody.data.signature,
             nonce: jsonBody.data.nonce,
-            amount: amount
+            amount: amount,
+
+            expiry: await this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)
         };
     }
 
@@ -537,7 +543,9 @@ export class ClientSwapContract<T extends SwapData> {
         nonce: number,
 
         invoice: string,
-        successAction: LNURLPaySuccessAction
+        successAction: LNURLPaySuccessAction,
+
+        expiry: number
     }> {
         let res: any = await this.getLNURL(lnurl);
         if(res==null) {
@@ -676,7 +684,9 @@ export class ClientSwapContract<T extends SwapData> {
         prefix: string,
         timeout: string,
         signature: string,
-        nonce: number
+        nonce: number,
+
+        expiry: number
     }> {
         const parsedPR = bolt11.decode(bolt11PayReq);
 
@@ -802,7 +812,9 @@ export class ClientSwapContract<T extends SwapData> {
             prefix: jsonBody.data.prefix,
             timeout: jsonBody.data.timeout,
             signature: jsonBody.data.signature,
-            nonce: jsonBody.data.nonce
+            nonce: jsonBody.data.nonce,
+
+            expiry: await this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)
         }
     }
 
@@ -932,7 +944,8 @@ export class ClientSwapContract<T extends SwapData> {
         prefix: string,
         timeout: string,
         signature: string,
-        nonce: number
+        nonce: number,
+        expiry: number
     }> {
 
         const feePerBlock: BN = (await this.btcRelay.getFeePerBlock()).mul(feeSafetyFactor || new BN(2));
@@ -1070,7 +1083,8 @@ export class ClientSwapContract<T extends SwapData> {
             prefix: jsonBody.data.prefix,
             timeout: jsonBody.data.timeout,
             signature: jsonBody.data.signature,
-            nonce: jsonBody.data.nonce
+            nonce: jsonBody.data.nonce,
+            expiry: await this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)
         };
 
     }
@@ -1212,7 +1226,9 @@ export class ClientSwapContract<T extends SwapData> {
         prefix?: string,
         timeout?: string,
         signature?: string,
-        nonce?: number
+        nonce?: number,
+
+        expiry?: number
     }> {
 
         const decodedPR = bolt11.decode(bolt11PaymentReq);
@@ -1285,7 +1301,8 @@ export class ClientSwapContract<T extends SwapData> {
                 prefix: jsonBody.data.prefix,
                 timeout: jsonBody.data.timeout,
                 signature: jsonBody.data.signature,
-                nonce: jsonBody.data.nonce
+                nonce: jsonBody.data.nonce,
+                expiry: await this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)
             }
         }
 
@@ -1314,7 +1331,8 @@ export class ClientSwapContract<T extends SwapData> {
         prefix: string,
         timeout: string,
         signature: string,
-        nonce: number
+        nonce: number,
+        expiry: number
     }> {
         if(abortSignal!=null && abortSignal.aborted) {
             throw new Error("Aborted");

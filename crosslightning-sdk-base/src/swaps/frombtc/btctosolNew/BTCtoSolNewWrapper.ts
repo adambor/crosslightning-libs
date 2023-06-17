@@ -41,7 +41,7 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
 
         const result = await this.contract.receiveOnchain(amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
 
-        const swap = new BTCtoSolNewSwap(this, result.address, amount, url, result.data, result.swapFee, result.prefix, result.timeout, result.signature, result.nonce);
+        const swap = new BTCtoSolNewSwap(this, result.address, amount, url, result.data, result.swapFee, result.prefix, result.timeout, result.signature, result.nonce, result.expiry);
 
         await swap.save();
         this.swapData[result.data.getHash()] = swap;
