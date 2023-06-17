@@ -57,6 +57,7 @@ export interface SwapContract<T extends SwapData, TX> {
         signature: string
     }>;
     isValidClaimInitAuthorization(swapData: T, timeout: string, prefix: string, signature: string, nonce: number): Promise<Buffer | null>;
+    getClaimInitAuthorizationExpiry(swapData: T, timeout: string, prefix: string, signature: string, nonce: number): Promise<number>;
 
     getInitSignature(swapData: T, nonce: ISwapNonce, authorizationTimeout: number): Promise<{
         nonce: number,
@@ -65,6 +66,7 @@ export interface SwapContract<T extends SwapData, TX> {
         signature: string
     }>;
     isValidInitAuthorization(swapData: T, timeout: string, prefix: string, signature: string, nonce: number): Promise<Buffer | null>;
+    getInitAuthorizationExpiry(swapData: T, timeout: string, prefix: string, signature: string, nonce: number): Promise<number>;
 
     getRefundSignature(swapData: T, authorizationTimeout: number): Promise<{
         prefix: string,
