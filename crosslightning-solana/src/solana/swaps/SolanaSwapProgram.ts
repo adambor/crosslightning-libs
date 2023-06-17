@@ -386,7 +386,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const txToSign = await this.getClaimInitMessage(swapData, useNonce, authPrefix, authTimeout.toString());
 
-        const latestSlot = await this.signer.connection.getSlot("confirmed");
+        const latestSlot = await this.signer.connection.getSlot("finalized");
         const latestBlock = await this.getParsedBlock(latestSlot);
 
         txToSign.recentBlockhash = latestBlock.blockhash;
@@ -504,7 +504,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const txToSign = await this.getInitMessage(swapData, useNonce, authPrefix, authTimeout.toString(10));
 
-        const latestSlot = await this.signer.connection.getSlot("confirmed");
+        const latestSlot = await this.signer.connection.getSlot("finalized");
         const latestBlock = await this.getParsedBlock(latestSlot);
         txToSign.recentBlockhash = latestBlock.blockhash;
         txToSign.sign(this.signer.signer);
@@ -825,14 +825,17 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         const signatures: string[] = [];
         if(parallel) {
             const promises = [];
-            for(let tx of signedTxs) {
+            for(let i=0;i<signedTxs.length;i++) {
+                const tx = signedTxs[i];
+                const unsignedTx = txs[i];
+                console.log("Send TX: ", tx);
                 const txResult = await this.signer.connection.sendRawTransaction(tx.serialize(), options);
                 console.log("Send signed TX: ", txResult);
                 if(waitForConfirmation) {
                     promises.push(this.signer.connection.confirmTransaction({
                         signature: txResult,
                         blockhash: tx.recentBlockhash,
-                        lastValidBlockHeight: tx.lastValidBlockHeight || latestBlockData?.lastValidBlockHeight,
+                        lastValidBlockHeight: unsignedTx.tx.lastValidBlockHeight || latestBlockData?.lastValidBlockHeight,
                         abortSignal
                     }, "confirmed"));
                 }
@@ -846,18 +849,22 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             if(!waitForConfirmation) {
                 lastTx = signedTxs.pop();
             }
-            for(let tx of signedTxs) {
+            for(let i=0;i<signedTxs.length;i++) {
+                const tx = signedTxs[i];
+                const unsignedTx = txs[i];
+                console.log("Send TX: ", tx);
                 const txResult = await this.signer.connection.sendRawTransaction(tx.serialize(), options);
                 console.log("Send signed TX: ", txResult);
                 await this.signer.connection.confirmTransaction({
                     signature: txResult,
                     blockhash: tx.recentBlockhash,
-                    lastValidBlockHeight: tx.lastValidBlockHeight || latestBlockData?.lastValidBlockHeight,
+                    lastValidBlockHeight: unsignedTx.tx.lastValidBlockHeight || latestBlockData?.lastValidBlockHeight,
                     abortSignal
                 }, "confirmed");
                 signatures.push(txResult);
             }
             if(lastTx!=null) {
+                console.log("Send TX: ", lastTx);
                 const txResult = await this.signer.connection.sendRawTransaction(lastTx.serialize(), options);
                 console.log("Send signed TX: ", txResult);
                 signatures.push(txResult);
