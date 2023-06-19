@@ -226,6 +226,7 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
                         swap.timeout = res.timeout;
                         swap.signature = res.signature;
 
+                        swap.expiry = res.expiry;
                         return true;
                     }
                 } catch (e) {
