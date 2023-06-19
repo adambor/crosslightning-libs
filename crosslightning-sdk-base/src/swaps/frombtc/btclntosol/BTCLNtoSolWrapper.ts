@@ -8,6 +8,7 @@ import * as bolt11 from "bolt11";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {ChainEvents, ChainSwapType, ClaimEvent, InitializeEvent,
     RefundEvent,
+    SignatureVerificationError,
     SwapCommitStatus, SwapData, SwapEvent, TokenAddress} from "crosslightning-base";
 
 export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> {
@@ -258,6 +259,17 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
                 } catch (e) {
                     console.error(e);
                 }
+
+                try {
+                    await this.contract.swapContract.isValidInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce);
+                } catch (e) {
+                    console.error(e);
+                    if(e instanceof SignatureVerificationError) {
+                        swap.state = BTCxtoSolSwapState.FAILED;
+                        return true;
+                    }
+                }
+
                 return false;
             }
 
