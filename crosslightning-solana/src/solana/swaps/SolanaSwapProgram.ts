@@ -56,7 +56,8 @@ export class StoredDataAccount implements StorageObject {
 }
 
 const SLOT_TIME = 400;
-const SLOT_BUFFER = 30;
+const SLOT_BUFFER = 20;
+const TX_SLOT_VALIDITY = 151;
 
 export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
@@ -417,8 +418,16 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             throw new SignatureVerificationError("Authorization expired!");
         }
 
-        const [latestSlot, signatureString] = signature.split(";");
-        const latestBlock = await this.getParsedBlock(parseInt(latestSlot));
+        const [transactionSlot, signatureString] = signature.split(";");
+
+        const lastValidTransactionSlot = parseInt(transactionSlot)+TX_SLOT_VALIDITY;
+        const latestSlot = await this.signer.connection.getSlot("processed");
+        const slotsLeft = lastValidTransactionSlot-latestSlot-SLOT_BUFFER;
+        if(slotsLeft<0) {
+            throw new SignatureVerificationError("Authorization expired!");
+        }
+
+        const latestBlock = await this.getParsedBlock(parseInt(transactionSlot));
 
         const txToSign = await this.getClaimInitMessage(data, nonce, prefix, timeout);
 
@@ -438,7 +447,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     async getClaimInitAuthorizationExpiry(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<number> {
         const [transactionSlotStr, signatureString] = signature.split(";");
 
-        const lastValidTransactionSlot = parseInt(transactionSlotStr)+150;
+        const lastValidTransactionSlot = parseInt(transactionSlotStr)+TX_SLOT_VALIDITY;
 
         const latestSlot = await this.signer.connection.getSlot("processed");
 
@@ -453,6 +462,22 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         }
 
         return expiry;
+    }
+
+    async isClaimInitAuthorizationExpired(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<boolean> {
+        const [transactionSlotStr, signatureString] = signature.split(";");
+
+        const lastValidTransactionSlot = parseInt(transactionSlotStr)+TX_SLOT_VALIDITY;
+
+        const latestSlot = await this.signer.connection.getSlot("finalized");
+
+        const slotsLeft = lastValidTransactionSlot-latestSlot+SLOT_BUFFER;
+
+        if(slotsLeft<0) return false;
+
+        if((parseInt(timeout)+this.authGracePeriod)*1000 < Date.now()) return false;
+
+        return true;
     }
 
     async getInitMessage(swapData: SolanaSwapData, nonce: number, prefix: string, timeout: string): Promise<Transaction> {
@@ -540,8 +565,16 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             throw new SignatureVerificationError("Swap will expire too soon!");
         }
 
-        const [latestSlot, signatureString] = signature.split(";");
-        const latestBlock = await this.getParsedBlock(parseInt(latestSlot));
+        const [transactionSlot, signatureString] = signature.split(";");
+
+        const lastValidTransactionSlot = parseInt(transactionSlot)+TX_SLOT_VALIDITY;
+        const latestSlot = await this.signer.connection.getSlot("processed");
+        const slotsLeft = lastValidTransactionSlot-latestSlot-SLOT_BUFFER;
+        if(slotsLeft<0) {
+            throw new SignatureVerificationError("Authorization expired!");
+        }
+
+        const latestBlock = await this.getParsedBlock(parseInt(transactionSlot));
 
         const txToSign = await this.getInitMessage(data, nonce, prefix, timeout);
 
@@ -563,7 +596,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     async getInitAuthorizationExpiry(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<number> {
         const [transactionSlotStr, signatureString] = signature.split(";");
 
-        const lastValidTransactionSlot = parseInt(transactionSlotStr)+150;
+        const lastValidTransactionSlot = parseInt(transactionSlotStr)+TX_SLOT_VALIDITY;
 
         const latestSlot = await this.signer.connection.getSlot("processed");
 
@@ -578,6 +611,22 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         }
 
         return expiry;
+    }
+
+    async isInitAuthorizationExpired(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<boolean> {
+        const [transactionSlotStr, signatureString] = signature.split(";");
+
+        const lastValidTransactionSlot = parseInt(transactionSlotStr)+TX_SLOT_VALIDITY;
+
+        const latestSlot = await this.signer.connection.getSlot("finalized");
+
+        const slotsLeft = lastValidTransactionSlot-latestSlot+SLOT_BUFFER;
+
+        if(slotsLeft<0) return false;
+
+        if((parseInt(timeout)+this.authGracePeriod)*1000 < Date.now()) return false;
+
+        return true;
     }
 
     getRefundMessage(swapData: SolanaSwapData, prefix: string, timeout: string): Buffer {
@@ -1485,7 +1534,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         tx.add(ix);
         tx.feePayer = swapData.offerer;
         tx.recentBlockhash = block.blockhash;
-        tx.lastValidBlockHeight = block.blockHeight + 150;
+        tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
         tx.addSignature(swapData.claimer, Buffer.from(signatureStr, "hex"));
 
         txs.push({
@@ -1549,7 +1598,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         tx.add(result);
         tx.feePayer = swapData.claimer;
         tx.recentBlockhash = block.blockhash;
-        tx.lastValidBlockHeight = block.blockHeight + 150;
+        tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
         tx.addSignature(swapData.offerer, Buffer.from(signatureStr, "hex"));
 
         return [{
