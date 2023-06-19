@@ -15,6 +15,11 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends Lockable implements St
     readonly pr: string;
     readonly swapFee: BN;
 
+    nonce: number;
+    prefix: string;
+    timeout: string;
+    signature: string;
+
     data: T;
     secret: string;
 

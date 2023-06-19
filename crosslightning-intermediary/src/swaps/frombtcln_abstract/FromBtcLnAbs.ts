@@ -368,11 +368,32 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             new BN(0)
         );
 
+        const sigData = await this.swapContract.getInitSignature(payInvoiceObject, this.nonce, this.config.authorizationTimeout);
+
         if(invoiceData.state===FromBtcLnSwapState.CREATED) {
             invoiceData.data = payInvoiceObject;
             invoiceData.state = FromBtcLnSwapState.RECEIVED;
+
+            invoiceData.nonce = sigData.nonce;
+            invoiceData.prefix = sigData.prefix;
+            invoiceData.timeout = sigData.timeout;
+            invoiceData.signature = sigData.signature;
+
             await this.storageManager.saveData(invoice.id, invoiceData);
+            return;
         }
+
+        if(invoiceData.signature!=null) {
+            if(await this.swapContract.isInitAuthorizationExpired(invoiceData.data, invoiceData.timeout, invoiceData.prefix, invoiceData.signature, invoiceData.nonce)) {
+                await cancelAndRemove();
+                console.error("[From BTC-LN: REST.GetInvoicePaymentAuth] Invoice authorization expired!");
+                throw {
+                    code: 20002,
+                    msg: "Not enough time to reliably process the swap"
+                };
+            }
+        }
+
     }
 
     startRestServer(restServer: Express) {
@@ -668,18 +689,16 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 return;
             }
 
-            const sigData = await this.swapContract.getInitSignature(invoiceData.data, this.nonce, this.config.authorizationTimeout);
-
             res.status(200).json({
                 code: 10000,
                 msg: "Success",
                 data: {
                     address: this.swapContract.getAddress(),
                     data: invoiceData.serialize().data,
-                    nonce: sigData.nonce,
-                    prefix: sigData.prefix,
-                    timeout: sigData.timeout,
-                    signature: sigData.signature
+                    nonce: invoiceData.nonce,
+                    prefix: invoiceData.prefix,
+                    timeout: invoiceData.timeout,
+                    signature: invoiceData.signature
                 }
             });
         });
