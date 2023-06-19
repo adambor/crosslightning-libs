@@ -79,9 +79,19 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             const swap = this.storageManager.data[key];
 
             if(swap.state===FromBtcLnSwapState.RECEIVED) {
-                if(await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce)) {
-                    const parsedPR = bolt11.decode(swap.pr);
-                    cancelInvoices.push(parsedPR.tagsObject.payment_hash);
+                const parsedPR = bolt11.decode(swap.pr);
+                console.log("[From BTC-LN: Swap received check] Swap in received state check for expiry: "+parsedPR.tagsObject.payment_hash);
+                console.log("[From BTC-LN: Swap received check] Swap signature: "+swap.signature);
+                if(swap.signature!=null) {
+                    const isAuthorizationExpired = await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce);
+                    console.log("[From BTC-LN: Swap received check] Swap auth expired: "+isAuthorizationExpired);
+                    if(isAuthorizationExpired) {
+                        const isCommited = await this.swapContract.isCommited(swap.data);
+                        if(!isCommited) {
+                            cancelInvoices.push(parsedPR.tagsObject.payment_hash);
+                        }
+                        continue;
+                    }
                 }
             }
 
@@ -659,7 +669,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             }
 
             if (invoiceData.state === FromBtcLnSwapState.RECEIVED) {
-                if (await this.swapContract.isInitAuthorizationExpired(invoiceData.data, invoiceData.timeout, invoiceData.prefix, invoiceData.signature, invoiceData.nonce)) {
+                if (invoiceData.signature!=null && await this.swapContract.isInitAuthorizationExpired(invoiceData.data, invoiceData.timeout, invoiceData.prefix, invoiceData.signature, invoiceData.nonce)) {
                     res.status(200).json({
                         code: 10001,
                         msg: "Invoice expired/canceled"

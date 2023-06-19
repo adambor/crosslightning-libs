@@ -40,6 +40,10 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends Lockable implements St
                 this.data = SwapData.deserialize(prOrObj.data);
             }
             this.secret = prOrObj.secret;
+            this.nonce = prOrObj.nonce;
+            this.prefix = prOrObj.prefix;
+            this.timeout = prOrObj.timeout;
+            this.signature = prOrObj.signature;
         }
     }
 
@@ -49,7 +53,11 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends Lockable implements St
             pr: this.pr,
             swapFee: this.swapFee.toString(10),
             data: this.data==null ? null : this.data.serialize(),
-            secret: this.secret
+            secret: this.secret,
+            nonce: this.nonce,
+            prefix: this.prefix,
+            timeout: this.timeout,
+            signature: this.signature
         }
     }
 
