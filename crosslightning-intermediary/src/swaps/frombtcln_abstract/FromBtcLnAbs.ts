@@ -80,11 +80,11 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
             if(swap.state===FromBtcLnSwapState.RECEIVED) {
                 const parsedPR = bolt11.decode(swap.pr);
-                console.log("[From BTC-LN: Swap received check] Swap in received state check for expiry: "+parsedPR.tagsObject.payment_hash);
-                console.log("[From BTC-LN: Swap received check] Swap signature: "+swap.signature);
+                // console.log("[From BTC-LN: Swap received check] Swap in received state check for expiry: "+parsedPR.tagsObject.payment_hash);
+                // console.log("[From BTC-LN: Swap received check] Swap signature: "+swap.signature);
                 if(swap.signature!=null) {
                     const isAuthorizationExpired = await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce);
-                    console.log("[From BTC-LN: Swap received check] Swap auth expired: "+isAuthorizationExpired);
+                    console.log("[From BTC-LN: Swap received check] Swap auth expired: "+parsedPR.tagsObject.payment_hash);
                     if(isAuthorizationExpired) {
                         const isCommited = await this.swapContract.isCommited(swap.data);
                         if(!isCommited) {
