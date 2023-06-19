@@ -473,11 +473,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const slotsLeft = lastValidTransactionSlot-latestSlot+SLOT_BUFFER;
 
-        if(slotsLeft<0) return false;
+        if(slotsLeft<0) return true;
 
-        if((parseInt(timeout)+this.authGracePeriod)*1000 < Date.now()) return false;
+        if((parseInt(timeout)+this.authGracePeriod)*1000 < Date.now()) return true;
 
-        return true;
+        return false;
     }
 
     async getInitMessage(swapData: SolanaSwapData, nonce: number, prefix: string, timeout: string): Promise<Transaction> {
@@ -622,11 +622,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const slotsLeft = lastValidTransactionSlot-latestSlot+SLOT_BUFFER;
 
-        if(slotsLeft<0) return false;
+        if(slotsLeft<0) return true;
 
-        if((parseInt(timeout)+this.authGracePeriod)*1000 < Date.now()) return false;
+        if((parseInt(timeout)+this.authGracePeriod)*1000 < Date.now()) return true;
 
-        return true;
+        return false;
     }
 
     getRefundMessage(swapData: SolanaSwapData, prefix: string, timeout: string): Buffer {
