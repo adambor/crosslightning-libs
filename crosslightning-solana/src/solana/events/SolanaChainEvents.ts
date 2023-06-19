@@ -168,6 +168,8 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
             console.log("[Solana Events WebSocket] Process signature: ", signature);
 
             this.signaturesProcessing[signature] = (async () => {
+                await new Promise((resolve) => setTimeout(resolve, 500));
+
                 try {
                     const transaction = await this.signer.connection.getTransaction(signature, {
                         commitment: "confirmed"
