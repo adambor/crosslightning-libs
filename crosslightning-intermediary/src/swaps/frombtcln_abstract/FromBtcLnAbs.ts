@@ -78,6 +78,13 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
         for(let key in this.storageManager.data) {
             const swap = this.storageManager.data[key];
 
+            if(swap.state===FromBtcLnSwapState.RECEIVED) {
+                if(await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce)) {
+                    const parsedPR = bolt11.decode(swap.pr);
+                    cancelInvoices.push(parsedPR.tagsObject.payment_hash);
+                }
+            }
+
             if(swap.state===FromBtcLnSwapState.CREATED) {
                 //Check if already paid
                 const parsedPR = bolt11.decode(swap.pr);
@@ -383,17 +390,6 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             return;
         }
 
-        if(invoiceData.signature!=null) {
-            if(await this.swapContract.isInitAuthorizationExpired(invoiceData.data, invoiceData.timeout, invoiceData.prefix, invoiceData.signature, invoiceData.nonce)) {
-                await cancelAndRemove();
-                console.error("[From BTC-LN: REST.GetInvoicePaymentAuth] Invoice authorization expired!");
-                throw {
-                    code: 20002,
-                    msg: "Not enough time to reliably process the swap"
-                };
-            }
-        }
-
     }
 
     startRestServer(restServer: Express) {
@@ -660,6 +656,16 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     msg: "Invoice expired/canceled"
                 });
                 return;
+            }
+
+            if (invoiceData.state === FromBtcLnSwapState.RECEIVED) {
+                if (await this.swapContract.isInitAuthorizationExpired(invoiceData.data, invoiceData.timeout, invoiceData.prefix, invoiceData.signature, invoiceData.nonce)) {
+                    res.status(200).json({
+                        code: 10001,
+                        msg: "Invoice expired/canceled"
+                    });
+                    return;
+                }
             }
 
             if (invoiceData.state === FromBtcLnSwapState.CREATED) {
