@@ -70,8 +70,6 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
             const paymentHashBuffer = Buffer.from(event.hash);
             const paymentHashHex = paymentHashBuffer.toString("hex");
 
-            await new Promise((resolve) => setTimeout(resolve, 500));
-
             const tx = await this.provider.connection.getTransaction(signature);
 
             const ixs = this.decodeInstructions(tx.transaction.message);
