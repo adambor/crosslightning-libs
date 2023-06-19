@@ -11,6 +11,7 @@ import {erc20Abi} from "./erc20/erc20Abi";
 import * as utils from "ethers/lib/utils";
 import {Buffer} from "buffer";
 import {EVMBtcStoredHeader} from "../btcrelay/headers/EVMBtcStoredHeader";
+import {SolanaSwapData} from "../../../../crosslightning-solana/src";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
@@ -253,6 +254,23 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
 
     }
 
+    async getClaimInitAuthorizationExpiry(swapData: EVMSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<number> {
+        const now = Date.now();
+
+        const expiry = (parseInt(timeout)-this.authGracePeriod)*1000;
+
+        if(expiry<now) {
+            return 0;
+        }
+
+        return expiry;
+    }
+
+    async isClaimInitAuthorizationExpired(swapData: EVMSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<boolean> {
+        if((parseInt(timeout)+this.authGracePeriod)*1000 < Date.now()) return true;
+        return false;
+    }
+
     getInitMessage(swapData: EVMSwapData, nonce: number, prefix: string, timeout: string): Buffer {
 
         return this.getMessage(swapData, prefix, timeout);
@@ -314,6 +332,23 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
 
         return messageBuffer;
 
+    }
+
+    async getInitAuthorizationExpiry(swapData: EVMSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<number> {
+        const now = Date.now();
+
+        const expiry = (parseInt(timeout)-this.authGracePeriod)*1000;
+
+        if(expiry<now) {
+            return 0;
+        }
+
+        return expiry;
+    }
+
+    async isInitAuthorizationExpired(swapData: EVMSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<boolean> {
+        if((parseInt(timeout)+this.authGracePeriod)*1000 < Date.now()) return true;
+        return false;
     }
 
     getRefundMessage(swapData: EVMSwapData, prefix: string, timeout: string): Buffer {
