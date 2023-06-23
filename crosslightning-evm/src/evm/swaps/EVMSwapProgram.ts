@@ -11,7 +11,6 @@ import {erc20Abi} from "./erc20/erc20Abi";
 import * as utils from "ethers/lib/utils";
 import {Buffer} from "buffer";
 import {EVMBtcStoredHeader} from "../btcrelay/headers/EVMBtcStoredHeader";
-import {SolanaSwapData} from "../../../../crosslightning-solana/src";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
