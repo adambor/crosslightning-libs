@@ -37,7 +37,7 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransaction> {
 
-    static getSignatureStruct(signature: string, timeout: string): {
+    private static getSignatureStruct(signature: string, timeout: string): {
         r: string,
         s: string,
         vAndTimeout: BigNumber
@@ -196,7 +196,7 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
         return Buffer.from(messageBuffer.substring(2), "hex");
     }
 
-    getClaimInitMessage(swapData: EVMSwapData, nonce: number, prefix: string, timeout: string): Buffer {
+    private getClaimInitMessage(swapData: EVMSwapData, nonce: number, prefix: string, timeout: string): Buffer {
 
         return this.getMessage(swapData, prefix, timeout);
 
@@ -270,7 +270,7 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
         return false;
     }
 
-    getInitMessage(swapData: EVMSwapData, nonce: number, prefix: string, timeout: string): Buffer {
+    private getInitMessage(swapData: EVMSwapData, nonce: number, prefix: string, timeout: string): Buffer {
 
         return this.getMessage(swapData, prefix, timeout);
 
@@ -350,7 +350,7 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
         return false;
     }
 
-    getRefundMessage(swapData: EVMSwapData, prefix: string, timeout: string): Buffer {
+    private getRefundMessage(swapData: EVMSwapData, prefix: string, timeout: string): Buffer {
         return this.getMessage(swapData, prefix, timeout);
     }
 
