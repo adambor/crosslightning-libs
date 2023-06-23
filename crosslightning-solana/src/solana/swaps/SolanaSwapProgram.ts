@@ -66,7 +66,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     } = {};
 
     //Parsed block caching
-    async getParsedBlock(slot: number): Promise<ParsedAccountsModeBlockResponse> {
+    private async getParsedBlock(slot: number): Promise<ParsedAccountsModeBlockResponse> {
         if(this.blockCache[slot]==null) {
             const latestBlock = await this.signer.connection.getParsedBlock(slot, {
                 transactionDetails: "none",
@@ -151,11 +151,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         ])).digest();
     }
 
-    saveDataAccount(publicKey: PublicKey): Promise<void> {
+    private saveDataAccount(publicKey: PublicKey): Promise<void> {
         return this.storage.saveData(publicKey.toBase58(), new StoredDataAccount(publicKey));
     }
 
-    removeDataAccount(publicKey: PublicKey): Promise<void> {
+    private removeDataAccount(publicKey: PublicKey): Promise<void> {
         return this.storage.removeData(publicKey.toBase58());
     }
 
@@ -335,7 +335,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         return SwapCommitStatus.NOT_COMMITED;
     }
 
-    async getClaimInitMessage(swapData: SolanaSwapData, nonce: number, prefix: string, timeout: string): Promise<Transaction> {
+    private async getClaimInitMessage(swapData: SolanaSwapData, nonce: number, prefix: string, timeout: string): Promise<Transaction> {
 
         const ata = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
         const ataClaimer = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
@@ -480,7 +480,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         return false;
     }
 
-    async getInitMessage(swapData: SolanaSwapData, nonce: number, prefix: string, timeout: string): Promise<Transaction> {
+    private async getInitMessage(swapData: SolanaSwapData, nonce: number, prefix: string, timeout: string): Promise<Transaction> {
 
         const claimerAta = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
         const paymentHash = Buffer.from(swapData.paymentHash, "hex");
@@ -629,7 +629,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         return false;
     }
 
-    getRefundMessage(swapData: SolanaSwapData, prefix: string, timeout: string): Buffer {
+    private getRefundMessage(swapData: SolanaSwapData, prefix: string, timeout: string): Buffer {
 
         const messageBuffers = [
             null,
@@ -1661,7 +1661,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     }
 
 
-    getATARentExemptLamports(): Promise<BN> {
+    private getATARentExemptLamports(): Promise<BN> {
         return Promise.resolve(new BN(2039280));
     }
 
