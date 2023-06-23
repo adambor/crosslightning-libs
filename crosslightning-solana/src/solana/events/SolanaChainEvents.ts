@@ -169,10 +169,10 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
 
             this.signaturesProcessing[signature] = (async () => {
                 try {
-                    const result = await this.signer.connection.confirmTransaction(signature);
-                    if(result.value.err!=null) {
-                        return true;
-                    }
+                    // const result = await this.signer.connection.confirmTransaction(signature);
+                    // if(result.value.err!=null) {
+                    //     return true;
+                    // }
                     const transaction = await this.signer.connection.getTransaction(signature, {
                         commitment: "confirmed"
                     });
@@ -265,11 +265,10 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
 
                 const processPromise: Promise<boolean> = (async () => {
                     try {
-                        const result = await this.signer.connection.confirmTransaction(signatures[i].signature);
-                        if(result.value.err!=null) {
-                            return true;
-                        }
-
+                        // const result = await this.signer.connection.confirmTransaction(signatures[i].signature);
+                        // if(result.value.err!=null) {
+                        //     return true;
+                        // }
                         const transaction = await this.signer.connection.getTransaction(signatures[i].signature, {
                             commitment: "confirmed"
                         });
