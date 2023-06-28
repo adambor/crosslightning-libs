@@ -1007,6 +1007,15 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             .accounts(accounts)
             .instruction());
 
+        if(swapData.isPayOut()) {
+            if (swapData.token.equals(WSOL_ADDRESS)) {
+                //Move to normal SOL
+                tx.add(
+                    SplToken.createCloseAccountInstruction(swapData.claimerTokenAccount, this.signer.publicKey, this.signer.publicKey)
+                );
+            }
+        }
+
         return [{
             tx: tx,
             signers: []
@@ -1253,6 +1262,20 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             tx: solanaTx,
             signers: []
         });
+
+        if(swapData.isPayOut()) {
+            if (swapData.token.equals(WSOL_ADDRESS)) {
+                //Move to normal SOL
+                const tx = new Transaction();
+                tx.add(
+                    SplToken.createCloseAccountInstruction(swapData.claimerTokenAccount, this.signer.publicKey, this.signer.publicKey)
+                );
+                txs.push({
+                    tx,
+                    signers: []
+                });
+            }
+        }
 
         return txs;
 
