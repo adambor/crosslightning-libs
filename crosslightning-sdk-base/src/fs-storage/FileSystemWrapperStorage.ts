@@ -7,7 +7,7 @@ export class FileSystemWrapperStorage implements IWrapperStorage{
     private readonly directory: string;
     data: {
         [paymentHash: string]: any
-    } = null;
+    } = {};
 
     constructor(directory: string) {
         this.directory = directory;
