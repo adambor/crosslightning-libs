@@ -72,6 +72,8 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
 
             const tx = await this.provider.connection.getTransaction(signature);
 
+            if(tx==null) return;
+
             const ixs = this.decodeInstructions(tx.transaction.message);
 
             let parsedEvent: InitializeEvent<SolanaSwapData>;
