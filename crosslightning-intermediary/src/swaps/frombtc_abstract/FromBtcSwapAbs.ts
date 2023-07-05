@@ -2,6 +2,7 @@ import * as BN from "bn.js";
 import * as bitcoin from "bitcoinjs-lib";
 import {createHash} from "crypto";
 import {Lockable, StorageObject, SwapData} from "crosslightning-base";
+import {SwapHandlerSwap} from "../SwapHandlerSwap";
 
 export enum FromBtcSwapState {
     CANCELED = -1,
@@ -9,7 +10,7 @@ export enum FromBtcSwapState {
     COMMITED = 1
 }
 
-export class FromBtcSwapAbs<T extends SwapData> extends Lockable implements StorageObject {
+export class FromBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
 
     state: FromBtcSwapState;
     readonly address: string;
@@ -17,39 +18,34 @@ export class FromBtcSwapAbs<T extends SwapData> extends Lockable implements Stor
     readonly swapFee: BN;
     authorizationExpiry: BN;
 
-    data: T;
-
     constructor(address: string, amount: BN, swapFee: BN);
     constructor(obj: any);
 
     constructor(prOrObj: string | any, amount?: BN, swapFee?: BN) {
-        super();
         if(typeof(prOrObj)==="string") {
+            super();
             this.state = FromBtcSwapState.CREATED;
             this.address = prOrObj;
             this.amount = amount;
             this.swapFee = swapFee;
         } else {
+            super(prOrObj);
             this.state = prOrObj.state;
             this.address = prOrObj.address;
             this.amount = new BN(prOrObj.amount);
             this.swapFee = new BN(prOrObj.swapFee);
             this.authorizationExpiry = prOrObj.authorizationExpiry==null ? null : new BN(prOrObj.authorizationExpiry);
-            if(prOrObj.data!=null) {
-                this.data = SwapData.deserialize(prOrObj.data);
-            }
         }
     }
 
     serialize(): any {
-        return {
-            state: this.state,
-            address: this.address,
-            amount: this.amount.toString(10),
-            swapFee: this.swapFee.toString(10),
-            authorizationExpiry: this.authorizationExpiry==null ? null : this.authorizationExpiry.toString(10),
-            data: this.data==null ? null : this.data.serialize(),
-        }
+        const partialSerialized = super.serialize();
+        partialSerialized.state = this.state;
+        partialSerialized.address = this.address;
+        partialSerialized.amount = this.amount.toString(10);
+        partialSerialized.swapFee = this.swapFee.toString(10);
+        partialSerialized.authorizationExpiry = this.authorizationExpiry==null ? null : this.authorizationExpiry.toString(10);
+        return partialSerialized;
     }
 
     getTxoHash(bitcoinNetwork: bitcoin.networks.Network): Buffer {

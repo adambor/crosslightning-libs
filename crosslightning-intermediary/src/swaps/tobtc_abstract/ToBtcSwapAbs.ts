@@ -2,6 +2,7 @@ import * as BN from "bn.js";
 import {createHash} from "crypto";
 import * as bitcoin from "bitcoinjs-lib";
 import {Lockable, StorageObject, SwapData} from "crosslightning-base";
+import {SwapHandlerSwap} from "../SwapHandlerSwap";
 
 export enum ToBtcSwapState {
     NON_PAYABLE = -1,
@@ -11,7 +12,7 @@ export enum ToBtcSwapState {
     BTC_SENT = 3
 }
 
-export class ToBtcSwapAbs<T extends SwapData> extends Lockable implements StorageObject {
+export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
 
     state: ToBtcSwapState;
     readonly address: string;
@@ -24,14 +25,12 @@ export class ToBtcSwapAbs<T extends SwapData> extends Lockable implements Storag
 
     txId: string;
 
-    data: T;
-
     constructor(address: string, amount: BN, swapFee: BN, networkFee: BN, nonce: BN, preferedConfirmationTarget: number, signatureExpiry: BN);
     constructor(obj: any);
 
     constructor(prOrObj: string | any, amount?: BN, swapFee?: BN, networkFee?: BN, nonce?: BN, preferedConfirmationTarget?: number, signatureExpiry?: BN) {
-        super();
         if(typeof(prOrObj)==="string") {
+            super();
             this.state = ToBtcSwapState.SAVED;
             this.address = prOrObj;
             this.amount = amount;
@@ -41,6 +40,7 @@ export class ToBtcSwapAbs<T extends SwapData> extends Lockable implements Storag
             this.preferedConfirmationTarget = preferedConfirmationTarget;
             this.signatureExpiry = signatureExpiry;
         } else {
+            super(prOrObj);
             this.state = prOrObj.state;
             this.address = prOrObj.address;
             this.amount = new BN(prOrObj.amount);
@@ -50,28 +50,22 @@ export class ToBtcSwapAbs<T extends SwapData> extends Lockable implements Storag
             this.preferedConfirmationTarget = prOrObj.preferedConfirmationTarget;
             this.signatureExpiry = prOrObj.signatureExpiry==null ? null : new BN(prOrObj.signatureExpiry);
 
-            if(prOrObj.data!=null) {
-                this.data = SwapData.deserialize<T>(prOrObj.data);
-            }
             this.txId = prOrObj.txId;
         }
     }
 
     serialize(): any {
-        return {
-            state: this.state,
-            address: this.address,
-            amount: this.amount.toString(10),
-            swapFee: this.swapFee.toString(10),
-            networkFee: this.networkFee.toString(10),
-
-            nonce: this.nonce.toString(10),
-            preferedConfirmationTarget: this.preferedConfirmationTarget,
-            signatureExpiry: this.signatureExpiry==null ? null : this.signatureExpiry.toString(10),
-
-            data: this.data==null ? null : this.data.serialize(),
-            txId: this.txId
-        }
+        const partialSerialized = super.serialize();
+        partialSerialized.state = this.state;
+        partialSerialized.address = this.address;
+        partialSerialized.amount = this.amount.toString(10);
+        partialSerialized.swapFee = this.swapFee.toString(10);
+        partialSerialized.networkFee = this.networkFee.toString(10);
+        partialSerialized.nonce = this.nonce.toString(10);
+        partialSerialized.preferedConfirmationTarget = this.preferedConfirmationTarget;
+        partialSerialized.signatureExpiry = this.signatureExpiry==null ? null : this.signatureExpiry.toString(10);
+        partialSerialized.txId = this.txId;
+        return partialSerialized;
     }
 
 }

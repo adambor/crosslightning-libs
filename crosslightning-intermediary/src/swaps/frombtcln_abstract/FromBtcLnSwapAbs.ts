@@ -1,5 +1,6 @@
 import * as BN from "bn.js";
 import {Lockable, StorageObject, SwapData} from "crosslightning-base";
+import {SwapHandlerSwap} from "../SwapHandlerSwap";
 
 export enum FromBtcLnSwapState {
     CANCELED = -1,
@@ -9,7 +10,7 @@ export enum FromBtcLnSwapState {
     CLAIMED = 3
 }
 
-export class FromBtcLnSwapAbs<T extends SwapData> extends Lockable implements StorageObject {
+export class FromBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
 
     state: FromBtcLnSwapState;
     readonly pr: string;
@@ -20,25 +21,22 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends Lockable implements St
     timeout: string;
     signature: string;
 
-    data: T;
     secret: string;
 
     constructor(pr: string, swapFee: BN);
     constructor(obj: any);
 
     constructor(prOrObj: string | any, swapFee?: BN) {
-        super();
         if(typeof(prOrObj)==="string") {
+            super();
             this.state = FromBtcLnSwapState.CREATED;
             this.pr = prOrObj;
             this.swapFee = swapFee;
         } else {
+            super(prOrObj);
             this.state = prOrObj.state;
             this.pr = prOrObj.pr;
             this.swapFee = new BN(prOrObj.swapFee);
-            if(prOrObj.data!=null) {
-                this.data = SwapData.deserialize(prOrObj.data);
-            }
             this.secret = prOrObj.secret;
             this.nonce = prOrObj.nonce;
             this.prefix = prOrObj.prefix;
@@ -48,17 +46,16 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends Lockable implements St
     }
 
     serialize(): any {
-        return {
-            state: this.state,
-            pr: this.pr,
-            swapFee: this.swapFee.toString(10),
-            data: this.data==null ? null : this.data.serialize(),
-            secret: this.secret,
-            nonce: this.nonce,
-            prefix: this.prefix,
-            timeout: this.timeout,
-            signature: this.signature
-        }
+        const partialSerialized = super.serialize();
+        partialSerialized.state = this.state;
+        partialSerialized.pr = this.pr;
+        partialSerialized.swapFee = this.swapFee.toString(10);
+        partialSerialized.secret = this.secret;
+        partialSerialized.nonce = this.nonce;
+        partialSerialized.prefix = this.prefix;
+        partialSerialized.timeout = this.timeout;
+        partialSerialized.signature = this.signature;
+        return partialSerialized;
     }
 
 }
