@@ -910,10 +910,14 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
         swapData.setPayIn(true);
     }
 
+    _getAllowance(src: string, token: TokenAddress): Promise<BigNumber> {
+        if(ZERO_ADDRESS===token) return Promise.resolve(MAX_ALLOWANCE);
+        const tokenContract: Contract = new Contract(token, erc20Abi, this.signer);
+        return tokenContract.allowance(src, this.contract.address);
+    }
+
     getAllowance(swapData: EVMSwapData): Promise<BigNumber> {
-        if(ZERO_ADDRESS===swapData.token) return Promise.resolve(MAX_ALLOWANCE);
-        const tokenContract: Contract = new Contract(swapData.token, erc20Abi, this.signer);
-        return tokenContract.allowance(swapData.offerer, this.contract.address);
+        return this._getAllowance(swapData.offerer, swapData.token);
     }
 
     async approveSpend(swapData: EVMSwapData, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
@@ -922,6 +926,57 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
         const allowanceTx = await tokenContract.populateTransaction.approve(this.contract.address, MAX_ALLOWANCE);
         allowanceTx.gasLimit = BigNumber.from(80000);
         const [txId] = await this.sendAndConfirm([allowanceTx], waitForConfirmation, abortSignal, false);
+        return txId;
+    }
+
+
+    async withdraw(token: TokenAddress, amount: BN, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        const withdrawTx = await this.contract.populateTransaction.withdraw(token, BigNumber.from(amount.toString(10)));
+        withdrawTx.gasLimit = BigNumber.from(100000);
+
+        const [txId] = await this.sendAndConfirm([withdrawTx], waitForConfirmation, abortSignal, false);
+        return txId;
+    }
+
+    async deposit(token: TokenAddress, amount: BN, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        const depositAmountBN = BigNumber.from(amount.toString(10));
+        const allowance = await this._getAllowance(this.getAddress(), token);
+
+        const txs = [];
+
+        if(allowance.lt(depositAmountBN)) {
+            const tokenContract: Contract = new Contract(token, erc20Abi, this.signer);
+            const allowanceTx = await tokenContract.populateTransaction.approve(this.contract.address, MAX_ALLOWANCE);
+            allowanceTx.gasLimit = BigNumber.from(80000);
+            txs.push(allowanceTx)
+        }
+
+        const depositTx = await this.contract.populateTransaction.deposit(token, depositAmountBN);
+        depositTx.gasLimit = BigNumber.from(100000);
+        txs.push(depositTx);
+
+        const txIds = await this.sendAndConfirm(txs, waitForConfirmation, abortSignal, true);
+
+        return txIds[txIds.length-1];
+    }
+
+
+    async transfer(token: TokenAddress, amount: BN, dstAddress: string, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        let transferTx;
+        if(ZERO_ADDRESS===token) {
+            transferTx = {
+                from: this.getAddress(),
+                to: dstAddress,
+                value: BigNumber.from(amount.toString(10)),
+                gasLimit: BigNumber.from(21000)
+            };
+        } else {
+            const tokenContract: Contract = new Contract(token, erc20Abi, this.signer);
+            transferTx = await tokenContract.populateTransaction.transfer(dstAddress, BigNumber.from(amount.toString(10)));
+            transferTx.gasLimit = BigNumber.from(80000);
+        }
+
+        const [txId] = await this.sendAndConfirm([transferTx], waitForConfirmation, abortSignal, false);
         return txId;
     }
 
