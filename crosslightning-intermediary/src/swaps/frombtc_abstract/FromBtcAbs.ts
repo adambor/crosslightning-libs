@@ -5,13 +5,23 @@ import {FromBtcSwapAbs, FromBtcSwapState} from "./FromBtcSwapAbs";
 import {SwapNonce} from "../SwapNonce";
 import {SwapHandler, SwapHandlerType} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
-import {ChainEvents, ClaimEvent, InitializeEvent,
+import {
+    ChainEvents,
+    ChainSwapType,
+    ClaimEvent,
+    InitializeEvent,
     IStorageManager,
-    RefundEvent, SwapContract, SwapData, SwapEvent, ChainSwapType, TokenAddress} from "crosslightning-base";
+    RefundEvent,
+    SwapContract,
+    SwapData,
+    SwapEvent,
+    TokenAddress
+} from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
 import * as bitcoin from "bitcoinjs-lib";
 import {createHash} from "crypto";
-import {expressHandlerWrapper, FieldType, FieldTypeEnum, parseBN, verifySchema} from "../../utils/Utils";
+import {expressHandlerWrapper, FieldTypeEnum, verifySchema} from "../../utils/Utils";
+import {PluginManager} from "../../plugins/PluginManager";
 
 export type FromBtcConfig = {
     authorizationTimeout: number,
@@ -155,6 +165,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
             const unlock = refundSwap.lock(this.swapContract.refundTimeout);
             if(unlock==null) continue;
             await this.swapContract.refund(refundSwap.data, true, false, true);
+            await refundSwap.setState(FromBtcSwapState.REFUNDED);
+            //await PluginManager.swapStateChange(refundSwap);
             unlock();
         }
     }
@@ -189,7 +201,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
                 const isSwapFound = savedSwap != null;
                 if (isSwapFound) {
-                    savedSwap.state = FromBtcSwapState.COMMITED;
+                    await savedSwap.setState(FromBtcSwapState.COMMITED);
                 }
 
                 const usedNonce = event.signatureNonce;
@@ -212,6 +224,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 const paymentHash: Buffer = Buffer.from(paymentHashHex, "hex");
 
                 const savedSwap = this.storageManager.data[paymentHashHex];
+                await savedSwap.setState(FromBtcSwapState.CLAIMED);
+                //await PluginManager.swapStateChange(savedSwap);
 
                 const isSwapNotFound = savedSwap == null;
                 if (isSwapNotFound) {
@@ -382,6 +396,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
             createdSwap.authorizationExpiry = new BN(sigData.timeout);
 
+            await PluginManager.swapStateChange(createdSwap);
+
             await this.storageManager.saveData(this.getChainHash(createdSwap).toString("hex"), createdSwap);
 
             res.status(200).json({
@@ -432,6 +448,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
     async init() {
         await this.storageManager.loadData(FromBtcSwapAbs);
         this.subscribeToEvents();
+        await PluginManager.serviceInitialize(this);
     }
 
     /**

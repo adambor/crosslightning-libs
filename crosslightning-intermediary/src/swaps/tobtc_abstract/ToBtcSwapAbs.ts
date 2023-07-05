@@ -3,13 +3,17 @@ import {createHash} from "crypto";
 import * as bitcoin from "bitcoinjs-lib";
 import {Lockable, StorageObject, SwapData} from "crosslightning-base";
 import {SwapHandlerSwap} from "../SwapHandlerSwap";
+import {PluginManager} from "../../plugins/PluginManager";
+import {FromBtcLnSwapState} from "../..";
 
 export enum ToBtcSwapState {
+    CANCELED = -2,
     NON_PAYABLE = -1,
     SAVED = 0,
     COMMITED = 1,
     BTC_SENDING = 2,
-    BTC_SENT = 3
+    BTC_SENT = 3,
+    CLAIMED = 4
 }
 
 export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
@@ -66,6 +70,12 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
         partialSerialized.signatureExpiry = this.signatureExpiry==null ? null : this.signatureExpiry.toString(10);
         partialSerialized.txId = this.txId;
         return partialSerialized;
+    }
+
+    async setState(newState: ToBtcSwapState) {
+        const oldState = this.state;
+        this.state = newState;
+        await PluginManager.swapStateChange(this, oldState);
     }
 
 }

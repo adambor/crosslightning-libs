@@ -8,12 +8,21 @@ import {SwapHandler, SwapHandlerType} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
 import {
     BtcTx,
-    ChainEvents, ClaimEvent, InitializeEvent,
+    ChainEvents,
+    ChainSwapType,
+    ClaimEvent,
+    InitializeEvent,
     IStorageManager,
-    RefundEvent, SwapContract, SwapData, SwapEvent, ChainSwapType, TokenAddress} from "crosslightning-base";
+    RefundEvent,
+    SwapContract,
+    SwapData,
+    SwapEvent,
+    TokenAddress
+} from "crosslightning-base";
 import {BitcoinRpc, BtcBlock} from "crosslightning-base/dist";
 import {AuthenticatedLnd} from "lightning";
 import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
+import {PluginManager} from "../../plugins/PluginManager";
 
 const OUTPUT_SCRIPT_MAX_LENGTH = 200;
 
@@ -129,6 +138,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             if(payment.state===ToBtcSwapState.SAVED && payment.signatureExpiry!=null) {
                 if(payment.signatureExpiry.lt(timestamp)) {
                     //Signature expired
+                    await payment.setState(ToBtcSwapState.CANCELED);
+                    // await PluginManager.swapStateChange(payment);
                     await this.storageManager.removeData(this.getChainHash(payment).toString("hex"));
                     continue;
                 }
@@ -137,6 +148,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             if(payment.state===ToBtcSwapState.NON_PAYABLE || payment.state===ToBtcSwapState.SAVED) {
                 if(payment.data.getExpiry().lt(timestamp)) {
                     //Expired
+                    await payment.setState(ToBtcSwapState.CANCELED);
+                    // await PluginManager.swapStateChange(payment);
                     await this.storageManager.removeData(this.getChainHash(payment).toString("hex"));
                     continue;
                 }
@@ -240,16 +253,19 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             if(!isTxSent) {
                 //Reset the state to COMMITED
-                payment.state = ToBtcSwapState.COMMITED;
+                await payment.setState(ToBtcSwapState.COMMITED);
+                // await PluginManager.swapStateChange(payment);
             } else {
-                payment.state = ToBtcSwapState.BTC_SENT;
+                await payment.setState(ToBtcSwapState.BTC_SENT);
+                // await PluginManager.swapStateChange(payment);
                 await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
             }
         }
 
         const setNonPayableAndSave = async() => {
-            payment.state = ToBtcSwapState.NON_PAYABLE;
             payment.data = data;
+            await payment.setState(ToBtcSwapState.NON_PAYABLE);
+            // await PluginManager.swapStateChange(payment);
             await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
         };
 
@@ -260,8 +276,9 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 return;
             }
 
-            payment.state = ToBtcSwapState.COMMITED;
             payment.data = data;
+            await payment.setState(ToBtcSwapState.COMMITED);
+            // await PluginManager.swapStateChange(payment);
             await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
         }
 
@@ -377,9 +394,10 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             const tx = bitcoin.Transaction.fromHex(signedPsbt.transaction);
             const txId = tx.getId();
 
-            payment.state = ToBtcSwapState.BTC_SENDING;
             payment.data = data;
             payment.txId = txId;
+            await payment.setState(ToBtcSwapState.BTC_SENDING);
+            // await PluginManager.swapStateChange(payment);
             await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
 
             let txSendResult;
@@ -398,7 +416,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 return;
             }
 
-            payment.state = ToBtcSwapState.BTC_SENT;
+            await payment.setState(ToBtcSwapState.BTC_SENT);
+            // await PluginManager.swapStateChange(payment);
             await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
         }
 
@@ -467,6 +486,9 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
                 console.log("[To BTC: Solana.ClaimEvent] Transaction confirmed! Event: ", event);
 
+                await savedInvoice.setState(ToBtcSwapState.CLAIMED);
+                // await PluginManager.swapStateChange(savedInvoice);
+
                 await this.storageManager.removeData(paymentHash);
 
                 continue;
@@ -489,6 +511,9 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                         delete this.activeSubscriptions[savedInvoice.txId];
                     }
                 }
+
+                await savedInvoice.setState(ToBtcSwapState.CANCELED);
+                //await PluginManager.swapStateChange(savedInvoice);
 
                 await this.storageManager.removeData(paymentHash);
 
@@ -758,6 +783,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             const paymentHash = this.getChainHash(createdSwap);
             createdSwap.data = payObject;
 
+            await PluginManager.swapStateChange(createdSwap);
+
             await this.storageManager.saveData(paymentHash.toString("hex"), createdSwap);
 
             res.status(200).json({
@@ -909,6 +936,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
     async init() {
         await this.storageManager.loadData(ToBtcSwapAbs);
         this.subscribeToEvents();
+        await PluginManager.serviceInitialize(this);
     }
 
     getInfo(): { swapFeePPM: number, swapBaseFee: number, min: number, max: number, data?: any, tokens: string[] } {

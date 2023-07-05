@@ -5,12 +5,22 @@ import * as lncli from "ln-service";
 import {ToBtcLnSwapAbs, ToBtcLnSwapState} from "./ToBtcLnSwapAbs";
 import {SwapHandler, SwapHandlerType} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
-import {ChainEvents, ClaimEvent, InitializeEvent,
+import {
+    ChainEvents,
+    ChainSwapType,
+    ClaimEvent,
+    InitializeEvent,
     IStorageManager,
-    RefundEvent, SwapContract, SwapData, SwapEvent, ChainSwapType, TokenAddress} from "crosslightning-base";
+    RefundEvent,
+    SwapContract,
+    SwapData,
+    SwapEvent,
+    TokenAddress
+} from "crosslightning-base";
 import {SwapNonce} from "../SwapNonce";
-import {AuthenticatedLnd, pay} from "lightning";
+import {AuthenticatedLnd} from "lightning";
 import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
+import {PluginManager} from "../../plugins/PluginManager";
 
 export type ToBtcLnConfig = {
     authorizationTimeout: number,
@@ -88,7 +98,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 }
             }
 
-            if (invoiceData.state === ToBtcLnSwapState.COMMITED) {
+            if (invoiceData.state === ToBtcLnSwapState.COMMITED || invoiceData.state === ToBtcLnSwapState.PAID) {
                 await this.processInitialized(invoiceData, invoiceData.data);
             }
         }
@@ -105,6 +115,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
         if(lnPaymentStatus.is_failed) {
             console.error("[To BTC-LN: BTCLN.PaymentResult] Invoice payment failed, should refund offerer");
+            await invoiceData.setState(ToBtcLnSwapState.CANCELED);
+            //await PluginManager.swapStateChange(invoiceData);
             await this.storageManager.removeData(decodedPR.tagsObject.payment_hash);
             return;
         }
@@ -114,6 +126,11 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         }
 
         if(lnPaymentStatus.is_confirmed) {
+            invoiceData.secret = lnPaymentStatus.payment.secret;
+            await invoiceData.setState(ToBtcLnSwapState.PAID)
+            // await PluginManager.swapStateChange(invoiceData);
+            await this.storageManager.saveData(decodedPR.tagsObject.payment_hash, invoiceData);
+
             //Check if escrow state exists
             const isCommited = await this.swapContract.isCommited(invoiceData.data);
 
@@ -129,6 +146,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const success = await this.swapContract.claimWithSecret(invoiceData.data, lnPaymentStatus.payment.secret, false, false, true);
 
             if(success) {
+                await invoiceData.setState(ToBtcLnSwapState.CLAIMED);
+                // await PluginManager.swapStateChange(invoiceData);
                 await this.storageManager.removeData(decodedPR.tagsObject.payment_hash);
             }
             unlock();
@@ -208,7 +227,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
         const markAsNonPayable = async() => {
             invoiceData.data = data;
-            invoiceData.state = ToBtcLnSwapState.NON_PAYABLE;
+            await invoiceData.setState(ToBtcLnSwapState.NON_PAYABLE);
+            // await PluginManager.swapStateChange(invoiceData);
             await this.storageManager.saveData(decodedPR.tagsObject.payment_hash, invoiceData);
         };
 
@@ -263,8 +283,9 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             console.log("[To BTC-LN: Solana.Initialize] Max usable CLTV expiry delta: ", maxUsableCLTVdelta.toString(10));
             console.log("[To BTC-LN: Solana.Initialize] Max fee: ", maxFee.toString(10));
 
-            invoiceData.state = ToBtcLnSwapState.COMMITED;
             invoiceData.data = data;
+            await invoiceData.setState(ToBtcLnSwapState.COMMITED);
+            // await PluginManager.swapStateChange(invoiceData);
             await this.storageManager.saveData(decodedPR.tagsObject.payment_hash, invoiceData);
 
             const { current_block_height } = await lncli.getHeight({lnd: this.LND});
@@ -584,6 +605,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const createdSwap = new ToBtcLnSwapAbs<T>(parsedBody.pr, swapFee, actualRoutingFee, new BN(sigData.timeout));
             createdSwap.data = payObject;
 
+            await PluginManager.swapStateChange(createdSwap);
+
             await this.storageManager.saveData(parsedPR.tagsObject.payment_hash, createdSwap);
 
             res.status(200).json({
@@ -748,6 +771,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
     async init() {
         await this.storageManager.loadData(ToBtcLnSwapAbs);
         this.subscribeToEvents();
+        await PluginManager.serviceInitialize(this);
     }
 
     getInfo(): { swapFeePPM: number, swapBaseFee: number, min: number, max: number, data?: any, tokens: string[] } {
