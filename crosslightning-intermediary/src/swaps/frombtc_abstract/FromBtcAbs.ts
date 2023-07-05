@@ -224,13 +224,14 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 const paymentHash: Buffer = Buffer.from(paymentHashHex, "hex");
 
                 const savedSwap = this.storageManager.data[paymentHashHex];
-                await savedSwap.setState(FromBtcSwapState.CLAIMED);
-                //await PluginManager.swapStateChange(savedSwap);
 
                 const isSwapNotFound = savedSwap == null;
                 if (isSwapNotFound) {
                     continue;
                 }
+
+                await savedSwap.setState(FromBtcSwapState.CLAIMED);
+                //await PluginManager.swapStateChange(savedSwap);
 
                 console.log("[From BTC: Solana.ClaimEvent] Swap claimed by claimer: ", paymentHashHex);
                 await this.storageManager.removeData(paymentHash.toString("hex"));
