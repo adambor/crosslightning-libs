@@ -2,6 +2,7 @@ import {BtcRelay, ChainEvents, SwapContract, SwapData} from "crosslightning-base
 import {IPlugin} from "./IPlugin";
 import {SwapHandler} from "..";
 import {SwapHandlerSwap} from "../swaps/SwapHandlerSwap";
+import {AuthenticatedLnd} from "lightning";
 
 
 export class PluginManager {
@@ -22,14 +23,16 @@ export class PluginManager {
     static async enable<T extends SwapData>(
         swapContract: SwapContract<T, any>,
         btcRelay: BtcRelay<any, any, any>,
-        chainEvents: ChainEvents<T>
+        chainEvents: ChainEvents<T>,
+        lnd: AuthenticatedLnd
     ) {
         for(let plugin of PluginManager.plugins) {
             try {
                 await plugin.onEnable(
                     swapContract,
                     btcRelay,
-                    chainEvents
+                    chainEvents,
+                    lnd
                 );
             } catch (e) {
                 console.error("Plugin ENABLE error: ", plugin.name);

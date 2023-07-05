@@ -1,6 +1,7 @@
 import {BtcRelay, ChainEvents, SwapContract, SwapData} from "crosslightning-base";
 import {SwapHandler} from "..";
 import {SwapHandlerSwap} from "../swaps/SwapHandlerSwap";
+import {AuthenticatedLnd} from "lightning";
 
 export interface IPlugin<T extends SwapData> {
 
@@ -12,7 +13,8 @@ export interface IPlugin<T extends SwapData> {
     onEnable(
         swapContract: SwapContract<T, any>,
         btcRelay: BtcRelay<any, any, any>,
-        chainEvents: ChainEvents<T>
+        chainEvents: ChainEvents<T>,
+        lnd: AuthenticatedLnd
     ): Promise<void>;
     onDisable(): Promise<void>;
 
