@@ -78,11 +78,16 @@ export class EVMWallet extends Wallet {
 
     private readonly boundTransactionListener: (transaction: providers.TransactionReceipt) => void;
 
-    constructor(privateKey: string, rpcUrl: string, chainId: number, directory: string) {
+    readonly waitBeforeBump: number;
+    readonly minFeeIncrease: BigNumber;
+
+    constructor(privateKey: string, rpcUrl: string, chainId: number, directory: string, minFeeIncrease?: BigNumber, waitBeforeBumpMillis?: number) {
         super(privateKey, new OverridenStaticJsonRpcProvider(rpcUrl, chainId));
         this.directory = directory;
         this.chainId = chainId;
         this.boundTransactionListener = this.transactionListener.bind(this);
+        this.minFeeIncrease = minFeeIncrease || MIN_FEE_INCREASE;
+        this.waitBeforeBump = waitBeforeBumpMillis || WAIT_BEFORE_BUMP;
     }
 
     transactionListener(transaction: providers.TransactionReceipt) {
@@ -145,13 +150,14 @@ export class EVMWallet extends Wallet {
 
                 for(let nonceStr in this.pendingTxs) {
                     const data = this.pendingTxs[nonceStr];
-                    if(data.lastBumped<Date.now()-WAIT_BEFORE_BUMP) {
+                    if(data.lastBumped<Date.now()-this.waitBeforeBump) {
                         const lastTx = data.txs[data.txs.length-1];
+                        console.log("Bump fee for tx: ", lastTx.hash);
                         if(_gasPrice==null) _gasPrice = await this.provider.getGasPrice();
                         const feeDifference = _gasPrice.sub(lastTx.gasPrice);
                         const newTx = utils.shallowCopy(lastTx);
-                        if(feeDifference.lt(MIN_FEE_INCREASE)) {
-                            newTx.gasPrice = lastTx.gasPrice.add(MIN_FEE_INCREASE);
+                        if(feeDifference.lt(this.minFeeIncrease)) {
+                            newTx.gasPrice = lastTx.gasPrice.add(this.minFeeIncrease);
                         } else {
                             newTx.gasPrice = _gasPrice;
                         }
