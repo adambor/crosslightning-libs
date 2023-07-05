@@ -119,4 +119,9 @@ export interface SwapContract<T extends SwapData, TX> {
 
     getNativeCurrencyAddress(): TokenAddress;
 
+    withdraw(token: TokenAddress, amount: BN): Promise<boolean>;
+    deposit(token: TokenAddress, amount: BN): Promise<boolean>;
+
+    transfer(token: TokenAddress, amount: BN, dstAddress: string): Promise<boolean>;
+
 }
