@@ -10,7 +10,7 @@ export class SwapHandlerSwap<T extends SwapData> extends Lockable implements Sto
     constructor(obj?: any) {
         super();
         if(obj!=null) {
-            this.data = obj.data==null ? null : SwapData.deserialize(obj);
+            this.data = obj.data==null ? null : SwapData.deserialize(obj.data);
         }
     }
 

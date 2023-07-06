@@ -283,6 +283,14 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             console.log("[To BTC-LN: Solana.Initialize] Max usable CLTV expiry delta: ", maxUsableCLTVdelta.toString(10));
             console.log("[To BTC-LN: Solana.Initialize] Max fee: ", maxFee.toString(10));
 
+            const isInvoiceExpired = decodedPR.timeExpireDate < Date.now() / 1000;
+            if (isInvoiceExpired) {
+                //Expired
+                console.error("[To BTC-LN: Solana.Initialize] Invoice already expired!");
+                await markAsNonPayable();
+                return;
+            }
+
             invoiceData.data = data;
             await invoiceData.setState(ToBtcLnSwapState.COMMITED);
             // await PluginManager.swapStateChange(invoiceData);
@@ -303,6 +311,12 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const payment = await lncli.pay(obj).catch(e => {
                 console.error(e);
             });
+
+            if(payment==null) {
+                console.error("[To BTC-LN: Solana.Initialize] Failed to initiate invoice payment!");
+                await markAsNonPayable();
+                return;
+            }
 
             this.subscribeToPayment(invoiceData);
             return;
@@ -569,7 +583,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 obj = routingObj;
             }
 
-            let actualRoutingFee: BN = new BN(obj.route.fee_mtokens).mul(this.config.routingFeeMultiplier).div(new BN(1000));
+            let actualRoutingFee: BN = new BN(obj.route.safe_fee).mul(this.config.routingFeeMultiplier);
             if(actualRoutingFee.gt(parsedBody.maxFee)) {
                 actualRoutingFee = parsedBody.maxFee;
             }
