@@ -459,7 +459,7 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
         }
 
         const topicFilter = [
-            utils.id("Initialize(address,address,bytes32,(address,address,address,uint256,bytes32,uint256),bytes32)"),
+            utils.id("Initialize(address,address,bytes32,(address,address,address,uint256,bytes32,uint256,uint256,uint256),bytes32)"),
             null,
             null,
             "0x"+paymentHashHex

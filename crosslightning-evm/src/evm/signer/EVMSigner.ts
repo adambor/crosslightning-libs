@@ -193,7 +193,11 @@ export class EVMWallet extends Wallet {
             this.feeBumper = setTimeout(func, 1000);
         };
 
-        func();
+        try {
+            func();
+        } catch (e) {
+            console.error(e);
+        }
 
     }
 
