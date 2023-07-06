@@ -79,25 +79,6 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
         for(let key in this.storageManager.data) {
             const swap = this.storageManager.data[key];
 
-            if(swap.state===FromBtcLnSwapState.RECEIVED) {
-                const parsedPR = bolt11.decode(swap.pr);
-                // console.log("[From BTC-LN: Swap received check] Swap in received state check for expiry: "+parsedPR.tagsObject.payment_hash);
-                // console.log("[From BTC-LN: Swap received check] Swap signature: "+swap.signature);
-                if(swap.signature!=null) {
-                    const isAuthorizationExpired = await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce);
-                    console.log("[From BTC-LN: Swap received check] Swap auth expired: "+parsedPR.tagsObject.payment_hash);
-                    if(isAuthorizationExpired) {
-                        const isCommited = await this.swapContract.isCommited(swap.data);
-                        if(!isCommited) {
-                            await swap.setState(FromBtcLnSwapState.CANCELED);
-                            //await PluginManager.swapStateChange(swap);
-                            cancelInvoices.push(parsedPR.tagsObject.payment_hash);
-                        }
-                        continue;
-                    }
-                }
-            }
-
             if(swap.state===FromBtcLnSwapState.CREATED) {
                 //Check if already paid
                 const parsedPR = bolt11.decode(swap.pr);
@@ -128,8 +109,42 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
             }
 
-            const expiryTime = swap.data.getExpiry();
-            const currentTime = new BN(Math.floor(Date.now()/1000)-this.config.maxSkew);
+            if(swap.state===FromBtcLnSwapState.RECEIVED) {
+                const parsedPR = bolt11.decode(swap.pr);
+                // console.log("[From BTC-LN: Swap received check] Swap in received state check for expiry: "+parsedPR.tagsObject.payment_hash);
+                // console.log("[From BTC-LN: Swap received check] Swap signature: "+swap.signature);
+                if(swap.signature!=null) {
+                    const isAuthorizationExpired = await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce);
+                    console.log("[From BTC-LN: Swap received check] Swap auth expired: "+parsedPR.tagsObject.payment_hash);
+                    if(isAuthorizationExpired) {
+                        const isCommited = await this.swapContract.isCommited(swap.data);
+                        if(!isCommited) {
+                            await swap.setState(FromBtcLnSwapState.CANCELED);
+                            //await PluginManager.swapStateChange(swap);
+                            cancelInvoices.push(parsedPR.tagsObject.payment_hash);
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            if(swap.state===FromBtcLnSwapState.RECEIVED || swap.state===FromBtcLnSwapState.COMMITED) {
+                const expiryTime = swap.data.getExpiry();
+                const currentTime = new BN(Math.floor(Date.now()/1000)-this.config.maxSkew);
+
+                const isExpired = expiryTime!=null && expiryTime.lt(currentTime);
+                if(isExpired) {
+                    const isCommited = await this.swapContract.isCommited(swap.data);
+
+                    if(isCommited) {
+                        refundSwaps.push(swap);
+                        continue;
+                    }
+
+                    cancelInvoices.push(swap.data.getHash());
+                    continue;
+                }
+            }
 
             if(swap.state===FromBtcLnSwapState.CLAIMED) {
                 //Try to settle the hodl invoice
@@ -140,18 +155,6 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             if(swap.state===FromBtcLnSwapState.CANCELED) {
                 cancelInvoices.push(swap.data.getHash());
                 continue;
-            }
-
-            const isExpired = expiryTime!=null && expiryTime.lt(currentTime);
-            if(isExpired) {
-                const isCommited = await this.swapContract.isCommited(swap.data);
-
-                if(isCommited) {
-                    refundSwaps.push(swap);
-                    continue;
-                }
-
-                cancelInvoices.push(swap.data.getHash());
             }
         }
 
