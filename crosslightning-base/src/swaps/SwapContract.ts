@@ -120,8 +120,24 @@ export interface SwapContract<T extends SwapData, TX> {
     getNativeCurrencyAddress(): TokenAddress;
 
     withdraw(token: TokenAddress, amount: BN, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
+    txsWithdraw(token: TokenAddress, amount: BN): Promise<TX[]>;
     deposit(token: TokenAddress, amount: BN, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
+    txsDeposit(token: TokenAddress, amount: BN): Promise<TX[]>;
 
     transfer(token: TokenAddress, amount: BN, dstAddress: string, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
+    txsTransfer(token: TokenAddress, amount: BN, dstAddress: string): Promise<TX[]>;
+
+    //getTxId(tx: TX): Promise<string>;
+
+    serializeTx(tx: TX): Promise<string>;
+    deserializeTx(txData: string): Promise<TX>;
+
+    getTxStatus(tx: string): Promise<"not_found" | "pending" | "success" | "reverted">;
+    getTxIdStatus(txId: string): Promise<"not_found" | "pending" | "success" | "reverted">;
+
+    sendAndConfirm(txs: TX[], waitForConfirmation?: boolean, abortSignal?: AbortSignal, parallel?: boolean, onBeforePublish?: (txId: string, rawTx: string) => Promise<void>): Promise<string[]>;
+
+    onBeforeTxReplace(callback: (oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>): void;
+    offBeforeTxReplace(callback: (oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>): boolean;
 
 }
