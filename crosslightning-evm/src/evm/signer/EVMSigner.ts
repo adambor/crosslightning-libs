@@ -59,6 +59,8 @@ export class OverridenStaticJsonRpcProvider extends providers.StaticJsonRpcProvi
 
 export class EVMWallet extends Wallet {
 
+    readonly type: string = "crosslightning-evm-signer";
+
     private readonly chainId: number;
     private pendingTxs: {
         [nonce: string]: {

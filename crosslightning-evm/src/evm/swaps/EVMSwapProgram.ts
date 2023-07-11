@@ -11,7 +11,6 @@ import {erc20Abi} from "./erc20/erc20Abi";
 import * as utils from "ethers/lib/utils";
 import {Buffer} from "buffer";
 import {EVMBtcStoredHeader} from "../btcrelay/headers/EVMBtcStoredHeader";
-import {EVMWallet} from "../signer/EVMSigner";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
@@ -67,12 +66,16 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
 
     readonly btcRelay: EVMBtcRelay<any>;
 
-    constructor(signer: Signer, btcRelay: EVMBtcRelay<any>, swapContractAddress: string) {
+    private readonly logBlocksLimit: number;
+
+    constructor(signer: Signer, btcRelay: EVMBtcRelay<any>, swapContractAddress: string, logBlocksLimit?: number) {
         this.signer = signer;
         this.btcRelay = btcRelay;
 
         this.contract = new Contract(swapContractAddress, swapContract.abi, signer);
         this.contractInterface = new Interface(swapContract.abi);
+
+        this.logBlocksLimit = logBlocksLimit || LOG_FETCH_LIMIT;
     }
 
     getNativeCurrencyAddress() {
@@ -474,7 +477,7 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
             const params = {
                 address: this.contract.address,
                 topics: topicFilter,
-                fromBlock: currentBlock-LOG_FETCH_LIMIT,
+                fromBlock: currentBlock-this.logBlocksLimit,
                 toBlock: currentBlock
             };
             console.log("getLogs params: ", params);
@@ -486,7 +489,7 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
                 _swapData.txoHash = event.args.txoHash;
                 if(_swapData.getCommitHash()===commitment) swapData = _swapData;
             }
-            currentBlock -= LOG_FETCH_LIMIT;
+            currentBlock -= this.logBlocksLimit;
             if(swapData==null) {
                 await new Promise(resolve => {
                     setTimeout(resolve, 500)
@@ -563,8 +566,9 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
                         throw new Error("Transaction reverted, txId: "+receipt.transactionHash);
                     }
                 }
-                if(this.signer instanceof EVMWallet) {
-                    resp = await this.signer.sendTransaction(tx, onBeforePublish);
+                const anySigner: any = this.signer;
+                if(anySigner.type==="crosslightning-evm-signer") {
+                    resp = await anySigner.sendTransaction(tx, onBeforePublish);
                 } else {
                     resp = await this.signer.sendTransaction(tx);
                 }
@@ -572,8 +576,9 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
             }
         } else {
             for(let tx of txs) {
-                if(this.signer instanceof EVMWallet) {
-                    resp = await this.signer.sendTransaction(tx, onBeforePublish);
+                const anySigner: any = this.signer;
+                if(anySigner.type==="crosslightning-evm-signer") {
+                    resp = await anySigner.sendTransaction(tx, onBeforePublish);
                 } else {
                     resp = await this.signer.sendTransaction(tx);
                 }
@@ -1022,8 +1027,9 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
     }
 
     async getTxIdStatus(txId: string): Promise<"not_found" | "pending" | "success" | "reverted"> {
-        if(this.signer instanceof EVMWallet) {
-            if(this.signer.isTxPending(txId)) return "pending";
+        const anySigner: any = this.signer;
+        if(anySigner.type==="crosslightning-evm-signer") {
+            if(anySigner.isTxPending(txId)) return "pending";
         }
         const receipt = await this.signer.provider.getTransactionReceipt(txId);
         if(receipt==null) {
@@ -1034,16 +1040,18 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
     }
 
     onBeforeTxReplace(callback: (oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>): void {
-        if(this.signer instanceof EVMWallet) {
-            this.signer.onBeforeTxReplace(callback);
+        const anySigner: any = this.signer;
+        if(anySigner.type==="crosslightning-evm-signer") {
+            anySigner.onBeforeTxReplace(callback);
             return;
         }
         throw new Error("Unsupported environment");
     }
 
     offBeforeTxReplace(callback: (oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>): boolean {
-        if(this.signer instanceof EVMWallet) {
-            return this.signer.offBeforeTxReplace(callback);
+        const anySigner: any = this.signer;
+        if(anySigner.type==="crosslightning-evm-signer") {
+            return anySigner.offBeforeTxReplace(callback);
         }
         throw new Error("Unsupported environment");
     }

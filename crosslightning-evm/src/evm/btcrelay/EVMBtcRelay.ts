@@ -21,12 +21,16 @@ export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHea
     readonly maxHeadersPerTx: number = 100;
     readonly maxForkHeadersPerTx: number = 50;
 
-    constructor(provider: Signer, bitcoinRpc: BitcoinRpc<B>, btcRelayContractAddress: string) {
+    private readonly logBlocksLimit: number;
+
+    constructor(provider: Signer, bitcoinRpc: BitcoinRpc<B>, btcRelayContractAddress: string, logBlocksLimit?: number) {
         this.provider = provider;
         this.contract = new Contract(btcRelayContractAddress, btcRelayContract.abi, provider);
         this.contractInterface = new Interface(btcRelayContract.abi);
 
         this.bitcoinRpc = bitcoinRpc;
+
+        this.logBlocksLimit = logBlocksLimit || limit;
     }
 
     async saveInitialHeader(header: B, epochStart: number, pastBlocksTimestamps: number[]): Promise<UnsignedTransaction> {
@@ -75,7 +79,7 @@ export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHea
         while(storedHeader==null) {
             const params = {
                 address: this.contract.address,
-                fromBlock: currentBlock-limit,
+                fromBlock: currentBlock-this.logBlocksLimit,
                 toBlock: currentBlock
             };
             console.log("getLogs params: ", params);
@@ -99,7 +103,7 @@ export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHea
                     }
                 }
             }
-            currentBlock -= limit;
+            currentBlock -= this.logBlocksLimit;
             if(storedHeader==null) {
                 await new Promise(resolve => {
                     setTimeout(resolve, 500)
@@ -135,7 +139,7 @@ export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHea
         while(storedHeader==null) {
             const params = {
                 address: this.contract.address,
-                fromBlock: currentBlock-limit,
+                fromBlock: currentBlock-this.logBlocksLimit,
                 toBlock: currentBlock
             };
             console.log("getLogs params: ", params);
@@ -156,7 +160,7 @@ export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHea
                     }
                 }
             }
-            currentBlock -= limit;
+            currentBlock -= this.logBlocksLimit;
             if(storedHeader==null) {
                 await new Promise(resolve => {
                     setTimeout(resolve, 500)
@@ -178,7 +182,7 @@ export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHea
         while(storedHeader==null) {
             const params = {
                 address: this.contract.address,
-                fromBlock: currentBlock-limit,
+                fromBlock: currentBlock-this.logBlocksLimit,
                 toBlock: currentBlock
             };
             console.log("getLogs params: ", params);
@@ -204,7 +208,7 @@ export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHea
                     }
                 }
             }
-            currentBlock -= limit;
+            currentBlock -= this.logBlocksLimit;
             if(storedHeader==null) {
                 await new Promise(resolve => {
                     setTimeout(resolve, 500)
