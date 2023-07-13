@@ -15,11 +15,13 @@ export class EVMChainEvents implements ChainEvents<EVMSwapData> {
     private readonly directory: string;
     private readonly provider: providers.Provider;
     private readonly evmSwapProgram: EVMSwapProgram;
+    private readonly logFetchLimit: number;
 
-    constructor(directory: string, provider: providers.Provider, evmSwapProgram: EVMSwapProgram) {
+    constructor(directory: string, provider: providers.Provider, evmSwapProgram: EVMSwapProgram, logFetchLimit?: number) {
         this.directory = directory;
         this.provider = provider;
         this.evmSwapProgram = evmSwapProgram;
+        this.logFetchLimit = logFetchLimit || LOG_FETCH_LIMIT;
     }
 
     private async getLastHeight() {
@@ -82,8 +84,8 @@ export class EVMChainEvents implements ChainEvents<EVMSwapData> {
 
         do {
             let toBlock;
-            if(latestBlock-lastBlock>LOG_FETCH_LIMIT) {
-                toBlock = lastBlock+LOG_FETCH_LIMIT;
+            if(latestBlock-lastBlock>this.logFetchLimit) {
+                toBlock = lastBlock+this.logFetchLimit;
             } else {
                 toBlock = latestBlock;
             }

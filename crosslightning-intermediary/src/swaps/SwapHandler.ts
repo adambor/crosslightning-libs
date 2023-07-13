@@ -4,6 +4,7 @@ import {SwapNonce} from "./SwapNonce";
 import {ISwapPrice} from "./ISwapPrice";
 import {ChainEvents, StorageObject, SwapContract, SwapData, TokenAddress, IStorageManager} from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
+import {SwapHandlerSwap} from "./SwapHandlerSwap";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -24,7 +25,7 @@ export type SwapHandlerInfoType = {
 /**
  * An abstract class defining a singular swap service
  */
-export abstract class SwapHandler<V extends StorageObject, T extends SwapData> {
+export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapData> {
 
     abstract readonly type: SwapHandlerType;
 

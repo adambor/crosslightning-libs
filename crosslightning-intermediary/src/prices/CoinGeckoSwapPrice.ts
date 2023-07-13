@@ -3,7 +3,7 @@ import fetch, {Response} from "cross-fetch";
 import {TokenAddress} from "crosslightning-base";
 import {ISwapPrice} from "../swaps/ISwapPrice";
 
-const CACHE_DURATION = 5000;
+const CACHE_DURATION = 15000;
 
 export class CoinGeckoSwapPrice implements ISwapPrice {
 

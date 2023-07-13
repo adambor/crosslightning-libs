@@ -1,6 +1,6 @@
 {
   "name": "crosslightning-sdk-base",
-  "version": "3.2.3",
+  "version": "4.0.0",
   "description": "CrossLightning SDK chain-agnostic base",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",
@@ -26,7 +26,7 @@
     "bolt11": "^1.4.0",
     "buffer": "^6.0.3",
     "cross-fetch": "^3.1.5",
-    "crosslightning-base": "^3.2.0",
+    "crosslightning-base": "^4.0.6",
     "crypto-browserify": "^3.12.0",
     "js-lnurl": "^0.5.1",
     "tweetnacl": "^1.0.3",

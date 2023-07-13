@@ -1,6 +1,7 @@
 import {BigNumber, providers, Transaction, UnsignedTransaction, utils, Wallet} from "ethers";
 import {Deferrable} from "@ethersproject/properties/lib";
 import * as fs from "fs/promises";
+import EventEmitter from "events";
 
 const WAIT_BEFORE_BUMP = 15*1000;
 const MIN_FEE_INCREASE = BigNumber.from(10*1000000000);
@@ -58,6 +59,8 @@ export class OverridenStaticJsonRpcProvider extends providers.StaticJsonRpcProvi
 
 export class EVMWallet extends Wallet {
 
+    readonly type: string = "crosslightning-evm-signer";
+
     private readonly chainId: number;
     private pendingTxs: {
         [nonce: string]: {
@@ -78,11 +81,18 @@ export class EVMWallet extends Wallet {
 
     private readonly boundTransactionListener: (transaction: providers.TransactionReceipt) => void;
 
-    constructor(privateKey: string, rpcUrl: string, chainId: number, directory: string) {
+    readonly waitBeforeBump: number;
+    readonly minFeeIncrease: BigNumber;
+
+    callbacks: ((oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>)[] = [];
+
+    constructor(privateKey: string, rpcUrl: string, chainId: number, directory: string, minFeeIncrease?: BigNumber, waitBeforeBumpMillis?: number) {
         super(privateKey, new OverridenStaticJsonRpcProvider(rpcUrl, chainId));
         this.directory = directory;
         this.chainId = chainId;
         this.boundTransactionListener = this.transactionListener.bind(this);
+        this.minFeeIncrease = minFeeIncrease || MIN_FEE_INCREASE;
+        this.waitBeforeBump = waitBeforeBumpMillis || WAIT_BEFORE_BUMP;
     }
 
     transactionListener(transaction: providers.TransactionReceipt) {
@@ -145,13 +155,14 @@ export class EVMWallet extends Wallet {
 
                 for(let nonceStr in this.pendingTxs) {
                     const data = this.pendingTxs[nonceStr];
-                    if(data.lastBumped<Date.now()-WAIT_BEFORE_BUMP) {
+                    if(data.lastBumped<Date.now()-this.waitBeforeBump) {
                         const lastTx = data.txs[data.txs.length-1];
+                        console.log("Bump fee for tx: ", lastTx.hash);
                         if(_gasPrice==null) _gasPrice = await this.provider.getGasPrice();
                         const feeDifference = _gasPrice.sub(lastTx.gasPrice);
                         const newTx = utils.shallowCopy(lastTx);
-                        if(feeDifference.lt(MIN_FEE_INCREASE)) {
-                            newTx.gasPrice = lastTx.gasPrice.add(MIN_FEE_INCREASE);
+                        if(feeDifference.lt(this.minFeeIncrease)) {
+                            newTx.gasPrice = lastTx.gasPrice.add(this.minFeeIncrease);
                         } else {
                             newTx.gasPrice = _gasPrice;
                         }
@@ -167,6 +178,14 @@ export class EVMWallet extends Wallet {
                         if(this.pendingTxs[nonceStr]==null) continue;
 
                         const parsed = utils.parseTransaction(signedTx);
+
+                        for(let callback of this.callbacks) {
+                            try {
+                                await callback(lastTx.hash, utils.serializeTransaction(lastTx), parsed.hash, signedTx)
+                            } catch (e) {
+                                console.error(e);
+                            }
+                        }
 
                         data.txs.push(parsed);
                         data.lastBumped = Date.now();
@@ -187,7 +206,11 @@ export class EVMWallet extends Wallet {
             this.feeBumper = setTimeout(func, 1000);
         };
 
-        func();
+        try {
+            func();
+        } catch (e) {
+            console.error(e);
+        }
 
     }
 
@@ -250,7 +273,7 @@ export class EVMWallet extends Wallet {
         return await super.signTransaction(transaction);
     }
 
-    async sendTransaction(transaction: Deferrable<providers.TransactionRequest>): Promise<providers.TransactionResponse> {
+    async sendTransaction(transaction: Deferrable<providers.TransactionRequest>, onBeforePublish?: (txId: string, rawTx: string) => Promise<void>): Promise<providers.TransactionResponse> {
         const gasPrice: BigNumber = await this.provider.getGasPrice();
         //const gasPrice: BigNumber = BigNumber.from(2*1000000000);
         transaction.gasPrice = gasPrice;
@@ -270,6 +293,14 @@ export class EVMWallet extends Wallet {
 
         const parsed = utils.parseTransaction(signedTx);
 
+        if(onBeforePublish!=null) {
+            try {
+                await onBeforePublish(parsed.hash, signedTx);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
         this.pendingTxs[transaction.nonce.toString()] = {
             txs: [parsed],
             lastBumped: Date.now()
@@ -280,6 +311,23 @@ export class EVMWallet extends Wallet {
         this.provider.on(parsed.hash, this.boundTransactionListener);
 
         return await this.provider.sendTransaction(signedTx);
+    }
+
+    isTxPending(txId: string): boolean {
+        return this.txMap[txId]!=null;
+    }
+
+    onBeforeTxReplace(callback: (oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>) {
+        this.callbacks.push(callback);
+    }
+
+    offBeforeTxReplace(callback: (oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>) {
+        const index = this.callbacks.indexOf(callback);
+        if(index<0) {
+            return false;
+        }
+        this.callbacks.splice(index, 1);
+        return true;
     }
 
 }

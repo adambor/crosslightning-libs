@@ -196,7 +196,7 @@ export class BTCLNtoSolWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> 
         };
 
         this.listener = (events: SwapEvent<T>[]) => {
-            console.log("EVENT: ", event);
+            console.log("EVENT: ", events);
 
             if(eventQueue!=null) {
                 for(let event of events) {

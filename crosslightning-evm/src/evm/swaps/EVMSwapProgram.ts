@@ -66,12 +66,16 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
 
     readonly btcRelay: EVMBtcRelay<any>;
 
-    constructor(signer: Signer, btcRelay: EVMBtcRelay<any>, swapContractAddress: string) {
+    private readonly logBlocksLimit: number;
+
+    constructor(signer: Signer, btcRelay: EVMBtcRelay<any>, swapContractAddress: string, logBlocksLimit?: number) {
         this.signer = signer;
         this.btcRelay = btcRelay;
 
         this.contract = new Contract(swapContractAddress, swapContract.abi, signer);
         this.contractInterface = new Interface(swapContract.abi);
+
+        this.logBlocksLimit = logBlocksLimit || LOG_FETCH_LIMIT;
     }
 
     getNativeCurrencyAddress() {
@@ -459,7 +463,7 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
         }
 
         const topicFilter = [
-            utils.id("Initialize(address,address,bytes32,(address,address,address,uint256,bytes32,uint256),bytes32)"),
+            utils.id("Initialize(address,address,bytes32,(address,address,address,uint256,bytes32,uint256,uint256,uint256),bytes32)"),
             null,
             null,
             "0x"+paymentHashHex
@@ -473,7 +477,7 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
             const params = {
                 address: this.contract.address,
                 topics: topicFilter,
-                fromBlock: currentBlock-LOG_FETCH_LIMIT,
+                fromBlock: currentBlock-this.logBlocksLimit,
                 toBlock: currentBlock
             };
             console.log("getLogs params: ", params);
@@ -485,7 +489,7 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
                 _swapData.txoHash = event.args.txoHash;
                 if(_swapData.getCommitHash()===commitment) swapData = _swapData;
             }
-            currentBlock -= LOG_FETCH_LIMIT;
+            currentBlock -= this.logBlocksLimit;
             if(swapData==null) {
                 await new Promise(resolve => {
                     setTimeout(resolve, 500)
@@ -549,7 +553,7 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
     }
 
     //TODO: Implement abortSignal
-    async sendAndConfirm(txs: UnsignedTransaction[], waitForConfirmation?: boolean, abortSignal?: AbortSignal, parallel?: boolean): Promise<string[]> {
+    async sendAndConfirm(txs: UnsignedTransaction[], waitForConfirmation?: boolean, abortSignal?: AbortSignal, parallel?: boolean, onBeforePublish?: (txId: string, rawTx: string) => Promise<void>): Promise<string[]> {
 
         const txIds = [];
         let resp = null;
@@ -562,12 +566,22 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
                         throw new Error("Transaction reverted, txId: "+receipt.transactionHash);
                     }
                 }
-                resp = await this.signer.sendTransaction(tx);
+                const anySigner: any = this.signer;
+                if(anySigner.type==="crosslightning-evm-signer") {
+                    resp = await anySigner.sendTransaction(tx, onBeforePublish);
+                } else {
+                    resp = await this.signer.sendTransaction(tx);
+                }
                 txIds.push(resp.hash);
             }
         } else {
             for(let tx of txs) {
-                resp = await this.signer.sendTransaction(tx);
+                const anySigner: any = this.signer;
+                if(anySigner.type==="crosslightning-evm-signer") {
+                    resp = await anySigner.sendTransaction(tx, onBeforePublish);
+                } else {
+                    resp = await this.signer.sendTransaction(tx);
+                }
                 txIds.push(resp.hash);
             }
         }
@@ -910,10 +924,14 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
         swapData.setPayIn(true);
     }
 
+    _getAllowance(src: string, token: TokenAddress): Promise<BigNumber> {
+        if(ZERO_ADDRESS===token) return Promise.resolve(MAX_ALLOWANCE);
+        const tokenContract: Contract = new Contract(token, erc20Abi, this.signer);
+        return tokenContract.allowance(src, this.contract.address);
+    }
+
     getAllowance(swapData: EVMSwapData): Promise<BigNumber> {
-        if(ZERO_ADDRESS===swapData.token) return Promise.resolve(MAX_ALLOWANCE);
-        const tokenContract: Contract = new Contract(swapData.token, erc20Abi, this.signer);
-        return tokenContract.allowance(swapData.offerer, this.contract.address);
+        return this._getAllowance(swapData.offerer, swapData.token);
     }
 
     async approveSpend(swapData: EVMSwapData, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
@@ -923,6 +941,119 @@ export class EVMSwapProgram implements SwapContract<EVMSwapData, UnsignedTransac
         allowanceTx.gasLimit = BigNumber.from(80000);
         const [txId] = await this.sendAndConfirm([allowanceTx], waitForConfirmation, abortSignal, false);
         return txId;
+    }
+
+    txDeposit(token: any, amount: BN): Promise<UnsignedTransaction> {
+        throw new Error("Method not implemented.");
+    }
+
+    txTransfer(token: any, amount: BN, dstAddress: string): Promise<UnsignedTransaction> {
+        throw new Error("Method not implemented.");
+    }
+
+    async withdraw(token: TokenAddress, amount: BN, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        const [txId] = await this.sendAndConfirm(await this.txsWithdraw(token, amount), waitForConfirmation, abortSignal, false);
+        return txId;
+    }
+
+    txsWithdraw(token: string, amount: BN): Promise<UnsignedTransaction[]> {
+        return this.contract.populateTransaction.withdraw(token, BigNumber.from(amount.toString(10))).then((withdrawTx) => {
+            withdrawTx.gasLimit = BigNumber.from(100000);
+            return [withdrawTx];
+        });
+    }
+
+    async deposit(token: TokenAddress, amount: BN, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        const txIds = await this.sendAndConfirm(await this.txsDeposit(token, amount), waitForConfirmation, abortSignal, true);
+
+        return txIds[txIds.length-1];
+    }
+
+    async txsDeposit(token: string, amount: BN): Promise<UnsignedTransaction[]> {
+        const depositAmountBN = BigNumber.from(amount.toString(10));
+        const allowance = await this._getAllowance(this.getAddress(), token);
+
+        const txs = [];
+
+        if(allowance.lt(depositAmountBN)) {
+            const tokenContract: Contract = new Contract(token, erc20Abi, this.signer);
+            const allowanceTx = await tokenContract.populateTransaction.approve(this.contract.address, MAX_ALLOWANCE);
+            allowanceTx.gasLimit = BigNumber.from(80000);
+            txs.push(allowanceTx)
+        }
+
+        const depositTx = await this.contract.populateTransaction.deposit(token, depositAmountBN);
+        depositTx.gasLimit = BigNumber.from(100000);
+        txs.push(depositTx);
+
+        return txs;
+    }
+
+    async transfer(token: TokenAddress, amount: BN, dstAddress: string, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        const [txId] = await this.sendAndConfirm(await this.txsTransfer(token, amount, dstAddress), waitForConfirmation, abortSignal, false);
+
+        return txId;
+    }
+
+    async txsTransfer(token: any, amount: BN, dstAddress: string): Promise<UnsignedTransaction[]> {
+        let transferTx;
+        if(ZERO_ADDRESS===token) {
+            transferTx = {
+                from: this.getAddress(),
+                to: dstAddress,
+                value: BigNumber.from(amount.toString(10)),
+                gasLimit: BigNumber.from(21000)
+            };
+        } else {
+            const tokenContract: Contract = new Contract(token, erc20Abi, this.signer);
+            transferTx = await tokenContract.populateTransaction.transfer(dstAddress, BigNumber.from(amount.toString(10)));
+            transferTx.gasLimit = BigNumber.from(80000);
+        }
+        return [transferTx];
+    }
+
+    serializeTx(tx: UnsignedTransaction): Promise<string> {
+        return Promise.resolve(utils.serializeTransaction(tx));
+    }
+
+    deserializeTx(txData: string): Promise<UnsignedTransaction> {
+        return Promise.resolve(utils.parseTransaction(txData));
+    }
+
+    getTxStatus(txData: string): Promise<"success" | "not_found" | "pending" | "reverted"> {
+        const parsedTx = utils.parseTransaction(txData);
+        const txId = parsedTx.hash;
+        return this.getTxIdStatus(txId);
+    }
+
+    async getTxIdStatus(txId: string): Promise<"not_found" | "pending" | "success" | "reverted"> {
+        const anySigner: any = this.signer;
+        if(anySigner.type==="crosslightning-evm-signer") {
+            if(anySigner.isTxPending(txId)) return "pending";
+        }
+        const receipt = await this.signer.provider.getTransactionReceipt(txId);
+        if(receipt==null) {
+            return "not_found";
+        }
+        if(!receipt.status) return "reverted";
+        return "success";
+    }
+
+    onBeforeTxReplace(callback: (oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>): void {
+        const anySigner: any = this.signer;
+        if(anySigner.type==="crosslightning-evm-signer") {
+            anySigner.onBeforeTxReplace(callback);
+            return;
+        }
+        throw new Error("Unsupported environment");
+    }
+
+    offBeforeTxReplace(callback: (oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>): boolean {
+        const anySigner: any = this.signer;
+        if(anySigner.type==="crosslightning-evm-signer") {
+            return anySigner.offBeforeTxReplace(callback);
+        }
+        throw new Error("Unsupported environment");
     }
 
 }
