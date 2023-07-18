@@ -86,13 +86,24 @@ export class EVMWallet extends Wallet {
 
     callbacks: ((oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>)[] = [];
 
-    constructor(privateKey: string, rpcUrl: string, chainId: number, directory: string, minFeeIncrease?: BigNumber, waitBeforeBumpMillis?: number) {
+    readonly getGasPriceFunc: () => Promise<BigNumber>;
+
+    constructor(
+        privateKey: string,
+        rpcUrl: string,
+        chainId: number,
+        directory: string,
+        minFeeIncrease?: BigNumber,
+        waitBeforeBumpMillis?: number,
+        getGasPriceFunc?: () => Promise<BigNumber>
+    ) {
         super(privateKey, new OverridenStaticJsonRpcProvider(rpcUrl, chainId));
         this.directory = directory;
         this.chainId = chainId;
         this.boundTransactionListener = this.transactionListener.bind(this);
         this.minFeeIncrease = minFeeIncrease || MIN_FEE_INCREASE;
         this.waitBeforeBump = waitBeforeBumpMillis || WAIT_BEFORE_BUMP;
+        this.getGasPriceFunc = getGasPriceFunc;
     }
 
     transactionListener(transaction: providers.TransactionReceipt) {
@@ -158,7 +169,7 @@ export class EVMWallet extends Wallet {
                     if(data.lastBumped<Date.now()-this.waitBeforeBump) {
                         const lastTx = data.txs[data.txs.length-1];
                         console.log("Bump fee for tx: ", lastTx.hash);
-                        if(_gasPrice==null) _gasPrice = await this.provider.getGasPrice();
+                        if(_gasPrice==null) _gasPrice = this.getGasPriceFunc!=null ? await this.getGasPriceFunc() : await this.provider.getGasPrice();
                         const feeDifference = _gasPrice.sub(lastTx.gasPrice);
                         const newTx = utils.shallowCopy(lastTx);
                         if(feeDifference.lt(this.minFeeIncrease)) {
@@ -274,7 +285,7 @@ export class EVMWallet extends Wallet {
     }
 
     async sendTransaction(transaction: Deferrable<providers.TransactionRequest>, onBeforePublish?: (txId: string, rawTx: string) => Promise<void>): Promise<providers.TransactionResponse> {
-        const gasPrice: BigNumber = await this.provider.getGasPrice();
+        const gasPrice: BigNumber = this.getGasPriceFunc!=null ? await this.getGasPriceFunc() : await this.provider.getGasPrice();
         //const gasPrice: BigNumber = BigNumber.from(2*1000000000);
         transaction.gasPrice = gasPrice;
         this.pendingNonce++;
