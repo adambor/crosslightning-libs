@@ -23,7 +23,9 @@ export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHea
 
     private readonly logBlocksLimit: number;
 
-    constructor(provider: Signer, bitcoinRpc: BitcoinRpc<B>, btcRelayContractAddress: string, logBlocksLimit?: number) {
+    private readonly useEip1559ForFeeEstimate: boolean;
+
+    constructor(provider: Signer, bitcoinRpc: BitcoinRpc<B>, btcRelayContractAddress: string, logBlocksLimit?: number, useEip1559ForFeeEstimate?: boolean) {
         this.provider = provider;
         this.contract = new Contract(btcRelayContractAddress, btcRelayContract.abi, provider);
         this.contractInterface = new Interface(btcRelayContract.abi);
@@ -31,6 +33,8 @@ export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHea
         this.bitcoinRpc = bitcoinRpc;
 
         this.logBlocksLimit = logBlocksLimit || limit;
+
+        this.useEip1559ForFeeEstimate = useEip1559ForFeeEstimate==null ? true : useEip1559ForFeeEstimate;
     }
 
     async saveInitialHeader(header: B, epochStart: number, pastBlocksTimestamps: number[]): Promise<UnsignedTransaction> {
@@ -352,7 +356,7 @@ export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHea
         const totalGas = blockheightDelta*GAS_PER_BLOCKHEADER;
 
         let gasPrice: BigNumber;
-        try {
+        if(this.useEip1559ForFeeEstimate) try {
             const gasPriceData = await this.provider.provider.getFeeData();
 
             if(gasPriceData.lastBaseFeePerGas!=null) {
@@ -375,7 +379,7 @@ export class EVMBtcRelay<B extends BtcBlock> implements BtcRelay<EVMBtcStoredHea
     async getFeePerBlock(): Promise<BN> {
 
         let gasPrice: BigNumber;
-        try {
+        if(this.useEip1559ForFeeEstimate) try {
             const gasPriceData = await this.provider.provider.getFeeData();
 
             if(gasPriceData.lastBaseFeePerGas!=null) {
