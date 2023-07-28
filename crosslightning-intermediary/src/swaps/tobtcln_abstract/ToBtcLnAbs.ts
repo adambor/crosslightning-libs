@@ -563,6 +563,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     return;
                 }
 
+                probeReq.is_ignoring_past_failures = true;
+
                 let routingObj;
                 try {
                     routingObj = await lncli.getRouteToDestination(probeReq);

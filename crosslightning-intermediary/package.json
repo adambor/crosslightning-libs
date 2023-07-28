@@ -1,6 +1,6 @@
 {
   "name": "crosslightning-intermediary",
-  "version": "5.0.2",
+  "version": "5.0.3",
   "description": "Main functionality implementation for intermediary node, easily extensible to any chain",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",
