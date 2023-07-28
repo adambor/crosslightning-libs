@@ -27,7 +27,7 @@
     "@solana/web3.js": "^1.75.0",
     "@types/node": "^18.15.11",
     "bn.js": "^5.2.1",
-    "crosslightning-base": "^3.2.0",
+    "crosslightning-base": "^4.0.6",
     "tweetnacl": "^1.0.3",
     "typescript": "^4.9.5"
   }

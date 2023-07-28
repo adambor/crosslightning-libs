@@ -21,6 +21,7 @@ import {IStorageManager, ISwapNonce, SwapContract, ChainSwapType, TokenAddress, 
 import {SolanaBtcStoredHeader} from "../btcrelay/headers/SolanaBtcStoredHeader";
 import {RelaySynchronizer, StorageObject} from "crosslightning-base/dist";
 import Utils from "./Utils";
+import * as bs58 from "bs58";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
@@ -852,7 +853,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         ));
     }
 
-    async sendAndConfirm(txs: SolTx[], waitForConfirmation?: boolean, abortSignal?: AbortSignal, parallel?: boolean): Promise<string[]> {
+    async sendAndConfirm(txs: SolTx[], waitForConfirmation?: boolean, abortSignal?: AbortSignal, parallel?: boolean, onBeforePublish?: (txId: string, rawTx: string) => Promise<void>): Promise<string[]> {
         let latestBlockData: {blockhash: string, lastValidBlockHeight: number} = null;
 
         for(let tx of txs) {
@@ -878,6 +879,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 const tx = signedTxs[i];
                 const unsignedTx = txs[i];
                 console.log("Send TX: ", tx);
+                await onBeforePublish(bs58.encode(tx.signature), await this.serializeTx({
+                    tx,
+                    signers: unsignedTx.signers
+                }));
                 const txResult = await this.signer.connection.sendRawTransaction(tx.serialize(), options);
                 console.log("Send signed TX: ", txResult);
                 if(waitForConfirmation) {
@@ -902,6 +907,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 const tx = signedTxs[i];
                 const unsignedTx = txs[i];
                 console.log("Send TX: ", tx);
+                await onBeforePublish(bs58.encode(tx.signature), await this.serializeTx({
+                    tx,
+                    signers: unsignedTx.signers
+                }));
                 const txResult = await this.signer.connection.sendRawTransaction(tx.serialize(), options);
                 console.log("Send signed TX: ", txResult);
                 await this.signer.connection.confirmTransaction({
@@ -1731,6 +1740,130 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     getNativeCurrencyAddress(): TokenAddress {
         return WSOL_ADDRESS;
+    }
+
+    async withdraw(token: any, amount: BN, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        const txs = await this.txsWithdraw(token, amount);
+        const [txId] = await this.sendAndConfirm(txs, waitForConfirmation, abortSignal, false);
+        return txId;
+    }
+    async txsWithdraw(token: any, amount: BN): Promise<SolTx[]> {
+        const ata = await SplToken.getAssociatedTokenAddress(token, this.signer.publicKey);
+
+        let result = await this.program.methods
+            .withdraw(new BN(amount))
+            .accounts({
+                initializer: this.signer.publicKey,
+                userData: this.SwapUserVault(this.signer.publicKey, token),
+                mint: token,
+                vault: this.SwapVault(token),
+                vaultAuthority: this.SwapVaultAuthority,
+                initializerDepositTokenAccount: ata,
+                systemProgram: SystemProgram.programId,
+                rent: SYSVAR_RENT_PUBKEY,
+                tokenProgram: SplToken.TOKEN_PROGRAM_ID,
+            })
+            .transaction();
+
+        return [{
+            tx: result,
+            signers: []
+        }];
+    }
+    async deposit(token: any, amount: BN, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        const txs = await this.txsDeposit(token, amount);
+        const [txId] = await this.sendAndConfirm(txs, waitForConfirmation, abortSignal, false);
+        return txId;
+    }
+    async txsDeposit(token: any, amount: BN): Promise<SolTx[]> {
+        const ata = await SplToken.getAssociatedTokenAddress(token, this.signer.publicKey);
+
+        let result = await this.program.methods
+            .deposit(new BN(amount))
+            .accounts({
+                initializer: this.signer.publicKey,
+                userData: this.SwapUserVault(this.signer.publicKey, token),
+                mint: token,
+                vault: this.SwapVault(token),
+                vaultAuthority: this.SwapVaultAuthority,
+                initializerDepositTokenAccount: ata,
+                systemProgram: SystemProgram.programId,
+                rent: SYSVAR_RENT_PUBKEY,
+                tokenProgram: SplToken.TOKEN_PROGRAM_ID,
+            })
+            .transaction();
+
+        return [{
+            tx: result,
+            signers: []
+        }]
+    }
+    async transfer(token: any, amount: BN, dstAddress: string, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        const txs = await this.txsTransfer(token, amount, dstAddress);
+        const [txId] = await this.sendAndConfirm(txs, waitForConfirmation, abortSignal, false);
+        return txId;
+    }
+    async txsTransfer(token: any, amount: BN, dstAddress: string): Promise<SolTx[]> {
+        const ata = await SplToken.getAssociatedTokenAddress(token, this.signer.publicKey);
+        if(PublicKey.isOnCurve(new PublicKey(dstAddress))) {
+            dstAddress = SplToken.getAssociatedTokenAddressSync(token, new PublicKey(dstAddress), false).toBase58();
+        }
+        const ix = SplToken.createTransferInstruction(ata, new PublicKey(dstAddress), this.signer.publicKey, amount);
+        const tx = new Transaction();
+        tx.add(ix);
+
+        return [{
+            tx: tx,
+            signers: []
+        }];
+    }
+    serializeTx(tx: SolTx): Promise<string> {
+        return Promise.resolve(JSON.stringify({
+            tx: tx.tx.serialize().toString("hex"),
+            signers: tx.signers.map(e => Buffer.from(e.secretKey).toString("hex")),
+            lastValidBlockheight: tx.tx.lastValidBlockHeight
+        }));
+    }
+    deserializeTx(txData: string): Promise<SolTx> {
+        const jsonParsed: {
+            tx: string,
+            signers: string[],
+            lastValidBlockheight: number
+        } = JSON.parse(txData);
+
+        const transaction = Transaction.from(Buffer.from(jsonParsed.tx, "hex"));
+        transaction.lastValidBlockHeight = jsonParsed.lastValidBlockheight;
+
+        return Promise.resolve({
+            tx: transaction,
+            signers: jsonParsed.signers.map(e => Keypair.fromSecretKey(Buffer.from(e, "hex"))),
+        });
+    }
+    async getTxStatus(tx: string): Promise<"pending" | "success" | "not_found" | "reverted"> {
+        const parsedTx: SolTx = await this.deserializeTx(tx);
+        const txReceipt = await this.signer.connection.getTransaction(bs58.encode(parsedTx.tx.signature));
+        if(txReceipt==null) {
+            const currentBlockheight = await this.signer.connection.getBlockHeight("processed");
+            if(currentBlockheight>parsedTx.tx.lastValidBlockHeight) {
+                return "not_found";
+            } else {
+                return "pending";
+            }
+        }
+        if(txReceipt.meta.err) return "reverted";
+        return "success";
+    }
+    async getTxIdStatus(txId: string): Promise<"pending" | "success" | "not_found" | "reverted"> {
+        const txReceipt = await this.signer.connection.getTransaction(txId);
+        if(txReceipt==null) return "not_found";
+        if(txReceipt.meta.err) return "reverted";
+        return "success";
+
+    }
+    onBeforeTxReplace(callback: (oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>): void {
+    }
+    offBeforeTxReplace(callback: (oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>): boolean {
+        return true;
     }
 
 }
