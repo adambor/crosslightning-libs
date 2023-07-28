@@ -879,7 +879,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 const tx = signedTxs[i];
                 const unsignedTx = txs[i];
                 console.log("Send TX: ", tx);
-                await onBeforePublish(bs58.encode(tx.signature), await this.serializeTx({
+                if(onBeforePublish!=null) await onBeforePublish(bs58.encode(tx.signature), await this.serializeTx({
                     tx,
                     signers: unsignedTx.signers
                 }));
@@ -907,7 +907,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 const tx = signedTxs[i];
                 const unsignedTx = txs[i];
                 console.log("Send TX: ", tx);
-                await onBeforePublish(bs58.encode(tx.signature), await this.serializeTx({
+                if(onBeforePublish!=null) await onBeforePublish(bs58.encode(tx.signature), await this.serializeTx({
                     tx,
                     signers: unsignedTx.signers
                 }));
