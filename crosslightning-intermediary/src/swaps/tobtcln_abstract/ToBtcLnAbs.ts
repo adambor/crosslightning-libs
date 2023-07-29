@@ -42,6 +42,10 @@ export type ToBtcLnConfig = {
     allowShortExpiry: boolean
 };
 
+const SNOWFLAKE_LIST: Set<string> = new Set([
+    "038f8f113c580048d847d6949371726653e02b928196bad310e3eda39ff61723f6"
+]);
+
 /**
  * Swap handler handling to BTCLN swaps using submarine swaps
  */
@@ -545,8 +549,17 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             console.log("[To BTC-LN: REST.payInvoice] Probe for route: ", JSON.stringify(probeReq, null, 4));
             probeReq.lnd = this.LND;
 
+            let is_snowflake: boolean = false;
+            if(parsedRequest.routes!=null) {
+                for(let route of parsedRequest.routes) {
+                    if(SNOWFLAKE_LIST.has(route[0].public_key) || SNOWFLAKE_LIST.has(route[1].public_key)) {
+                        is_snowflake = true;
+                    }
+                }
+            }
+
             let obj;
-            try {
+            if(!is_snowflake) try {
                 obj = await lncli.probeForRoute(probeReq);
             } catch (e) {
                 console.error(e);
