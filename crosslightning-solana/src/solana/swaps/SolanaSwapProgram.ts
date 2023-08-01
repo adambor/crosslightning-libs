@@ -2,6 +2,7 @@ import {SolanaSwapData} from "./SolanaSwapData";
 import {AnchorProvider, BorshCoder, EventParser, Program} from "@coral-xyz/anchor";
 import * as BN from "bn.js";
 import {
+    ComputeBudgetInstruction, ComputeBudgetProgram,
     Ed25519Program,
     Keypair, ParsedAccountsModeBlockResponse,
     PublicKey,
@@ -1267,6 +1268,22 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         if(ataInitIx!=null) solanaTx.add(ataInitIx);
         solanaTx.add(claimIx);
 
+        if(this.signer.signer==null) {
+            //Add compute budget
+            solanaTx.add(ComputeBudgetProgram.setComputeUnitLimit({
+                units: 100000,
+            }));
+            solanaTx.add(ComputeBudgetProgram.setComputeUnitPrice({
+                microLamports: 8000
+            }));
+
+            if(Utils.getTxSize(solanaTx, this.signer.publicKey)>1232) {
+                //TX too large
+                solanaTx.instructions.pop();
+                solanaTx.instructions.pop();
+            }
+        }
+
         txs.push({
             tx: solanaTx,
             signers: []
@@ -1369,6 +1386,16 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         let result = await builder.instruction();
 
         tx.add(result);
+
+        if(this.signer.signer==null) {
+            //Add compute budget
+            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+                units: 100000,
+            }));
+            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+                microLamports: 8000
+            }));
+        }
 
         return [{
             tx,
