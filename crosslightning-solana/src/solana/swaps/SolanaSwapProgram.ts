@@ -1327,9 +1327,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const tx = new Transaction();
 
+        let ata: PublicKey = null;
+
         if(swapData.isPayIn()) {
 
-            const ata = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
+            ata = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
 
             const ataAccount = await SplToken.getAccount(this.signer.connection, ata).catch(e => console.error(e));
 
@@ -1391,7 +1393,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             if (swapData.token.equals(WSOL_ADDRESS)) {
                 //Move to normal SOL
                 tx.add(
-                    SplToken.createCloseAccountInstruction(swapData.claimerTokenAccount, this.signer.publicKey, this.signer.publicKey)
+                    SplToken.createCloseAccountInstruction(ata, this.signer.publicKey, this.signer.publicKey)
                 );
             }
         }
@@ -1430,9 +1432,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         let accounts: {[key: string]: PublicKey};
 
+        let ata: PublicKey = null;
+
         if(swapData.isPayIn()) {
 
-            const ata = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
+            ata = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
 
             const ataAccount = await SplToken.getAccount(this.signer.connection, ata).catch(e => console.error(e));
 
@@ -1494,7 +1498,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             if (swapData.token.equals(WSOL_ADDRESS)) {
                 //Move to normal SOL
                 tx.add(
-                    SplToken.createCloseAccountInstruction(swapData.claimerTokenAccount, this.signer.publicKey, this.signer.publicKey)
+                    SplToken.createCloseAccountInstruction(ata, this.signer.publicKey, this.signer.publicKey)
                 );
             }
         }
