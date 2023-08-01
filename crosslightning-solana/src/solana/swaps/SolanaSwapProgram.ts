@@ -1387,14 +1387,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         tx.add(result);
 
-        if(this.signer.signer==null) {
-            //Add compute budget
-            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                units: 100000,
-            }));
-            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports: 8000
-            }));
+        if(swapData.isPayIn()) {
+            if (swapData.token.equals(WSOL_ADDRESS)) {
+                //Move to normal SOL
+                tx.add(
+                    SplToken.createCloseAccountInstruction(swapData.claimerTokenAccount, this.signer.publicKey, this.signer.publicKey)
+                );
+            }
         }
 
         return [{
@@ -1490,6 +1489,25 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         let result = await builder.instruction();
 
         tx.add(result);
+
+        if(swapData.isPayIn()) {
+            if (swapData.token.equals(WSOL_ADDRESS)) {
+                //Move to normal SOL
+                tx.add(
+                    SplToken.createCloseAccountInstruction(swapData.claimerTokenAccount, this.signer.publicKey, this.signer.publicKey)
+                );
+            }
+        }
+
+        if(this.signer.signer==null) {
+            //Add compute budget
+            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+                units: 100000,
+            }));
+            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+                microLamports: 8000
+            }));
+        }
 
         return [{
             tx,
