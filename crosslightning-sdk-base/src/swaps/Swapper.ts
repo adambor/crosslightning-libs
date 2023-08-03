@@ -72,7 +72,9 @@ export class Swapper<
         chainEvents: E,
         swapDataConstructor: new (data: any) => T,
         options: SwapperOptions,
+        storagePrefix?: string
     ) {
+        storagePrefix = storagePrefix || "";
 
         options.bitcoinNetwork = options.bitcoinNetwork==null ? BitcoinNetwork.TESTNET : options.bitcoinNetwork;
 
@@ -98,10 +100,10 @@ export class Swapper<
             bitcoinNetwork: this.bitcoinNetwork
         });
 
-        this.tobtcln = new ToBTCLNWrapper<T>(options.storage?.toBtcLn || new LocalWrapperStorage("solSwaps-SoltoBTCLN"), clientSwapContract, chainEvents, swapDataConstructor);
-        this.tobtc = new ToBTCWrapper<T>(options.storage?.toBtc || new LocalWrapperStorage("solSwaps-SoltoBTC"), clientSwapContract, chainEvents, swapDataConstructor);
-        this.frombtcln = new FromBTCLNWrapper<T>(options.storage?.fromBtcLn || new LocalWrapperStorage("solSwaps-BTCLNtoSol"), clientSwapContract, chainEvents, swapDataConstructor);
-        this.frombtc = new FromBTCWrapper<T>(options.storage?.fromBtc || new LocalWrapperStorage("solSwaps-BTCtoSol"), clientSwapContract, chainEvents, swapDataConstructor, synchronizer);
+        this.tobtcln = new ToBTCLNWrapper<T>(options.storage?.toBtcLn || new LocalWrapperStorage(storagePrefix + "Swaps-ToBTCLN"), clientSwapContract, chainEvents, swapDataConstructor);
+        this.tobtc = new ToBTCWrapper<T>(options.storage?.toBtc || new LocalWrapperStorage(storagePrefix + "Swaps-ToBTC"), clientSwapContract, chainEvents, swapDataConstructor);
+        this.frombtcln = new FromBTCLNWrapper<T>(options.storage?.fromBtcLn || new LocalWrapperStorage(storagePrefix + "Swaps-FromBTCLN"), clientSwapContract, chainEvents, swapDataConstructor);
+        this.frombtc = new FromBTCWrapper<T>(options.storage?.fromBtc || new LocalWrapperStorage(storagePrefix + "Swaps-FromBTC"), clientSwapContract, chainEvents, swapDataConstructor, synchronizer);
 
         this.chainEvents = chainEvents;
         this.clientSwapContract = clientSwapContract;
