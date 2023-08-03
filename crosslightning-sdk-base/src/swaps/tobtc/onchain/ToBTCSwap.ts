@@ -1,10 +1,10 @@
-import {SoltoBTCWrapper} from "./SoltoBTCWrapper";
-import {ISolToBTCxSwap, SolToBTCxSwapState} from "../ISolToBTCxSwap";
+import {ToBTCWrapper} from "./ToBTCWrapper";
+import {IToBTCSwap, ToBTCSwapState} from "../IToBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
 
-export class SoltoBTCSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
+export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
 
     //State: PR_CREATED
     readonly address: string;
@@ -18,7 +18,7 @@ export class SoltoBTCSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
     txId: string;
 
     constructor(
-        wrapper: SoltoBTCWrapper<T>,
+        wrapper: ToBTCWrapper<T>,
         address: string,
         amount: BN,
         confirmationTarget: number,
@@ -33,10 +33,10 @@ export class SoltoBTCSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
         url: string,
         expiry: number
     );
-    constructor(wrapper: SoltoBTCWrapper<T>, obj: any);
+    constructor(wrapper: ToBTCWrapper<T>, obj: any);
 
     constructor(
-        wrapper: SoltoBTCWrapper<T>,
+        wrapper: ToBTCWrapper<T>,
         addressOrObject: string | any,
         amount?: BN,
         confirmationTarget?: number,
@@ -117,7 +117,7 @@ export class SoltoBTCSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
         if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
 
         if(!result.is_paid) {
-            this.state = SolToBTCxSwapState.REFUNDABLE;
+            this.state = ToBTCSwapState.REFUNDABLE;
 
             await this.save();
 
@@ -147,7 +147,7 @@ export class SoltoBTCSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
         return SwapType.TO_BTC;
     }
 
-    getState(): SolToBTCxSwapState {
+    getState(): ToBTCSwapState {
         return this.state;
     }
 

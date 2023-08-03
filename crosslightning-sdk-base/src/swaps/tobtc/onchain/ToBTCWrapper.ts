@@ -1,11 +1,11 @@
-import {SoltoBTCSwap} from "./SoltoBTCSwap";
-import {ISolToBTCxWrapper} from "../ISolToBTCxWrapper";
+import {ToBTCSwap} from "./ToBTCSwap";
+import {IToBTCWrapper} from "../IToBTCWrapper";
 import {IWrapperStorage} from "../../../storage/IWrapperStorage";
 import {ClientSwapContract} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {ChainEvents, SwapData, TokenAddress} from "crosslightning-base";
 
-export class SoltoBTCWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> {
+export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T> {
 
 
     /**
@@ -31,13 +31,13 @@ export class SoltoBTCWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> {
      * @param requiredBaseFee       Desired base fee reported by the swap intermediary
      * @param requiredFeePPM        Desired proportional fee report by the swap intermediary
      */
-    async create(address: string, amount: BN, confirmationTarget: number, confirmations: number, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<SoltoBTCSwap<T>> {
+    async create(address: string, amount: BN, confirmationTarget: number, confirmations: number, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<ToBTCSwap<T>> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
         const result = await this.contract.payOnchain(address, amount, confirmationTarget, confirmations, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
 
-        const swap = new SoltoBTCSwap(
+        const swap = new ToBTCSwap(
             this,
             address,
             amount,
@@ -74,13 +74,13 @@ export class SoltoBTCWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> {
      * @param requiredBaseFee       Desired base fee reported by the swap intermediary
      * @param requiredFeePPM        Desired proportional fee report by the swap intermediary
      */
-    async createExactIn(address: string, tokenAmount: BN, confirmationTarget: number, confirmations: number, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<SoltoBTCSwap<T>> {
+    async createExactIn(address: string, tokenAmount: BN, confirmationTarget: number, confirmations: number, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<ToBTCSwap<T>> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
         const result = await this.contract.payOnchainExactIn(address, tokenAmount, confirmationTarget, confirmations, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
 
-        const swap = new SoltoBTCSwap(
+        const swap = new ToBTCSwap(
             this,
             address,
             result.amount,
@@ -109,7 +109,7 @@ export class SoltoBTCWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> {
      * Checks if any swaps are already refundable
      */
     async init() {
-        return super.initWithConstructor(SoltoBTCSwap);
+        return super.initWithConstructor(ToBTCSwap);
     }
 
 }

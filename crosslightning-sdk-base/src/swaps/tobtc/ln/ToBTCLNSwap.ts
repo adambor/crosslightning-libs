@@ -1,12 +1,12 @@
 import * as bolt11 from "bolt11";
-import {SoltoBTCLNWrapper} from "./SoltoBTCLNWrapper";
-import {ISolToBTCxSwap} from "../ISolToBTCxSwap";
+import {ToBTCLNWrapper} from "./ToBTCLNWrapper";
+import {IToBTCSwap} from "../IToBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
 import {decipherAES, LNURLPaySuccessAction} from "js-lnurl/lib";
 
-export class SoltoBTCLNSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
+export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
 
     readonly confidence: number;
 
@@ -18,7 +18,7 @@ export class SoltoBTCLNSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
     readonly successAction: LNURLPaySuccessAction;
 
     constructor(
-        wrapper: SoltoBTCLNWrapper<T>,
+        wrapper: ToBTCLNWrapper<T>,
         pr: string,
         data: T,
         swapFee: BN,
@@ -33,10 +33,10 @@ export class SoltoBTCLNSwap<T extends SwapData> extends ISolToBTCxSwap<T> {
         lnurl?: string,
         successAction?: LNURLPaySuccessAction
     );
-    constructor(wrapper: SoltoBTCLNWrapper<T>, obj: any);
+    constructor(wrapper: ToBTCLNWrapper<T>, obj: any);
 
     constructor(
-        wrapper: SoltoBTCLNWrapper<T>,
+        wrapper: ToBTCLNWrapper<T>,
         prOrObject: string | any,
         data?: T,
         swapFee?: BN,

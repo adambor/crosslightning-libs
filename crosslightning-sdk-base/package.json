@@ -1,6 +1,6 @@
 {
   "name": "crosslightning-sdk-base",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "description": "CrossLightning SDK chain-agnostic base",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",
@@ -23,6 +23,7 @@
   "license": "ISC",
   "dependencies": {
     "bitcoinjs-lib": "^6.1.0",
+    "bn.js": "^5.2.1",
     "bolt11": "^1.4.0",
     "buffer": "^6.0.3",
     "cross-fetch": "^3.1.5",

@@ -1,5 +1,5 @@
 
-import {IBTCxtoSolWrapper} from "./IBTCxtoSolWrapper";
+import {IFromBTCWrapper} from "./IFromBTCWrapper";
 import {ISwap} from "../ISwap";
 import * as BN from "bn.js";
 import * as EventEmitter from "events";
@@ -7,7 +7,7 @@ import {SwapType} from "../SwapType";
 import {SwapData, TokenAddress} from "crosslightning-base";
 
 
-export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
+export abstract class IFromBTCSwap<T extends SwapData> implements ISwap {
 
     readonly url: string;
     expiry: number;
@@ -20,7 +20,7 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
     signature: string;
     nonce: number;
 
-    protected readonly wrapper: IBTCxtoSolWrapper<T>;
+    protected readonly wrapper: IFromBTCWrapper<T>;
 
     commitTxId: string;
     claimTxId: string;
@@ -28,13 +28,13 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
     /**
      * Swap's event emitter
      *
-     * @event IBTCxtoSolSwap<T>#swapState
-     * @type {IBTCxtoSolSwap<T>}
+     * @event IFromBTCSwap<T>#swapState
+     * @type {IFromBTCSwap<T>}
      */
     readonly events: EventEmitter;
 
     protected constructor(
-        wrapper: IBTCxtoSolWrapper<T>,
+        wrapper: IFromBTCWrapper<T>,
         urlOrObject?: string | any,
         data?: T,
         swapFee?: BN,
@@ -163,11 +163,6 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
     //  */
     // commitAndClaim(signer: AnchorProvider, abortSignal?: AbortSignal): Promise<TransactionSignature[]>;
 
-    // /**
-    //  * Returns current state of the swap
-    //  */
-    // getState(): BTCxtoSolSwapState;
-
     /**
      * @fires BTCtoSolWrapper#swapState
      * @fires BTCtoSolSwap#swapState
@@ -189,7 +184,7 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
      */
     abstract getAddress(): string;
 
-    getWrapper(): IBTCxtoSolWrapper<T> {
+    getWrapper(): IFromBTCWrapper<T> {
         return this.wrapper;
     }
 
@@ -242,12 +237,4 @@ export abstract class IBTCxtoSolSwap<T extends SwapData> implements ISwap {
         return this.expiry;
     }
 
-}
-
-export enum BTCxtoSolSwapState {
-    FAILED = -1,
-    PR_CREATED = 0,
-    PR_PAID = 1,
-    CLAIM_COMMITED = 2,
-    CLAIM_CLAIMED = 3
 }

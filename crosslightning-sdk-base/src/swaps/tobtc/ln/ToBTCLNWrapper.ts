@@ -1,13 +1,13 @@
 import * as bolt11 from "bolt11";
-import {SoltoBTCLNSwap} from "./SoltoBTCLNSwap";
-import {ISolToBTCxWrapper} from "../ISolToBTCxWrapper";
+import {ToBTCLNSwap} from "./ToBTCLNSwap";
+import {IToBTCWrapper} from "../IToBTCWrapper";
 import {IWrapperStorage} from "../../../storage/IWrapperStorage";
 import {ClientSwapContract} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {UserError} from "../../../errors/UserError";
 import {ChainEvents, SwapData, TokenAddress} from "crosslightning-base";
 
-export class SoltoBTCLNWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> {
+export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
 
     /**
      * @param storage           Storage interface for the current environment
@@ -24,7 +24,7 @@ export class SoltoBTCLNWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> 
     }
 
     init(): Promise<void> {
-        return super.initWithConstructor(SoltoBTCLNSwap);
+        return super.initWithConstructor(ToBTCLNSwap);
     }
 
     /**
@@ -50,7 +50,7 @@ export class SoltoBTCLNWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> 
         requiredKey?: string,
         requiredBaseFee?: BN,
         requiredFeePPM?: BN
-    ): Promise<SoltoBTCLNSwap<T>> {
+    ): Promise<ToBTCLNSwap<T>> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
@@ -66,7 +66,7 @@ export class SoltoBTCLNWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> 
 
         const result = await this.contract.payLightning(bolt11PayRequest, expirySeconds, fee, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
 
-        const swap = new SoltoBTCLNSwap(
+        const swap = new ToBTCLNSwap(
             this,
             bolt11PayRequest,
             result.data,
@@ -116,7 +116,7 @@ export class SoltoBTCLNWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> 
         requiredKey?: string,
         requiredBaseFee?: BN,
         requiredFeePPM?: BN
-    ): Promise<SoltoBTCLNSwap<T>> {
+    ): Promise<ToBTCLNSwap<T>> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
@@ -124,7 +124,7 @@ export class SoltoBTCLNWrapper<T extends SwapData> extends ISolToBTCxWrapper<T> 
 
         const result = await this.contract.payLightningLNURL(lnurlPay, amount, comment, expirySeconds, fee, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
 
-        const swap = new SoltoBTCLNSwap(
+        const swap = new ToBTCLNSwap(
             this,
             result.invoice,
             result.data,

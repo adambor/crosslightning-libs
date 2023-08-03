@@ -1,5 +1,5 @@
 
-import {ISolToBTCxWrapper} from "./ISolToBTCxWrapper";
+import {IToBTCWrapper} from "./IToBTCWrapper";
 import {ISwap} from "../ISwap";
 import * as BN from "bn.js";
 import * as EventEmitter from "events";
@@ -7,9 +7,9 @@ import {SwapType} from "../SwapType";
 import {SwapData} from "crosslightning-base";
 import {TokenAddress} from "crosslightning-base";
 
-export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
+export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
 
-    state: SolToBTCxSwapState;
+    state: ToBTCSwapState;
 
     readonly url: string;
 
@@ -24,7 +24,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
 
     secret: string;
 
-    readonly wrapper: ISolToBTCxWrapper<T>;
+    readonly wrapper: IToBTCWrapper<T>;
 
     commitTxId: string;
     refundTxId: string;
@@ -38,7 +38,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
     readonly events: EventEmitter;
 
     protected constructor(
-        wrapper: ISolToBTCxWrapper<T>,
+        wrapper: IToBTCWrapper<T>,
         prOrObject: T | any,
         swapFee?: BN,
         prefix?: string,
@@ -51,7 +51,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
         this.wrapper = wrapper;
         this.events = new EventEmitter();
         if(prefix!=null || timeout!=null || signature!=null || nonce!=null || url!=null) {
-            this.state = SolToBTCxSwapState.CREATED;
+            this.state = ToBTCSwapState.CREATED;
 
             this.url = url;
 
@@ -118,7 +118,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
      * Returns if the swap can be committed/started
      */
     canCommit(): boolean {
-        return this.state===SolToBTCxSwapState.CREATED;
+        return this.state===ToBTCSwapState.CREATED;
     }
 
     /**
@@ -128,7 +128,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
      * @param abortSignal               Abort signal
      */
     async commit(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        if(this.state!==SolToBTCxSwapState.CREATED) {
+        if(this.state!==ToBTCSwapState.CREATED) {
             throw new Error("Must be in CREATED state!");
         }
 
@@ -138,7 +138,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
             await this.wrapper.contract.swapContract.isValidClaimInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
         } catch (e) {
             console.error(e);
-            this.state = SolToBTCxSwapState.FAILED;
+            this.state = ToBTCSwapState.FAILED;
             await this.save();
             throw new Error("Expired, please retry");
         }
@@ -160,7 +160,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
      * Commits the swap on-chain, locking the tokens in an HTLC
      */
     async txsCommit(): Promise<any[]> {
-        if(this.state!==SolToBTCxSwapState.CREATED) {
+        if(this.state!==ToBTCSwapState.CREATED) {
             throw new Error("Must be in CREATED state!");
         }
 
@@ -187,13 +187,13 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
                 reject("Aborted");
                 return;
             }
-            if(this.state===SolToBTCxSwapState.COMMITED) {
+            if(this.state===ToBTCSwapState.COMMITED) {
                 resolve();
                 return;
             }
             let listener;
             listener = (swap) => {
-                if(swap.state===SolToBTCxSwapState.COMMITED) {
+                if(swap.state===ToBTCSwapState.COMMITED) {
                     this.events.removeListener("swapState", listener);
                     if(abortSignal!=null) abortSignal.onabort = null;
                     resolve();
@@ -222,7 +222,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
         if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
 
         if(!result.is_paid) {
-            this.state = SolToBTCxSwapState.REFUNDABLE;
+            this.state = ToBTCSwapState.REFUNDABLE;
 
             await this.save();
 
@@ -240,7 +240,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
      * Returns whether a swap can be already refunded
      */
     canRefund(): boolean {
-        return this.state===SolToBTCxSwapState.REFUNDABLE || this.wrapper.contract.swapContract.isExpired(this.data);
+        return this.state===ToBTCSwapState.REFUNDABLE || this.wrapper.contract.swapContract.isExpired(this.data);
     }
 
     /**
@@ -250,7 +250,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
      * @param abortSignal               Abort signal
      */
     async refund(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        if(this.state!==SolToBTCxSwapState.REFUNDABLE && !this.wrapper.contract.swapContract.isExpired(this.data)) {
+        if(this.state!==ToBTCSwapState.REFUNDABLE && !this.wrapper.contract.swapContract.isExpired(this.data)) {
             throw new Error("Must be in REFUNDABLE state!");
         }
 
@@ -280,7 +280,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
      * Attempts a refund of the swap back to the initiator
      */
     async txsRefund(): Promise<any[]> {
-        if(this.state!==SolToBTCxSwapState.REFUNDABLE && !this.wrapper.contract.swapContract.isExpired(this.data)) {
+        if(this.state!==ToBTCSwapState.REFUNDABLE && !this.wrapper.contract.swapContract.isExpired(this.data)) {
             throw new Error("Must be in REFUNDABLE state!");
         }
 
@@ -306,13 +306,13 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
                 reject("Aborted");
                 return;
             }
-            if(this.state===SolToBTCxSwapState.REFUNDED) {
+            if(this.state===ToBTCSwapState.REFUNDED) {
                 resolve();
                 return;
             }
             let listener;
             listener = (swap) => {
-                if(swap.state===SolToBTCxSwapState.REFUNDED) {
+                if(swap.state===ToBTCSwapState.REFUNDED) {
                     this.events.removeListener("swapState", listener);
                     if(abortSignal!=null) abortSignal.onabort = null;
                     resolve();
@@ -370,11 +370,11 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
     /**
      * Returns the current state of the swap
      */
-    getState(): SolToBTCxSwapState {
+    getState(): ToBTCSwapState {
         return this.state;
     }
 
-    getWrapper(): ISolToBTCxWrapper<T> {
+    getWrapper(): IToBTCWrapper<T> {
         return this.wrapper;
     }
 
@@ -400,7 +400,7 @@ export abstract class ISolToBTCxSwap<T extends SwapData> implements ISwap {
     }
 }
 
-export enum SolToBTCxSwapState {
+export enum ToBTCSwapState {
     REFUNDED = -2,
     FAILED = -1,
     CREATED = 0,

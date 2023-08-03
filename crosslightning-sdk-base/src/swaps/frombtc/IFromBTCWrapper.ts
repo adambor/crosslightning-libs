@@ -1,10 +1,10 @@
-import {IBTCxtoSolSwap} from "./IBTCxtoSolSwap";
+import {IFromBTCSwap} from "./IFromBTCSwap";
 import {IWrapperStorage} from "../../storage/IWrapperStorage";
 import {ClientSwapContract} from "../ClientSwapContract";
 import * as EventEmitter from "events";
 import {SwapData, ChainEvents} from "crosslightning-base";
 
-export abstract class IBTCxtoSolWrapper<T extends SwapData> {
+export abstract class IFromBTCWrapper<T extends SwapData> {
 
     readonly MAX_CONCURRENT_REQUESTS: number = 10;
 
@@ -21,7 +21,7 @@ export abstract class IBTCxtoSolWrapper<T extends SwapData> {
      */
     readonly events: EventEmitter;
 
-    swapData: {[paymentHash: string]: IBTCxtoSolSwap<T>};
+    swapData: {[paymentHash: string]: IFromBTCSwap<T>};
 
     isInitialized: boolean = false;
 
@@ -56,11 +56,11 @@ export abstract class IBTCxtoSolWrapper<T extends SwapData> {
     /**
      * Returns swaps that are claimable and that were initiated with the current provider's public key
      */
-    abstract getClaimableSwaps(): Promise<IBTCxtoSolSwap<T>[]>;
+    abstract getClaimableSwaps(): Promise<IFromBTCSwap<T>[]>;
 
     /**
      * Returns all swaps that were initiated with the current provider's public key
      */
-    abstract getAllSwaps(): Promise<IBTCxtoSolSwap<T>[]>;
+    abstract getAllSwaps(): Promise<IFromBTCSwap<T>[]>;
 
 }

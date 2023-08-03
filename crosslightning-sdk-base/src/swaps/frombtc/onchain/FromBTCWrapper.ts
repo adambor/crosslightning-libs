@@ -1,14 +1,14 @@
-import {IBTCxtoSolWrapper} from "../IBTCxtoSolWrapper";
+import {IFromBTCWrapper} from "../IFromBTCWrapper";
 import {IWrapperStorage} from "../../../storage/IWrapperStorage";
-import {BTCtoSolNewSwap, BTCtoSolNewSwapState} from "./BTCtoSolNewSwap";
+import {FromBTCSwap, FromBTCSwapState} from "./FromBTCSwap";
 import {ChainUtils} from "../../../btc/ChainUtils";
 import {ClientSwapContract} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {SignatureVerificationError, SwapCommitStatus, SwapData, TokenAddress, ClaimEvent, InitializeEvent,
     RefundEvent, SwapEvent, ChainEvents, RelaySynchronizer} from "crosslightning-base";
-import {BTCLNtoSolSwap} from "../../..";
+import {FromBTCLNSwap} from "../../..";
 
-export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T> {
+export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
     synchronizer: RelaySynchronizer<any,any,any>;
     listener: (events: SwapEvent<T>[]) => Promise<boolean>;
@@ -35,13 +35,13 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
      * @param requiredBaseFee   Desired base fee reported by the swap intermediary
      * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
      */
-    async create(amount: BN, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<BTCtoSolNewSwap<T>> {
+    async create(amount: BN, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<FromBTCSwap<T>> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
         const result = await this.contract.receiveOnchain(amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
 
-        const swap = new BTCtoSolNewSwap(this, result.address, amount, url, result.data, result.swapFee, result.prefix, result.timeout, result.signature, result.nonce, result.expiry);
+        const swap = new FromBTCSwap(this, result.address, amount, url, result.data, result.swapFee, result.prefix, result.timeout, result.signature, result.nonce, result.expiry);
 
         await swap.save();
         this.swapData[result.data.getHash()] = swap;
@@ -59,14 +59,14 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
         if(this.isInitialized) return;
 
         let eventQueue: SwapEvent<T>[] = [];
-        this.swapData = await this.storage.loadSwapData<BTCtoSolNewSwap<T>>(this, BTCtoSolNewSwap);
+        this.swapData = await this.storage.loadSwapData<FromBTCSwap<T>>(this, FromBTCSwap);
 
         const processEvent = async (events: SwapEvent<T>[]) => {
 
             for(let event of events) {
                 const paymentHash = event.paymentHash;
                 console.log("Event payment hash: ", paymentHash);
-                const swap: BTCtoSolNewSwap<T> = this.swapData[paymentHash] as BTCtoSolNewSwap<T>;
+                const swap: FromBTCSwap<T> = this.swapData[paymentHash] as FromBTCSwap<T>;
 
                 console.log("Swap found: ", swap);
                 if(swap==null) continue;
@@ -74,21 +74,21 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
                 let swapChanged = false;
 
                 if(event instanceof InitializeEvent) {
-                    if(swap.state===BTCtoSolNewSwapState.PR_CREATED) {
-                        swap.state = BTCtoSolNewSwapState.CLAIM_COMMITED;
+                    if(swap.state===FromBTCSwapState.PR_CREATED) {
+                        swap.state = FromBTCSwapState.CLAIM_COMMITED;
                         swap.data = event.swapData;
                         swapChanged = true;
                     }
                 }
                 if(event instanceof ClaimEvent) {
-                    if(swap.state===BTCtoSolNewSwapState.PR_CREATED || swap.state===BTCtoSolNewSwapState.CLAIM_COMMITED || swap.state===BTCtoSolNewSwapState.BTC_TX_CONFIRMED) {
-                        swap.state = BTCtoSolNewSwapState.CLAIM_CLAIMED;
+                    if(swap.state===FromBTCSwapState.PR_CREATED || swap.state===FromBTCSwapState.CLAIM_COMMITED || swap.state===FromBTCSwapState.BTC_TX_CONFIRMED) {
+                        swap.state = FromBTCSwapState.CLAIM_CLAIMED;
                         swapChanged = true;
                     }
                 }
                 if(event instanceof RefundEvent) {
-                    if(swap.state===BTCtoSolNewSwapState.PR_CREATED || swap.state===BTCtoSolNewSwapState.CLAIM_COMMITED || swap.state===BTCtoSolNewSwapState.BTC_TX_CONFIRMED) {
-                        swap.state = BTCtoSolNewSwapState.FAILED;
+                    if(swap.state===FromBTCSwapState.PR_CREATED || swap.state===FromBTCSwapState.CLAIM_COMMITED || swap.state===FromBTCSwapState.BTC_TX_CONFIRMED) {
+                        swap.state = FromBTCSwapState.FAILED;
                         swapChanged = true;
                     }
                 }
@@ -124,12 +124,12 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
         const changedSwaps = {};
 
 
-        const processSwap: (swap: BTCtoSolNewSwap<T>) => Promise<boolean> = async (swap: BTCtoSolNewSwap<T>) => {
-            if(swap.state===BTCtoSolNewSwapState.PR_CREATED) {
+        const processSwap: (swap: FromBTCSwap<T>) => Promise<boolean> = async (swap: FromBTCSwap<T>) => {
+            if(swap.state===FromBTCSwapState.PR_CREATED) {
                 const status = await this.contract.swapContract.getCommitStatus(swap.data);
 
                 if(status===SwapCommitStatus.COMMITED) {
-                    swap.state = BTCtoSolNewSwapState.CLAIM_COMMITED;
+                    swap.state = FromBTCSwapState.CLAIM_COMMITED;
                     //Check if payment already arrived
                     const tx = await ChainUtils.checkAddressTxos(swap.address, swap.getTxoHash());
                     if(tx!=null && tx.tx.status.confirmed) {
@@ -138,7 +138,7 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
                         if(confirmations>=swap.data.getConfirmations()) {
                             swap.txId = tx.tx.txid;
                             swap.vout = tx.vout;
-                            swap.state = BTCtoSolNewSwapState.BTC_TX_CONFIRMED;
+                            swap.state = FromBTCSwapState.BTC_TX_CONFIRMED;
                         }
                     }
                     return true;
@@ -150,7 +150,7 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
                         await this.contract.swapContract.isValidInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce);
                     } catch (e) {
                         if(e instanceof SignatureVerificationError) {
-                            swap.state = BTCtoSolNewSwapState.FAILED;
+                            swap.state = FromBTCSwapState.FAILED;
                             return true;
                         }
                     }
@@ -158,25 +158,25 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
                 }
 
                 if(status===SwapCommitStatus.EXPIRED) {
-                    swap.state = BTCtoSolNewSwapState.FAILED;
+                    swap.state = FromBTCSwapState.FAILED;
                     return true;
                 }
 
                 if(status===SwapCommitStatus.PAID) {
-                    swap.state = BTCtoSolNewSwapState.CLAIM_CLAIMED;
+                    swap.state = FromBTCSwapState.CLAIM_CLAIMED;
                     return true;
                 }
             }
 
-            if(swap.state===BTCtoSolNewSwapState.CLAIM_COMMITED || swap.state===BTCtoSolNewSwapState.BTC_TX_CONFIRMED) {
+            if(swap.state===FromBTCSwapState.CLAIM_COMMITED || swap.state===FromBTCSwapState.BTC_TX_CONFIRMED) {
                 //Check if it's already successfully paid
                 const commitStatus = await this.contract.swapContract.getCommitStatus(swap.data);
                 if(commitStatus===SwapCommitStatus.PAID) {
-                    swap.state = BTCtoSolNewSwapState.CLAIM_CLAIMED;
+                    swap.state = FromBTCSwapState.CLAIM_CLAIMED;
                     return true;
                 }
                 if(commitStatus===SwapCommitStatus.NOT_COMMITED || commitStatus===SwapCommitStatus.EXPIRED) {
-                    swap.state = BTCtoSolNewSwapState.FAILED;
+                    swap.state = FromBTCSwapState.FAILED;
                     return true;
                 }
                 if(commitStatus===SwapCommitStatus.COMMITED) {
@@ -188,7 +188,7 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
                         if(confirmations>=swap.data.getConfirmations()) {
                             swap.txId = tx.tx.txid;
                             swap.vout = tx.vout;
-                            swap.state = BTCtoSolNewSwapState.BTC_TX_CONFIRMED;
+                            swap.state = FromBTCSwapState.BTC_TX_CONFIRMED;
                             return true;
                         }
                     }
@@ -198,7 +198,7 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
 
         let promises = [];
         for(let paymentHash in this.swapData) {
-            const swap = this.swapData[paymentHash] as BTCtoSolNewSwap<T>;
+            const swap = this.swapData[paymentHash] as FromBTCSwap<T>;
 
             promises.push(processSwap(swap).then(changed => {
                 if(changed) changedSwaps[paymentHash] = true;
@@ -227,14 +227,14 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
     /**
      * Returns swaps that are in-progress and are claimable that were initiated with the current provider's public key
      */
-    async getClaimableSwaps(): Promise<BTCtoSolNewSwap<T>[]> {
+    async getClaimableSwaps(): Promise<FromBTCSwap<T>[]> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
         const returnArr = [];
 
         for(let paymentHash in this.swapData) {
-            const swap: BTCtoSolNewSwap<T> = this.swapData[paymentHash] as BTCtoSolNewSwap<T>;
+            const swap: FromBTCSwap<T> = this.swapData[paymentHash] as FromBTCSwap<T>;
 
             console.log(swap);
 
@@ -242,11 +242,11 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
                 continue;
             }
 
-            if(swap.state===BTCtoSolNewSwapState.PR_CREATED && swap.txId==null) {
+            if(swap.state===FromBTCSwapState.PR_CREATED && swap.txId==null) {
                 continue;
             }
 
-            if(swap.state===BTCtoSolNewSwapState.CLAIM_CLAIMED || swap.state===BTCtoSolNewSwapState.FAILED) {
+            if(swap.state===FromBTCSwapState.CLAIM_CLAIMED || swap.state===FromBTCSwapState.FAILED) {
                 continue;
             }
 
@@ -260,14 +260,14 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
     /**
      * Returns swaps that are in-progress and are claimable that were initiated with the current provider's public key
      */
-    getClaimableSwapsSync(): BTCtoSolNewSwap<T>[] {
+    getClaimableSwapsSync(): FromBTCSwap<T>[] {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
         const returnArr = [];
 
         for(let paymentHash in this.swapData) {
-            const swap: BTCtoSolNewSwap<T> = this.swapData[paymentHash] as BTCtoSolNewSwap<T>;
+            const swap: FromBTCSwap<T> = this.swapData[paymentHash] as FromBTCSwap<T>;
 
             console.log(swap);
 
@@ -275,11 +275,11 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
                 continue;
             }
 
-            if(swap.state===BTCtoSolNewSwapState.PR_CREATED && swap.txId==null) {
+            if(swap.state===FromBTCSwapState.PR_CREATED && swap.txId==null) {
                 continue;
             }
 
-            if(swap.state===BTCtoSolNewSwapState.CLAIM_CLAIMED || swap.state===BTCtoSolNewSwapState.FAILED) {
+            if(swap.state===FromBTCSwapState.CLAIM_CLAIMED || swap.state===FromBTCSwapState.FAILED) {
                 continue;
             }
 
@@ -293,7 +293,7 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
     /**
      * Returns all swaps that were initiated with the current provider's public key
      */
-    async getAllSwaps(): Promise<BTCtoSolNewSwap<T>[]> {
+    async getAllSwaps(): Promise<FromBTCSwap<T>[]> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
@@ -318,7 +318,7 @@ export class BTCtoSolNewWrapper<T extends SwapData> extends IBTCxtoSolWrapper<T>
     /**
      * Returns all swaps that were initiated with the current provider's public key
      */
-    getAllSwapsSync(): BTCtoSolNewSwap<T>[] {
+    getAllSwapsSync(): FromBTCSwap<T>[] {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 

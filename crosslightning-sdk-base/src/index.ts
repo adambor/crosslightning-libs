@@ -20,18 +20,20 @@ export * from "./swaps/ISwapPrice";
 export * from "./swaps/ISwap";
 export * from "./swaps/SwapType";
 
-export * from "./swaps/tobtc/ISolToBTCxWrapper";
-export * from "./swaps/tobtc/ISolToBTCxSwap";
+export * from "./swaps/tobtc/IToBTCWrapper";
+export * from "./swaps/tobtc/IToBTCSwap";
 
-export * from "./swaps/tobtc/soltobtc/SoltoBTCSwap";
-export * from "./swaps/tobtc/soltobtc/SoltoBTCWrapper";
-export * from "./swaps/tobtc/soltobtcln/SoltoBTCLNSwap";
-export * from "./swaps/tobtc/soltobtcln/SoltoBTCLNWrapper";
+export * from "./swaps/tobtc/onchain/ToBTCSwap";
+export * from "./swaps/tobtc/onchain/ToBTCWrapper";
+export * from "./swaps/tobtc/ln/ToBTCLNSwap";
+export * from "./swaps/tobtc/ln/ToBTCLNWrapper";
 
-export * from "./swaps/frombtc/IBTCxtoSolWrapper";
-export * from "./swaps/frombtc/IBTCxtoSolSwap";
+export * from "./swaps/frombtc/IFromBTCWrapper";
+export * from "./swaps/frombtc/IFromBTCSwap";
 
-export * from "./swaps/frombtc/btclntosol/BTCLNtoSolSwap";
-export * from "./swaps/frombtc/btclntosol/BTCLNtoSolWrapper";
-export * from "./swaps/frombtc/btctosolNew/BTCtoSolNewSwap";
-export * from "./swaps/frombtc/btctosolNew/BTCtoSolNewWrapper";
+export * from "./swaps/frombtc/ln/FromBTCLNSwap";
+export * from "./swaps/frombtc/ln/FromBTCLNWrapper";
+export * from "./swaps/frombtc/onchain/FromBTCSwap";
+export * from "./swaps/frombtc/onchain/FromBTCWrapper";
+
+export * from "./swaps/Swapper";

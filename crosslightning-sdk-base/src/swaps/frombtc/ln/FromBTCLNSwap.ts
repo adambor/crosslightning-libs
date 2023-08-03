@@ -1,13 +1,22 @@
 import * as bolt11 from "bolt11";
-import {BTCLNtoSolWrapper} from "./BTCLNtoSolWrapper";
-import {IBTCxtoSolSwap, BTCxtoSolSwapState} from "../IBTCxtoSolSwap";
+import {FromBTCLNWrapper} from "./FromBTCLNWrapper";
+import {IFromBTCSwap} from "../IFromBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
 
-export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
 
-    state: BTCxtoSolSwapState;
+export enum FromBTCLNSwapState {
+    FAILED = -1,
+    PR_CREATED = 0,
+    PR_PAID = 1,
+    CLAIM_COMMITED = 2,
+    CLAIM_CLAIMED = 3
+}
+
+export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
+
+    state: FromBTCLNSwapState;
 
     //State: PR_CREATED
     readonly pr: string;
@@ -18,13 +27,13 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
     readonly lnurl: string;
     readonly callbackPromise: Promise<void>;
 
-    constructor(wrapper: BTCLNtoSolWrapper<T>, pr: string, secret: Buffer, url: string, data: T, swapFee: BN, requiredBaseFee: BN, requiredFeePPM: BN, expectedOut: BN, lnurl: string, callbackPromise: Promise<void>);
-    constructor(wrapper: BTCLNtoSolWrapper<T>, obj: any);
+    constructor(wrapper: FromBTCLNWrapper<T>, pr: string, secret: Buffer, url: string, data: T, swapFee: BN, requiredBaseFee: BN, requiredFeePPM: BN, expectedOut: BN, lnurl: string, callbackPromise: Promise<void>);
+    constructor(wrapper: FromBTCLNWrapper<T>, obj: any);
 
-    constructor(wrapper: BTCLNtoSolWrapper<T>, prOrObject: string | any, secret?: Buffer, url?: string, data?: T, swapFee?: BN, requiredBaseFee?: BN, requiredFeePPM?: BN, expectedOut?: BN, lnurl?: string, callbackPromise?: Promise<void>) {
+    constructor(wrapper: FromBTCLNWrapper<T>, prOrObject: string | any, secret?: Buffer, url?: string, data?: T, swapFee?: BN, requiredBaseFee?: BN, requiredFeePPM?: BN, expectedOut?: BN, lnurl?: string, callbackPromise?: Promise<void>) {
         if(typeof(prOrObject)==="string") {
             super(wrapper, url, data, swapFee, null, null, null, null, null);
-            this.state = BTCxtoSolSwapState.PR_CREATED;
+            this.state = FromBTCLNSwapState.PR_CREATED;
 
             this.pr = prOrObject;
             this.secret = secret;
@@ -84,7 +93,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
      * @param checkIntervalSeconds  How often to poll the intermediary for answer
      */
     async waitForPayment(abortSignal?: AbortSignal, checkIntervalSeconds?: number): Promise<void> {
-        if(this.state!==BTCxtoSolSwapState.PR_CREATED) {
+        if(this.state!==FromBTCLNSwapState.PR_CREATED) {
             throw new Error("Must be in PR_CREATED state!");
         }
 
@@ -114,7 +123,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
             throw new Error("Aborted");
         }
 
-        this.state = BTCxtoSolSwapState.PR_PAID;
+        this.state = FromBTCLNSwapState.PR_PAID;
 
         this.data = result.data;
         this.prefix = result.prefix;
@@ -132,7 +141,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
      * Returns if the swap can be committed
      */
     canCommit(): boolean {
-        return this.state===BTCxtoSolSwapState.PR_PAID;
+        return this.state===FromBTCLNSwapState.PR_PAID;
     }
 
     /**
@@ -143,7 +152,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
      * @param abortSignal               Abort signal
      */
     async commit(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        if(this.state!==BTCxtoSolSwapState.PR_PAID) {
+        if(this.state!==FromBTCLNSwapState.PR_PAID) {
             throw new Error("Must be in PR_PAID state!");
         }
 
@@ -173,7 +182,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
             return receipt;
         }*/
 
-        // this.state = BTCxtoSolSwapState.CLAIM_COMMITED;
+        // this.state = FromBTCLNSwapState.CLAIM_COMMITED;
         //
         // await this.save();
         //
@@ -187,7 +196,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
      * Important: Make sure this transaction is confirmed and only after it is call claim()
      */
     async txsCommit(): Promise<any[]> {
-        if(this.state!==BTCxtoSolSwapState.PR_PAID) {
+        if(this.state!==FromBTCLNSwapState.PR_PAID) {
             throw new Error("Must be in PR_PAID state!");
         }
 
@@ -211,13 +220,13 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
                 reject("Aborted");
                 return;
             }
-            if(this.state===BTCxtoSolSwapState.CLAIM_COMMITED) {
+            if(this.state===FromBTCLNSwapState.CLAIM_COMMITED) {
                 resolve();
                 return;
             }
             let listener;
             listener = (swap) => {
-                if(swap.state===BTCxtoSolSwapState.CLAIM_COMMITED) {
+                if(swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
                     this.events.removeListener("swapState", listener);
                     if(abortSignal!=null) abortSignal.onabort = null;
                     resolve();
@@ -235,7 +244,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
      * Returns if the swap can be claimed
      */
     canClaim(): boolean {
-        return this.state===BTCxtoSolSwapState.CLAIM_COMMITED;
+        return this.state===FromBTCLNSwapState.CLAIM_COMMITED;
     }
 
     /**
@@ -245,7 +254,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
      * @param abortSignal               Abort signal
      */
     async claim(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        if(this.state!==BTCxtoSolSwapState.CLAIM_COMMITED) {
+        if(this.state!==FromBTCLNSwapState.CLAIM_COMMITED) {
             throw new Error("Must be in CLAIM_COMMITED state!");
         }
 
@@ -267,7 +276,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
             return receipt;
         }*/
 
-        // this.state = BTCxtoSolSwapState.CLAIM_CLAIMED;
+        // this.state = FromBTCLNSwapState.CLAIM_CLAIMED;
         //
         // await this.save();
         //
@@ -280,7 +289,7 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
      * Claims and finishes the swap once it was successfully committed on-chain with commit()
      */
     async txsClaim(): Promise<any[]> {
-        if(this.state!==BTCxtoSolSwapState.CLAIM_COMMITED) {
+        if(this.state!==FromBTCLNSwapState.CLAIM_COMMITED) {
             throw new Error("Must be in CLAIM_COMMITED state!");
         }
 
@@ -298,13 +307,13 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
                 reject("Aborted");
                 return;
             }
-            if(this.state===BTCxtoSolSwapState.CLAIM_CLAIMED) {
+            if(this.state===FromBTCLNSwapState.CLAIM_CLAIMED) {
                 resolve();
                 return;
             }
             let listener;
             listener = (swap) => {
-                if(swap.state===BTCxtoSolSwapState.CLAIM_CLAIMED) {
+                if(swap.state===FromBTCLNSwapState.CLAIM_CLAIMED) {
                     this.events.removeListener("swapState", listener);
                     if(abortSignal!=null) abortSignal.onabort = null;
                     resolve();
@@ -326,14 +335,14 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
      */
     async commitAndClaim(abortSignal?: AbortSignal): Promise<string[]> {
 
-        if(this.state===BTCxtoSolSwapState.CLAIM_COMMITED) {
+        if(this.state===FromBTCLNSwapState.CLAIM_COMMITED) {
             return [
                 null,
                 await this.claim(false, abortSignal)
             ];
         }
 
-        if(this.state!==BTCxtoSolSwapState.PR_PAID) {
+        if(this.state!==FromBTCLNSwapState.PR_PAID) {
             throw new Error("Must be in PR_PAID state!");
         }
 
@@ -377,11 +386,11 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
      */
     async txsCommitAndClaim(): Promise<any[]> {
 
-        if(this.state===BTCxtoSolSwapState.CLAIM_COMMITED) {
+        if(this.state===FromBTCLNSwapState.CLAIM_COMMITED) {
             return await this.txsClaim();
         }
 
-        if(this.state!==BTCxtoSolSwapState.PR_PAID) {
+        if(this.state!==FromBTCLNSwapState.PR_PAID) {
             throw new Error("Must be in PR_PAID state!");
         }
 
@@ -411,8 +420,8 @@ export class BTCLNtoSolSwap<T extends SwapData> extends IBTCxtoSolSwap<T> {
     }
 
     /**
-     * @fires BTCLNtoSolWrapper#swapState
-     * @fires BTCLNtoSolSwap#swapState
+     * @fires FromBTCLNWrapper#swapState
+     * @fires FromBTCLNSwap#swapState
      */
     emitEvent() {
         this.wrapper.events.emit("swapState", this);

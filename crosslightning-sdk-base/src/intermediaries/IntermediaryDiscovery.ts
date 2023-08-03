@@ -75,12 +75,19 @@ export class IntermediaryDiscovery<T extends SwapData> {
     swapContract: SwapContract<T, any>;
     registryUrl: string;
 
-    constructor(swapContract: SwapContract<T, any>, registryUrl?: string) {
+    private overrideNodeUrls?: string[];
+
+    constructor(swapContract: SwapContract<T, any>, registryUrl?: string, nodeUrls?: string[]) {
         this.swapContract = swapContract;
         this.registryUrl = registryUrl || REGISTRY_URL;
+        this.overrideNodeUrls = nodeUrls;
     }
 
     async getIntermediaryUrls(abortSignal?: AbortSignal): Promise<string[]> {
+
+        if(this.overrideNodeUrls!=null && this.overrideNodeUrls.length>0) {
+            return this.overrideNodeUrls;
+        }
 
         const response: Response = await fetch(this.registryUrl, {
             method: "GET",
