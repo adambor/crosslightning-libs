@@ -1,4 +1,4 @@
-import { BitcoinNetwork } from "../btc/BitcoinNetwork";
+import {BitcoinNetwork} from "../btc/BitcoinNetwork";
 import {ISwapPrice} from "./ISwapPrice";
 import {IWrapperStorage} from "../storage/IWrapperStorage";
 import {ChainEvents, SwapContract, SwapData} from "crosslightning-base";
@@ -11,15 +11,20 @@ import {IntermediaryDiscovery} from "../intermediaries/IntermediaryDiscovery";
 import * as bitcoin from "bitcoinjs-lib";
 import * as bolt11 from "bolt11";
 import BN from "bn.js";
-import { IFromBTCSwap } from "./frombtc/IFromBTCSwap";
+import {IFromBTCSwap} from "./frombtc/IFromBTCSwap";
 import {IToBTCSwap} from "./tobtc/IToBTCSwap";
-import { ISwap } from "./ISwap";
-import { IntermediaryError } from "../errors/IntermediaryError";
+import {ISwap} from "./ISwap";
+import {IntermediaryError} from "../errors/IntermediaryError";
 import {SwapType} from "./SwapType";
-import { FromBTCLNSwap } from "./frombtc/ln/FromBTCLNSwap";
-import { FromBTCSwap } from "./frombtc/onchain/FromBTCSwap";
-import { ToBTCLNSwap } from "./tobtc/ln/ToBTCLNSwap";
-import { ToBTCSwap } from "./tobtc/onchain/ToBTCSwap";
+import {FromBTCLNSwap} from "./frombtc/ln/FromBTCLNSwap";
+import {FromBTCSwap} from "./frombtc/onchain/FromBTCSwap";
+import {ToBTCLNSwap} from "./tobtc/ln/ToBTCLNSwap";
+import {ToBTCSwap} from "./tobtc/onchain/ToBTCSwap";
+import {ChainUtils} from "../btc/ChainUtils";
+import {MempoolBitcoinRpc} from "../btc/MempoolBitcoinRpc";
+import {BtcRelay} from "crosslightning-base/dist";
+import { MempoolBtcRelaySynchronizer } from "../btc/synchronizer/MempoolBtcRelaySynchronizer";
+import { LocalWrapperStorage } from "../storage/LocalWrapperStorage";
 
 export type SwapperOptions = {
     intermediaryUrl?: string,
@@ -52,13 +57,61 @@ export class Swapper<
     frombtcln: FromBTCLNWrapper<T>;
     frombtc: FromBTCWrapper<T>;
 
-    private readonly intermediaryDiscovery: IntermediaryDiscovery<T>;
-    private readonly clientSwapContract: ClientSwapContract<T>;
-    private readonly chainEvents: E;
+    readonly intermediaryDiscovery: IntermediaryDiscovery<T>;
+    readonly clientSwapContract: ClientSwapContract<T>;
+    readonly chainEvents: E;
 
-    private readonly swapContract: P;
+    readonly swapContract: P;
 
-    private readonly bitcoinNetwork: bitcoin.Network;
+    readonly bitcoinNetwork: bitcoin.Network;
+
+    constructor(
+        btcRelay: BtcRelay<any, any, any>,
+        bitcoinRpc: MempoolBitcoinRpc,
+        swapContract: P,
+        chainEvents: E,
+        swapDataConstructor: new (data: any) => T,
+        options: SwapperOptions,
+    ) {
+
+        options.bitcoinNetwork = options.bitcoinNetwork==null ? BitcoinNetwork.TESTNET : options.bitcoinNetwork;
+
+        if(options.bitcoinNetwork!=null) switch (options.bitcoinNetwork) {
+            case BitcoinNetwork.MAINNET:
+                this.bitcoinNetwork = bitcoin.networks.bitcoin;
+                ChainUtils.setMempoolUrl("https://mempool.space/api/");
+                break;
+            case BitcoinNetwork.TESTNET:
+                this.bitcoinNetwork = bitcoin.networks.testnet;
+                ChainUtils.setMempoolUrl("https://mempool.space/testnet/api/");
+                break;
+            case BitcoinNetwork.REGTEST:
+                this.bitcoinNetwork = bitcoin.networks.regtest;
+                break;
+        }
+
+        this.swapContract = swapContract;
+
+        const synchronizer = new MempoolBtcRelaySynchronizer(btcRelay, bitcoinRpc);
+
+        const clientSwapContract = new ClientSwapContract<T>(swapContract, swapDataConstructor, btcRelay, bitcoinRpc, null, options.pricing, {
+            bitcoinNetwork: this.bitcoinNetwork
+        });
+
+        this.tobtcln = new ToBTCLNWrapper<T>(options.storage?.toBtcLn || new LocalWrapperStorage("solSwaps-SoltoBTCLN"), clientSwapContract, chainEvents, swapDataConstructor);
+        this.tobtc = new ToBTCWrapper<T>(options.storage?.toBtc || new LocalWrapperStorage("solSwaps-SoltoBTC"), clientSwapContract, chainEvents, swapDataConstructor);
+        this.frombtcln = new FromBTCLNWrapper<T>(options.storage?.fromBtcLn || new LocalWrapperStorage("solSwaps-BTCLNtoSol"), clientSwapContract, chainEvents, swapDataConstructor);
+        this.frombtc = new FromBTCWrapper<T>(options.storage?.fromBtc || new LocalWrapperStorage("solSwaps-BTCtoSol"), clientSwapContract, chainEvents, swapDataConstructor, synchronizer);
+
+        this.chainEvents = chainEvents;
+        this.clientSwapContract = clientSwapContract;
+
+        if(options.intermediaryUrl!=null) {
+            this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl, [options.intermediaryUrl]);
+        } else {
+            this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl);
+        }
+    }
 
 
     /**
