@@ -37,3 +37,4 @@ export * from "./swaps/frombtc/onchain/FromBTCSwap";
 export * from "./swaps/frombtc/onchain/FromBTCWrapper";
 
 export * from "./swaps/Swapper";
+export * from "./btc/BitcoinNetwork";
