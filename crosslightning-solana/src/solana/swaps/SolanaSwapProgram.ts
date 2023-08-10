@@ -966,12 +966,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             if(account==null) {
                 if(!initAta) throw new SwapDataVerificationError("ATA not initialized");
 
-                const generatedAtaAddress = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.claimerBounty);
+                const generatedAtaAddress = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
                 if(!generatedAtaAddress.equals(swapData.claimerTokenAccount)) {
                     throw new SwapDataVerificationError("Invalid claimer token account address");
                 }
                 tx.add(
-                    SplToken.createAssociatedTokenAccountInstruction(this.signer.publicKey, generatedAtaAddress, swapData.claimerBounty, swapData.token)
+                    SplToken.createAssociatedTokenAccountInstruction(this.signer.publicKey, generatedAtaAddress, swapData.claimer, swapData.token)
                 );
             }
         }
