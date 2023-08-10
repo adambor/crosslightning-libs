@@ -10,7 +10,7 @@ import {ClientSwapContract, LNURLPay, LNURLWithdraw} from "./ClientSwapContract"
 import {IntermediaryDiscovery} from "../intermediaries/IntermediaryDiscovery";
 import * as bitcoin from "bitcoinjs-lib";
 import * as bolt11 from "bolt11";
-import BN from "bn.js";
+import * as BN from "bn.js";
 import {IFromBTCSwap} from "./frombtc/IFromBTCSwap";
 import {IToBTCSwap} from "./tobtc/IToBTCSwap";
 import {ISwap} from "./ISwap";
