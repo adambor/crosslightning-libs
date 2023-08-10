@@ -1308,7 +1308,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     }
 
     async refund(swapData: SolanaSwapData, check?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        let result = await this.txsRefund(swapData);
+        let result = await this.txsRefund(swapData, check, initAta);
 
         const [signature] = await this.sendAndConfirm(result, waitForConfirmation, abortSignal);
 
