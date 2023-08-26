@@ -17,6 +17,7 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
     data: T;
 
     swapFee: BN;
+    readonly networkFee: BN;
     prefix: string;
     timeout: string;
     signature: string;
@@ -40,6 +41,7 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
     protected constructor(
         wrapper: IToBTCWrapper<T>,
         prOrObject: T | any,
+        networkFee?: BN,
         swapFee?: BN,
         prefix?: string,
         timeout?: string,
@@ -57,6 +59,7 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
 
             this.data = prOrObject;
 
+            this.networkFee = networkFee;
             this.swapFee = swapFee;
             this.prefix = prefix;
             this.timeout = timeout;
@@ -72,6 +75,7 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
 
             this.data = prOrObject.data!=null ? new wrapper.swapDataDeserializer(prOrObject.data) : null;
 
+            this.networkFee = prOrObject.networkFee==null ? null : new BN(prOrObject.networkFee);
             this.swapFee = prOrObject.swapFee==null ? null : new BN(prOrObject.swapFee);
             this.prefix = prOrObject.prefix;
             this.timeout = prOrObject.timeout;
@@ -108,11 +112,17 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
     /**
      * Returns calculated fee for the swap
      */
-    abstract getFee(): BN;
+    getFee(): BN {
+        return this.networkFee.add(this.swapFee);
+    }
 
-    abstract getNetworkFee(): BN;
+    getNetworkFee(): BN {
+        return this.networkFee;
+    }
 
-    abstract getSwapFee(): BN;
+    getSwapFee(): BN {
+        return this.swapFee;
+    }
 
     getInAmountWithoutFee(): BN {
         return this.getInAmount().sub(this.getFee());
@@ -345,6 +355,7 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
             url: this.url,
             secret: this.secret,
             data: this.data!=null ? this.data.serialize() : null,
+            networkFee: this.networkFee==null ? null : this.networkFee.toString(10),
             swapFee: this.swapFee==null ? null : this.swapFee.toString(10),
             prefix: this.prefix,
             timeout: this.timeout,

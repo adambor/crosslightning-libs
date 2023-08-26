@@ -11,9 +11,7 @@ export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
     readonly amount: BN;
     readonly confirmationTarget: number;
 
-    readonly networkFee: BN;
     readonly swapFee: BN;
-    readonly totalFee: BN;
 
     txId: string;
 
@@ -52,21 +50,17 @@ export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
         expiry?: number
     ) {
         if(typeof(addressOrObject)==="string") {
-            super(wrapper, data, swapFee, prefix, timeout, signature, nonce, url, expiry);
+            super(wrapper, data, networkFee, swapFee, prefix, timeout, signature, nonce, url, expiry);
 
             this.address = addressOrObject;
             this.amount = amount;
             this.confirmationTarget = confirmationTarget;
-            this.networkFee = networkFee;
-            this.totalFee = totalFee;
         } else {
             super(wrapper, addressOrObject);
 
             this.address = addressOrObject.address;
             this.amount = new BN(addressOrObject.amount);
             this.confirmationTarget = addressOrObject.confirmationTarget;
-            this.networkFee = new BN(addressOrObject.networkFee);
-            this.totalFee = new BN(addressOrObject.totalFee);
             this.txId = addressOrObject.txId;
         }
     }
@@ -76,18 +70,6 @@ export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
      */
     getInAmount(): BN {
         return this.data.getAmount();
-    }
-
-    getFee(): BN {
-        return this.totalFee;
-    }
-
-    getNetworkFee(): BN {
-        return this.networkFee;
-    }
-
-    getSwapFee(): BN {
-        return this.swapFee;
     }
 
     /**
@@ -103,8 +85,6 @@ export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
         partialySerialized.address = this.address;
         partialySerialized.amount = this.amount.toString(10);
         partialySerialized.confirmationTarget = this.confirmationTarget;
-        partialySerialized.networkFee = this.networkFee.toString(10);
-        partialySerialized.totalFee = this.totalFee.toString(10);
         partialySerialized.txId = this.txId;
 
         return partialySerialized;
