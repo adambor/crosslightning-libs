@@ -110,6 +110,10 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
      */
     abstract getFee(): BN;
 
+    abstract getNetworkFee(): BN;
+
+    abstract getSwapFee(): BN;
+
     getInAmountWithoutFee(): BN {
         return this.getInAmount().sub(this.getFee());
     }

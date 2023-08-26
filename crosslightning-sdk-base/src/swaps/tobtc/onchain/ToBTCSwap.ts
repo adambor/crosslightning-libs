@@ -82,6 +82,14 @@ export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
         return this.totalFee;
     }
 
+    getNetworkFee(): BN {
+        return this.networkFee;
+    }
+
+    getSwapFee(): BN {
+        return this.swapFee;
+    }
+
     /**
      * Returns amount that will be sent to recipient on Bitcoin LN
      */
