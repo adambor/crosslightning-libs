@@ -477,8 +477,9 @@ export class Swapper<
      * @param lnurl             LNURL-withdraw to pull the funds from
      * @param amount            Amount to receive, in satoshis (bitcoin's smallest denomination)
      * @param invoiceExpiry     Lightning invoice expiry time (in seconds)
+     * @param noInstantReceive  Flag to disable instantly posting the lightning PR to LN service for withdrawal, when set the lightning PR is sent to LN service when waitForPayment is called
      */
-    async createFromBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurl: string, amount: BN, invoiceExpiry?: number): Promise<FromBTCLNSwap<T>> {
+    async createFromBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurl: string, amount: BN, invoiceExpiry?: number, noInstantReceive?: boolean): Promise<FromBTCLNSwap<T>> {
         const candidates = this.intermediaryDiscovery.getSwapCandidates(SwapType.FROM_BTCLN, amount, tokenAddress);
         if(candidates.length===0) throw new Error("No intermediary found!");
 
@@ -488,7 +489,8 @@ export class Swapper<
             try {
                 swap = await this.frombtcln.createViaLNURL(lnurl, amount, invoiceExpiry || (1*24*3600), candidate.url+"/frombtcln", tokenAddress, candidate.address,
                     new BN(candidate.services[SwapType.FROM_BTCLN].swapBaseFee),
-                    new BN(candidate.services[SwapType.FROM_BTCLN].swapFeePPM));
+                    new BN(candidate.services[SwapType.FROM_BTCLN].swapFeePPM),
+                    noInstantReceive);
                 break;
             } catch (e) {
                 if(e instanceof IntermediaryError) {
