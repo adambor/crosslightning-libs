@@ -25,12 +25,16 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
     readonly requiredFeePPM: BN;
     readonly expectedOut: BN;
     readonly lnurl: string;
-    readonly callbackPromise: Promise<void>;
+    readonly lnurlK1: string;
+    readonly lnurlCallback: string;
+    prPosted: boolean;
+    callbackPromise: Promise<void>;
 
-    constructor(wrapper: FromBTCLNWrapper<T>, pr: string, secret: Buffer, url: string, data: T, swapFee: BN, requiredBaseFee: BN, requiredFeePPM: BN, expectedOut: BN, lnurl: string, callbackPromise: Promise<void>);
+
+    constructor(wrapper: FromBTCLNWrapper<T>, pr: string, secret: Buffer, url: string, data: T, swapFee: BN, requiredBaseFee: BN, requiredFeePPM: BN, expectedOut: BN, lnurl: string, callbackPromise: Promise<void>, lnurlK1: string, lnurlCallback: string, prPosted: boolean);
     constructor(wrapper: FromBTCLNWrapper<T>, obj: any);
 
-    constructor(wrapper: FromBTCLNWrapper<T>, prOrObject: string | any, secret?: Buffer, url?: string, data?: T, swapFee?: BN, requiredBaseFee?: BN, requiredFeePPM?: BN, expectedOut?: BN, lnurl?: string, callbackPromise?: Promise<void>) {
+    constructor(wrapper: FromBTCLNWrapper<T>, prOrObject: string | any, secret?: Buffer, url?: string, data?: T, swapFee?: BN, requiredBaseFee?: BN, requiredFeePPM?: BN, expectedOut?: BN, lnurl?: string, callbackPromise?: Promise<void>, lnurlK1?: string, lnurlCallback?: string, prPosted?: boolean) {
         if(typeof(prOrObject)==="string") {
             super(wrapper, url, data, swapFee, null, null, null, null, null);
             this.state = FromBTCLNSwapState.PR_CREATED;
@@ -42,6 +46,9 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
             this.expectedOut = expectedOut;
             this.lnurl = lnurl;
             this.callbackPromise = callbackPromise;
+            this.lnurlK1 = lnurlK1;
+            this.lnurlCallback = lnurlCallback;
+            this.prPosted = prPosted;
         } else {
             super(wrapper, prOrObject);
             this.state = prOrObject.state;
@@ -52,6 +59,9 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
             this.requiredFeePPM = prOrObject.requiredFeePPM==null ? null : new BN(prOrObject.requiredFeePPM);
             this.expectedOut = prOrObject.expectedOut==null ? null : new BN(prOrObject.expectedOut);
             this.lnurl = prOrObject.lnurl;
+            this.lnurlK1 = prOrObject.lnurlK1;
+            this.lnurlCallback = prOrObject.lnurlCallback;
+            this.prPosted = prOrObject.prPosted;
         }
     }
 
@@ -104,6 +114,12 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
         console.log("Waiting for payment....");
 
         let callbackError = null;
+
+        if(this.lnurl!=null && !this.prPosted) {
+            this.callbackPromise = this.wrapper.contract.postInvoiceToLNURLWithdraw(this.pr, this.lnurlK1, this.lnurlCallback);
+            this.prPosted = true;
+            await this.save();
+        }
 
         if(this.callbackPromise!=null) this.callbackPromise.catch(e => {
             callbackError = e;

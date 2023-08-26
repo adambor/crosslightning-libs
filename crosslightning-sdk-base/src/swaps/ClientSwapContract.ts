@@ -1089,15 +1089,45 @@ export class ClientSwapContract<T extends SwapData> {
 
     }
 
-    async receiveLightningLNURL(lnurl: string, amount: BN, expirySeconds: number, url: string, requiredToken?: TokenAddress, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<{
+    async postInvoiceToLNURLWithdraw(lnpr: string, k1: string, callbackUrl: string): Promise<void> {
+        const params = [
+            "pr="+lnpr,
+            "k1="+k1
+        ];
+
+        const queryParams = (callbackUrl.includes("?") ? "&" : "?")+params.join("&");
+
+        const response: Response = await fetch(callbackUrl+queryParams, {
+            method: "GET",
+        });
+
+        if(response.status!==200) {
+            let resp: string;
+            try {
+                resp = await response.text();
+            } catch (e) {
+                throw new Error(response.statusText);
+            }
+            throw new Error(resp);
+        }
+
+        let jsonBody: any = await response.json();
+
+        if(jsonBody.status==="ERROR") {
+            throw new Error("LNURL callback error: " + jsonBody.reason);
+        }
+    }
+
+    async receiveLightningLNURL(lnurl: string, amount: BN, expirySeconds: number, url: string, requiredToken?: TokenAddress, requiredBaseFee?: BN, requiredFeePPM?: BN, noInstantReceive?: boolean): Promise<{
         secret: Buffer,
         pr: string,
         swapFee: BN,
         total: BN,
         intermediaryKey: string,
         securityDeposit: BN,
+        withdrawRequest: LNURLWithdrawParams,
 
-        lnurlCallbackResult: Promise<void>
+        lnurlCallbackResult?: Promise<void>
     }> {
         let res: any = await this.getLNURL(lnurl);
         if(res==null) {
@@ -1123,37 +1153,15 @@ export class ClientSwapContract<T extends SwapData> {
 
         const resp = await this.receiveLightning(amount, expirySeconds, url, requiredToken, requiredBaseFee, requiredFeePPM);
 
-        const params = [
-            "pr="+resp.pr,
-            "k1="+withdrawRequest.k1
-        ];
-
-        const queryParams = (withdrawRequest.callback.includes("?") ? "&" : "?")+params.join("&");
-
-        const lnurlCallbackResult = (async() => {
-            const response: Response = await fetch(withdrawRequest.callback+queryParams, {
-                method: "GET",
-            });
-
-            if(response.status!==200) {
-                let resp: string;
-                try {
-                    resp = await response.text();
-                } catch (e) {
-                    throw new Error(response.statusText);
-                }
-                throw new Error(resp);
-            }
-
-            let jsonBody: any = await response.json();
-
-            if(jsonBody.status==="ERROR") {
-                throw new Error("LNURL callback error: " + jsonBody.reason);
-            }
-        })();
+        if(noInstantReceive) {
+            const anyResp: any = resp;
+            anyResp.withdrawRequest = withdrawRequest;
+            return anyResp;
+        }
 
         const anyResp: any = resp;
-        anyResp.lnurlCallbackResult = lnurlCallbackResult;
+        anyResp.lnurlCallbackResult = this.postInvoiceToLNURLWithdraw(resp.pr, withdrawRequest.k1, withdrawRequest.callback);
+        anyResp.withdrawRequest = withdrawRequest;
 
         return anyResp;
     }
