@@ -717,24 +717,37 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 //Decrease by percentage fee
                 amountBD = amountBD.mul(new BN(1000000)).div(this.config.feePPM.add(new BN(1000000)));
 
-                if(amountBD.lt(this.config.min)) {
+                if(amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)))) {
+                    //Compute min/max
+                    let adjustedMin = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    let adjustedMax = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    adjustedMin = adjustedMin.add(this.config.baseFee).add(networkFeeAdjusted);
+                    adjustedMax = adjustedMax.add(this.config.baseFee).add(networkFeeAdjusted);
+                    const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken);
+                    const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken);
                     res.status(400).json({
                         code: 20003,
                         msg: "Amount too low!",
                         data: {
-                            min: this.config.min.toString(10),
-                            max: this.config.max.toString(10)
+                            min: minIn.toString(10),
+                            max: maxIn.toString(10)
                         }
                     });
                     return;
                 }
-                if(amountBD.gt(this.config.max)) {
+                if(amountBD.gt(this.config.max.mul(new BN(105)).div(new BN(100)))) {
+                    let adjustedMin = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    let adjustedMax = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    adjustedMin = adjustedMin.add(this.config.baseFee).add(networkFeeAdjusted);
+                    adjustedMax = adjustedMax.add(this.config.baseFee).add(networkFeeAdjusted);
+                    const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken);
+                    const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken);
                     res.status(400).json({
                         code: 20004,
                         msg: "Amount too high!",
                         data: {
-                            min: this.config.min.toString(10),
-                            max: this.config.max.toString(10)
+                            min: minIn.toString(10),
+                            max: maxIn.toString(10)
                         }
                     });
                     return;
