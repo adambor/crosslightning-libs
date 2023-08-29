@@ -1,7 +1,7 @@
 import {BitcoinNetwork} from "../btc/BitcoinNetwork";
 import {ISwapPrice} from "./ISwapPrice";
 import {IWrapperStorage} from "../storage/IWrapperStorage";
-import {ChainEvents, SwapContract, SwapData} from "crosslightning-base";
+import {ChainEvents, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
 import {ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";
 import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
 import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
@@ -65,6 +65,8 @@ export class Swapper<
 
     readonly bitcoinNetwork: bitcoin.Network;
 
+    readonly options: SwapperOptions;
+
     constructor(
         btcRelay: BtcRelay<any, any, any>,
         bitcoinRpc: MempoolBitcoinRpc,
@@ -113,6 +115,8 @@ export class Swapper<
         } else {
             this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl);
         }
+
+        this.options = options;
     }
 
 
@@ -175,7 +179,6 @@ export class Swapper<
     getLightningInvoiceValue(lnpr: string): BN {
         return Swapper.getLightningInvoiceValue(lnpr);
     }
-
 
     /**
      * Returns maximum possible swap amount
@@ -285,7 +288,10 @@ export class Swapper<
      * @param confirmations         How many confirmations must the intermediary wait to claim the funds
      */
     async createToBTCSwapExactIn(tokenAddress: string, address: string, amount: BN, confirmationTarget?: number, confirmations?: number): Promise<ToBTCSwap<T>> {
-        const candidates = await this.intermediaryDiscovery.getSwapCandidates(SwapType.TO_BTC, amount, tokenAddress);
+        //Get approximate bitcoin amount
+        const approxBtcAmount = await this.options.pricing.getToBtcSwapAmount(amount, tokenAddress);
+
+        const candidates = await this.intermediaryDiscovery.getSwapCandidates(SwapType.TO_BTC, approxBtcAmount, tokenAddress);
 
         let swap;
         let error;
