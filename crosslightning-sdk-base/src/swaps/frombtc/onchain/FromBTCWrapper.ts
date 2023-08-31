@@ -4,9 +4,18 @@ import {FromBTCSwap, FromBTCSwapState} from "./FromBTCSwap";
 import {ChainUtils} from "../../../btc/ChainUtils";
 import {ClientSwapContract} from "../../ClientSwapContract";
 import * as BN from "bn.js";
-import {SignatureVerificationError, SwapCommitStatus, SwapData, TokenAddress, ClaimEvent, InitializeEvent,
-    RefundEvent, SwapEvent, ChainEvents, RelaySynchronizer} from "crosslightning-base";
-import {FromBTCLNSwap} from "../../..";
+import {
+    ChainEvents,
+    ClaimEvent,
+    InitializeEvent,
+    RefundEvent,
+    RelaySynchronizer,
+    SignatureVerificationError,
+    SwapCommitStatus,
+    SwapData,
+    SwapEvent,
+    TokenAddress
+} from "crosslightning-base";
 
 export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
@@ -280,6 +289,10 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
             }
 
             if(swap.state===FromBTCSwapState.CLAIM_CLAIMED || swap.state===FromBTCSwapState.FAILED) {
+                continue;
+            }
+
+            if(swap.state===FromBTCSwapState.CLAIM_COMMITED && Date.now()>swap.getTimeoutTime()) {
                 continue;
             }
 
