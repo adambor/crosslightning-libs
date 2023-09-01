@@ -315,8 +315,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 amountBD = amountBD.add(this.config.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(this.config.feePPM));
 
                 if(amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)))) {
-                    let adjustedMin = this.config.min.add(this.config.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(this.config.feePPM));
-                    let adjustedMax = this.config.max.add(this.config.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(this.config.feePPM));
+                    let adjustedMin = this.config.min.mul(new BN(1000000).sub(this.config.feePPM)).div(new BN(1000000)).sub(this.config.baseFee);
+                    let adjustedMax = this.config.max.mul(new BN(1000000).sub(this.config.feePPM)).div(new BN(1000000)).sub(this.config.baseFee);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken);
                     const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken);
                     res.status(400).json({
@@ -331,8 +331,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 }
 
                 if(amountBD.gt(this.config.max.mul(new BN(105)).div(new BN(100)))) {
-                    let adjustedMin = this.config.min.add(this.config.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(this.config.feePPM));
-                    let adjustedMax = this.config.max.add(this.config.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(this.config.feePPM));
+                    let adjustedMin = this.config.min.mul(new BN(1000000).sub(this.config.feePPM)).div(new BN(1000000)).sub(this.config.baseFee);
+                    let adjustedMax = this.config.max.mul(new BN(1000000).sub(this.config.feePPM)).div(new BN(1000000)).sub(this.config.baseFee);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken);
                     const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken);
                     res.status(400).json({
@@ -467,6 +467,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 code: 10000,
                 msg: "Success",
                 data: {
+                    amount: amountBD.toString(10),
                     btcAddress: receiveAddress,
                     address: this.swapContract.getAddress(),
                     swapFee: swapFeeInToken.toString(10),
