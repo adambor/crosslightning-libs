@@ -720,7 +720,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 if(amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)))) {
                     //Compute min/max
                     let adjustedMin = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    let adjustedMax = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    let adjustedMax = this.config.max.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
                     adjustedMin = adjustedMin.add(this.config.baseFee).add(networkFeeAdjusted);
                     adjustedMax = adjustedMax.add(this.config.baseFee).add(networkFeeAdjusted);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken);
@@ -737,7 +737,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 }
                 if(amountBD.gt(this.config.max.mul(new BN(105)).div(new BN(100)))) {
                     let adjustedMin = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    let adjustedMax = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    let adjustedMax = this.config.max.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
                     adjustedMin = adjustedMin.add(this.config.baseFee).add(networkFeeAdjusted);
                     adjustedMax = adjustedMax.add(this.config.baseFee).add(networkFeeAdjusted);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken);

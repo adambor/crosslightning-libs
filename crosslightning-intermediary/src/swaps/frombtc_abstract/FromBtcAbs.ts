@@ -277,6 +277,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
              *  - startTimestamp: string        UNIX seconds used for timestamp delta calc
              *  - addBlock: number              Additional blocks to add to the calculation
              *  - addFee: string                Additional fee to add to the final claimer bounty
+             * exactOut: boolean             Whether the swap should be an exact out instead of exact in swap
              */
 
             const parsedBody = verifySchema(req.body, {
@@ -293,7 +294,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                     startTimestamp: FieldTypeEnum.BN,
                     addBlock: FieldTypeEnum.BN,
                     addFee: FieldTypeEnum.BN,
-                }
+                },
+                exactOut: FieldTypeEnum.Boolean
             });
 
             if(parsedBody==null) {
@@ -303,30 +305,90 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 return;
             }
 
-            if(parsedBody.amount.lt(this.config.min)) {
-                res.status(400).json({
-                    msg: "Amount too low"
-                });
-                return;
-            }
-
-            if(parsedBody.amount.gt(this.config.max)) {
-                res.status(400).json({
-                    msg: "Amount too high"
-                });
-                return;
-            }
-
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
-            const swapFee = this.config.baseFee.add(parsedBody.amount.mul(this.config.feePPM).div(new BN(1000000)));
+            let amountBD: BN;
+            if(parsedBody.exactOut) {
+                amountBD = await this.swapPricing.getToBtcSwapAmount(parsedBody.amount, useToken);
 
-            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount, useToken);
+                // amt = (amt+base_fee)/(1-fee)
+                amountBD = amountBD.add(this.config.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(this.config.feePPM));
+
+                if(amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)))) {
+                    let adjustedMin = this.config.min.add(this.config.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(this.config.feePPM));
+                    let adjustedMax = this.config.max.add(this.config.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(this.config.feePPM));
+                    const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken);
+                    const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken);
+                    res.status(400).json({
+                        code: 20003,
+                        msg: "Amount too low!",
+                        data: {
+                            min: minIn.toString(10),
+                            max: maxIn.toString(10)
+                        }
+                    });
+                    return;
+                }
+
+                if(amountBD.gt(this.config.max.mul(new BN(105)).div(new BN(100)))) {
+                    let adjustedMin = this.config.min.add(this.config.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(this.config.feePPM));
+                    let adjustedMax = this.config.max.add(this.config.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(this.config.feePPM));
+                    const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken);
+                    const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken);
+                    res.status(400).json({
+                        code: 20004,
+                        msg: "Amount too high!",
+                        data: {
+                            min: minIn.toString(10),
+                            max: maxIn.toString(10)
+                        }
+                    });
+                    return;
+                }
+            } else {
+                amountBD = parsedBody.amount;
+
+                if(amountBD.lt(this.config.min)) {
+                    res.status(400).json({
+                        code: 20003,
+                        msg: "Amount too low!",
+                        data: {
+                            min: this.config.min.toString(10),
+                            max: this.config.max.toString(10)
+                        }
+                    });
+                    return;
+                }
+
+                if(amountBD.gt(this.config.max)) {
+                    res.status(400).json({
+                        code: 20004,
+                        msg: "Amount too high!",
+                        data: {
+                            min: this.config.min.toString(10),
+                            max: this.config.max.toString(10)
+                        }
+                    });
+                    return;
+                }
+            }
+
+            const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
             const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true);
+
+            let amountInToken: BN;
+            let total: BN;
+            if(parsedBody.exactOut) {
+                amountInToken = parsedBody.amount.add(swapFeeInToken);
+                total = parsedBody.amount;
+            } else {
+                amountInToken = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount, useToken);
+                total = amountInToken.sub(swapFeeInToken);
+            }
 
             const balance = await this.swapContract.getBalance(useToken, true);
 
-            if(amountInToken.sub(swapFeeInToken).gt(balance)) {
+            if(total.gt(balance)) {
                 res.status(400).json({
                     msg: "Not enough liquidity"
                 });
@@ -378,7 +440,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 this.swapContract.getAddress(),
                 parsedBody.address,
                 useToken,
-                amountInToken.sub(swapFeeInToken),
+                total,
                 paymentHash.toString("hex"),
                 expiry,
                 new BN(0),
@@ -408,7 +470,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                     btcAddress: receiveAddress,
                     address: this.swapContract.getAddress(),
                     swapFee: swapFeeInToken.toString(10),
-                    total: amountInToken.sub(swapFeeInToken).toString(10),
+                    total: total.toString(10),
                     data: data.serialize(),
                     nonce: sigData.nonce,
                     prefix: sigData.prefix,
