@@ -309,7 +309,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
             let amountBD: BN;
             if(parsedBody.exactOut) {
-                amountBD = await this.swapPricing.getToBtcSwapAmount(parsedBody.amount, useToken);
+                amountBD = await this.swapPricing.getToBtcSwapAmount(parsedBody.amount, useToken, true);
 
                 // amt = (amt+base_fee)/(1-fee)
                 amountBD = amountBD.add(this.config.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(this.config.feePPM));
