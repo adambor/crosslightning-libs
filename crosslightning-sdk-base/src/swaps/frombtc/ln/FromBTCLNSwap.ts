@@ -7,6 +7,7 @@ import {SwapData} from "crosslightning-base";
 
 
 export enum FromBTCLNSwapState {
+    EXPIRED = -2,
     FAILED = -1,
     PR_CREATED = 0,
     PR_PAID = 1,

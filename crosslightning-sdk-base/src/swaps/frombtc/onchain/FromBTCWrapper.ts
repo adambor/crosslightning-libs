@@ -104,7 +104,13 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
                 if(swapChanged) {
                     if(eventQueue==null) {
-                        swap.save().then(() => {
+                        let promise: Promise<any>;
+                        if(swap.state===FromBTCSwapState.EXPIRED) {
+                            promise = this.storage.removeSwapData(swap)
+                        } else {
+                            promise = swap.save();
+                        }
+                        promise.then(() => {
                             swap.emitEvent();
                         });
                     }
@@ -159,7 +165,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
                         await this.contract.swapContract.isValidInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce);
                     } catch (e) {
                         if(e instanceof SignatureVerificationError) {
-                            swap.state = FromBTCSwapState.FAILED;
+                            swap.state = FromBTCSwapState.EXPIRED;
                             return true;
                         }
                     }
@@ -167,7 +173,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
                 }
 
                 if(status===SwapCommitStatus.EXPIRED) {
-                    swap.state = FromBTCSwapState.FAILED;
+                    swap.state = FromBTCSwapState.EXPIRED;
                     return true;
                 }
 
@@ -210,7 +216,11 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
             const swap = this.swapData[paymentHash] as FromBTCSwap<T>;
 
             promises.push(processSwap(swap).then(changed => {
-                if(changed) changedSwaps[paymentHash] = true;
+                if(swap.state===FromBTCSwapState.EXPIRED) {
+                    this.storage.removeSwapData(swap);
+                } else {
+                    if(changed) changedSwaps[paymentHash] = true;
+                }
             }));
 
             if(promises.length>=this.MAX_CONCURRENT_REQUESTS) {
@@ -236,34 +246,8 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
     /**
      * Returns swaps that are in-progress and are claimable that were initiated with the current provider's public key
      */
-    async getClaimableSwaps(): Promise<FromBTCSwap<T>[]> {
-
-        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
-
-        const returnArr = [];
-
-        for(let paymentHash in this.swapData) {
-            const swap: FromBTCSwap<T> = this.swapData[paymentHash] as FromBTCSwap<T>;
-
-            console.log(swap);
-
-            if(swap.data.getClaimer()!==this.contract.swapContract.getAddress()) {
-                continue;
-            }
-
-            if(swap.state===FromBTCSwapState.PR_CREATED && swap.txId==null) {
-                continue;
-            }
-
-            if(swap.state===FromBTCSwapState.CLAIM_CLAIMED || swap.state===FromBTCSwapState.FAILED) {
-                continue;
-            }
-
-            returnArr.push(swap);
-        }
-
-        return returnArr;
-
+    getClaimableSwaps(): Promise<FromBTCSwap<T>[]> {
+        return Promise.resolve(this.getClaimableSwapsSync());
     }
 
     /**
@@ -288,7 +272,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
                 continue;
             }
 
-            if(swap.state===FromBTCSwapState.CLAIM_CLAIMED || swap.state===FromBTCSwapState.FAILED) {
+            if(swap.state===FromBTCSwapState.CLAIM_CLAIMED || swap.state===FromBTCSwapState.FAILED || swap.state===FromBTCSwapState.EXPIRED) {
                 continue;
             }
 

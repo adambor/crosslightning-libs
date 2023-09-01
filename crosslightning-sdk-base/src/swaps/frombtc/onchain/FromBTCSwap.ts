@@ -8,7 +8,8 @@ import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
 
 export enum FromBTCSwapState {
-    FAILED = -1,
+    FAILED = -2,
+    EXPIRED = -1,
     PR_CREATED = 0,
     CLAIM_COMMITED = 1,
     BTC_TX_CONFIRMED = 2,

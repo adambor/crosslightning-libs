@@ -5,7 +5,7 @@ import * as BN from "bn.js";
 import * as EventEmitter from "events";
 import {SwapCommitStatus, SwapData, TokenAddress, ChainEvents, RefundEvent, ClaimEvent,
     InitializeEvent, SwapEvent} from "crosslightning-base";
-import {FromBTCSwap} from "../..";
+import {FromBTCLNSwapState, FromBTCSwap, FromBTCSwapState} from "../..";
 
 
 export abstract class IToBTCWrapper<T extends SwapData> {
@@ -101,7 +101,13 @@ export abstract class IToBTCWrapper<T extends SwapData> {
 
                 if(swapChanged) {
                     if(eventQueue==null) {
-                        swap.save().then(() => {
+                        let promise: Promise<any>;
+                        if(swap.state===ToBTCSwapState.FAILED) {
+                            promise = this.storage.removeSwapData(swap)
+                        } else {
+                            promise = swap.save();
+                        }
+                        promise.then(() => {
                             swap.emitEvent();
                         });
                     }
@@ -201,7 +207,11 @@ export abstract class IToBTCWrapper<T extends SwapData> {
             const swap: IToBTCSwap<T> = this.swapData[paymentHash];
 
             promises.push(processSwap(swap).then(changed => {
-                if(changed) changedSwaps[paymentHash] = true;
+                if(swap.state===ToBTCSwapState.FAILED) {
+                    this.storage.removeSwapData(swap);
+                } else {
+                    if(changed) changedSwaps[paymentHash] = true;
+                }
             }));
 
             if(promises.length>=this.MAX_CONCURRENT_REQUESTS) {
