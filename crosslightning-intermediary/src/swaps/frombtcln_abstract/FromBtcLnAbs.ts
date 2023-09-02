@@ -33,6 +33,7 @@ export type FromBtcLnConfig = {
     min: BN,
     maxSkew: number,
     safetyFactor: BN,
+    invoiceTimeoutSeconds?: number,
 
     minCltv: BN,
 
@@ -65,6 +66,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
     ) {
         super(storageDirectory, path, swapContract, chainEvents, swapNonce, allowedTokens, lnd, swapPricing);
         this.config = config;
+        this.config.invoiceTimeoutSeconds = this.config.invoiceTimeoutSeconds || 60;
     }
 
     /**
@@ -336,15 +338,16 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
     private async htlcReceived(invoiceData: FromBtcLnSwapAbs<T>, invoice: any) {
         const useToken: TokenAddress = invoiceData.data.getToken();
 
+        // const invoiceAmount: BN = new BN(invoice.received);
+        // const fee: BN = invoiceData.swapFee;
+        //
+        // const invoiceAmountInToken = await this.swapPricing.getFromBtcSwapAmount(invoiceAmount, useToken);
+        // const feeInToken = await this.swapPricing.getFromBtcSwapAmount(fee, useToken, true);
+        //
+        // const sendAmount: BN = invoiceAmountInToken.sub(feeInToken);
+
+        const sendAmount: BN = await invoiceData.data.getAmount();
         const balance: BN = await this.swapContract.getBalance(useToken, true);
-
-        const invoiceAmount: BN = new BN(invoice.received);
-        const fee: BN = invoiceData.swapFee;
-
-        const invoiceAmountInToken = await this.swapPricing.getFromBtcSwapAmount(invoiceAmount, useToken);
-        const feeInToken = await this.swapPricing.getFromBtcSwapAmount(fee, useToken, true);
-
-        const sendAmount: BN = invoiceAmountInToken.sub(feeInToken);
 
         const cancelAndRemove = async () => {
             if(invoiceData.state!==FromBtcLnSwapState.CREATED) return;
@@ -424,7 +427,6 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             await this.storageManager.saveData(invoice.id, invoiceData);
             return;
         }
-
     }
 
     startRestServer(restServer: Express) {
@@ -434,7 +436,6 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
              * address: string              solana address of the recipient
              * paymentHash: string          payment hash of the to-be-created invoice
              * amount: string               amount (in sats) of the invoice
-             * expiry: number               expiry time of the invoice (in seconds)
              * token: string                Desired token to swap
              * exactOut: boolean            Whether the swap should be an exact out instead of exact in swap
              */
@@ -448,7 +449,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                             val.length===64 &&
                             HEX_REGEX.test(val) ? val: null,
                 amount: FieldTypeEnum.BN,
-                expiry: FieldTypeEnum.Number,
+                //expiry: FieldTypeEnum.Number,
                 token: (val: string) => val!=null &&
                         typeof(val)==="string" &&
                         this.allowedTokens.has(val) ? val : null
@@ -537,12 +538,12 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 }
             }
 
-            if(parsedBody.expiry<=0) {
-                res.status(400).json({
-                    msg: "Invalid request body (expiry)"
-                });
-                return;
-            }
+            // if(parsedBody.expiry<=0) {
+            //     res.status(400).json({
+            //         msg: "Invalid request body (expiry)"
+            //     });
+            //     return;
+            // }
             const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
             const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true);
 
@@ -569,7 +570,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             const hodlInvoiceObj: any = {
                 description: parsedBody.address,
                 cltv_delta: this.config.minCltv.add(new BN(5)).toString(10),
-                expires_at: new Date(Date.now()+(parsedBody.expiry*1000)).toISOString(),
+                expires_at: new Date(Date.now()+(this.config.invoiceTimeoutSeconds*1000)).toISOString(),
                 id: parsedBody.paymentHash,
                 tokens: amountBD.toString(10),
                 description_hash: req.body.descriptionHash
@@ -607,7 +608,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 this.swapContract.getAddress(),
                 parsedBody.address,
                 useToken,
-                null,
+                total,
                 parsedBody.paymentHash,
                 null,
                 null,
