@@ -452,7 +452,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 token: (val: string) => val!=null &&
                         typeof(val)==="string" &&
                         this.allowedTokens.has(val) ? val : null,
-                exactOut: FieldTypeEnum.Boolean
+                exactOut: (val: boolean) => val==null || typeof(val)==="boolean"
             });
 
             if(parsedBody==null) {

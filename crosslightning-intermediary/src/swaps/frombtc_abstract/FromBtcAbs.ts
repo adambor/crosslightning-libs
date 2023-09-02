@@ -295,7 +295,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                     addBlock: FieldTypeEnum.BN,
                     addFee: FieldTypeEnum.BN,
                 },
-                exactOut: FieldTypeEnum.Boolean
+                exactOut: (val: boolean) => val==null || typeof(val)==="boolean"
             });
 
             if(parsedBody==null) {
