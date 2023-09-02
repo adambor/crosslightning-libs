@@ -565,7 +565,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 offerer: (val: string) => val!=null &&
                         typeof(val)==="string" &&
                         this.swapContract.isValidAddress(val) ? val : null,
-                exactIn: (val: boolean) => val==null || typeof(val)==="boolean"
+                exactIn: (val: boolean) => val==null || typeof(val)==="boolean" ? val : null
             });
 
             if (parsedBody==null) {
