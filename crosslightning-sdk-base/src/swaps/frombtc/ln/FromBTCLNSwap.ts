@@ -482,6 +482,11 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
         return commitFee.add(claimFee);
     }
 
+    getTimeoutTime(): number {
+        const decoded = bolt11.decode(this.pr);
+        return (decoded.timeExpireDate*1000)-45;
+    }
+
     /**
      * Is this an LNURL-pay swap?
      */
