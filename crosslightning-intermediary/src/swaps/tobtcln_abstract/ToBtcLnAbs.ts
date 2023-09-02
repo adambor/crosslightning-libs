@@ -430,7 +430,6 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                         this.swapContract.isValidAddress(val) ? val : null
             });
 
-
             if (parsedBody==null) {
                 res.status(400).json({
                     msg: "Invalid request body"

@@ -804,13 +804,14 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 code: 20000,
                 msg: "Success",
                 data: {
+                    amount: amountBD.toString(10),
                     address: this.swapContract.getAddress(),
                     satsPervByte: feeSatsPervByteAdjusted.toString(10),
                     networkFee: networkFeeInToken.toString(10),
                     swapFee: swapFeeInToken.toString(10),
                     totalFee: swapFeeInToken.add(networkFeeInToken).toString(10),
                     total: total.toString(10),
-                    minRequiredExpiry: minRequiredExpiry.toString(),
+                    minRequiredExpiry: minRequiredExpiry.toString(10),
 
                     data: payObject.serialize(),
 
