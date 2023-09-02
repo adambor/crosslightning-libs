@@ -435,7 +435,8 @@ export class Swapper<
             try {
                 swap = await this.frombtc.create(amount, candidate.url+"/frombtc", tokenAddress, candidate.address,
                     new BN(candidate.services[SwapType.FROM_BTC].swapBaseFee),
-                    new BN(candidate.services[SwapType.FROM_BTC].swapFeePPM));
+                    new BN(candidate.services[SwapType.FROM_BTC].swapFeePPM),
+                    exactOut);
                 break;
             } catch (e) {
                 if(e instanceof IntermediaryError) {
@@ -463,8 +464,9 @@ export class Swapper<
      * @param amount            Amount to receive, in satoshis (bitcoin's smallest denomination)
      * @param invoiceExpiry     Lightning invoice expiry time (in seconds)
      * @param exactOut          Whether to use exact out instead of exact in
+     * @param descriptionHash   Description hash for ln invoice
      */
-    async createFromBTCLNSwap(tokenAddress: TokenAddressType, amount: BN, invoiceExpiry?: number, exactOut?: boolean): Promise<FromBTCLNSwap<T>> {
+    async createFromBTCLNSwap(tokenAddress: TokenAddressType, amount: BN, invoiceExpiry?: number, exactOut?: boolean, descriptionHash?: Buffer): Promise<FromBTCLNSwap<T>> {
         let btcAmt: BN;
         if(exactOut) {
             //Get approximate bitcoin amount
@@ -482,7 +484,9 @@ export class Swapper<
             try {
                 swap = await this.frombtcln.create(amount, invoiceExpiry || (1*24*3600), candidate.url+"/frombtcln", tokenAddress, candidate.address,
                     new BN(candidate.services[SwapType.FROM_BTCLN].swapBaseFee),
-                    new BN(candidate.services[SwapType.FROM_BTCLN].swapFeePPM));
+                    new BN(candidate.services[SwapType.FROM_BTCLN].swapFeePPM),
+                    exactOut,
+                    descriptionHash);
                 break;
             } catch (e) {
                 if(e instanceof IntermediaryError) {

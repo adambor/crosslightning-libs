@@ -44,12 +44,13 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
      * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
      * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
      * @param exactOut          Whether to create an exact out swap instead of exact in
+     * @param descriptionHash   Description hash to use for the invoice
      */
-    async create(amount: BN, expirySeconds: number, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, exactOut?: boolean): Promise<FromBTCLNSwap<T>> {
+    async create(amount: BN, expirySeconds: number, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, exactOut?: boolean, descriptionHash?: Buffer): Promise<FromBTCLNSwap<T>> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const result = await this.contract.receiveLightning(amount, expirySeconds, url, requiredToken, requiredBaseFee, requiredFeePPM, exactOut);
+        const result = await this.contract.receiveLightning(amount, expirySeconds, url, requiredToken, requiredBaseFee, requiredFeePPM, exactOut, descriptionHash);
 
         const parsed = bolt11.decode(result.pr);
 

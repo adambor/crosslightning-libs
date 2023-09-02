@@ -1226,7 +1226,8 @@ export class ClientSwapContract<T extends SwapData> {
         requiredToken?: TokenAddress,
         requiredBaseFee?: BN,
         requiredFeePPM?: BN,
-        exactOut?: boolean
+        exactOut?: boolean,
+        descriptionHash?: Buffer
     ): Promise<{
         secret: Buffer,
         pr: string,
@@ -1235,6 +1236,12 @@ export class ClientSwapContract<T extends SwapData> {
         intermediaryKey: string,
         securityDeposit: BN
     }> {
+        if(descriptionHash!=null) {
+            if(descriptionHash.length!==32) {
+                throw new Error("Invalid description hash length");
+            }
+        }
+
         const secret = randomBytes(32);
 
         const paymentHash = createHash("sha256").update(secret).digest();
@@ -1246,7 +1253,9 @@ export class ClientSwapContract<T extends SwapData> {
                 amount: amountOrTokens.toString(),
                 expiry: expirySeconds,
                 address: this.swapContract.getAddress(),
-                token: requiredToken==null ? null : requiredToken.toString()
+                token: requiredToken==null ? null : requiredToken.toString(),
+                descriptionHash: descriptionHash==null ? null : descriptionHash.toString("hex"),
+                exactOut
             }),
             headers: {'Content-Type': 'application/json'}
         });
@@ -1264,6 +1273,10 @@ export class ClientSwapContract<T extends SwapData> {
         let jsonBody: any = await response.json();
 
         const decodedPR = bolt11.decode(jsonBody.data.pr);
+
+        if(descriptionHash!=null && decodedPR.tagsObject.purpose_commit_hash!==descriptionHash.toString("hex")) {
+            throw new IntermediaryError("Invalid pr returned - description hash");
+        }
 
         let amount: BN;
         if(exactOut) {
