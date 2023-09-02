@@ -246,9 +246,18 @@ export class Swapper<
      * @param amount                Amount to send in satoshis (bitcoin's smallest denomination)
      * @param confirmationTarget    How soon should the transaction be confirmed (determines the fee)
      * @param confirmations         How many confirmations must the intermediary wait to claim the funds
+     * @param exactIn               Whether to use exact in instead of exact out
      */
-    async createToBTCSwap(tokenAddress: TokenAddressType, address: string, amount: BN, confirmationTarget?: number, confirmations?: number): Promise<ToBTCSwap<T>> {
-        const candidates = this.intermediaryDiscovery.getSwapCandidates(SwapType.TO_BTC, amount, tokenAddress);
+    async createToBTCSwap(tokenAddress: TokenAddressType, address: string, amount: BN, confirmationTarget?: number, confirmations?: number, exactIn?: boolean): Promise<ToBTCSwap<T>> {
+        let btcAmt: BN;
+        if(exactIn) {
+            //Get approximate bitcoin amount
+            btcAmt = await this.options.pricing.getToBtcSwapAmount(amount, tokenAddress);
+        } else {
+            btcAmt = amount;
+        }
+
+        const candidates = this.intermediaryDiscovery.getSwapCandidates(SwapType.TO_BTC, btcAmt, tokenAddress);
         if(candidates.length===0) throw new Error("No intermediary found!");
 
         let swap;
@@ -257,7 +266,8 @@ export class Swapper<
             try {
                 swap = await this.tobtc.create(address, amount, confirmationTarget || 3, confirmations || 3, candidate.url+"/tobtc", tokenAddress, candidate.address,
                     new BN(candidate.services[SwapType.TO_BTC].swapBaseFee),
-                    new BN(candidate.services[SwapType.TO_BTC].swapFeePPM));
+                    new BN(candidate.services[SwapType.TO_BTC].swapFeePPM),
+                    exactIn);
                 break;
             } catch (e) {
                 if(e instanceof IntermediaryError) {
@@ -278,46 +288,45 @@ export class Swapper<
     }
 
 
-    /**
-     * Creates To BTC swap with exactly specified input token amount
-     *
-     * @param tokenAddress          Token address to pay with
-     * @param address               Recipient's bitcoin address
-     * @param amount                Amount to send in token base units
-     * @param confirmationTarget    How soon should the transaction be confirmed (determines the fee)
-     * @param confirmations         How many confirmations must the intermediary wait to claim the funds
-     */
-    async createToBTCSwapExactIn(tokenAddress: string, address: string, amount: BN, confirmationTarget?: number, confirmations?: number): Promise<ToBTCSwap<T>> {
-        //Get approximate bitcoin amount
-        const approxBtcAmount = await this.options.pricing.getToBtcSwapAmount(amount, tokenAddress);
-
-        const candidates = await this.intermediaryDiscovery.getSwapCandidates(SwapType.TO_BTC, approxBtcAmount, tokenAddress);
-
-        let swap;
-        let error;
-        for(let candidate of candidates) {
-            try {
-                swap = await this.tobtc.createExactIn(address, amount, confirmationTarget || 3, confirmations || 3, candidate.url+"/tobtc", tokenAddress, candidate.address,
-                    new BN(candidate.services[SwapType.TO_BTC].swapBaseFee),
-                    new BN(candidate.services[SwapType.TO_BTC].swapFeePPM));
-                break;
-            } catch (e) {
-                if(e instanceof IntermediaryError) {
-                    //Blacklist that node
-                    this.intermediaryDiscovery.removeIntermediary(candidate);
-                }
-                console.error(e);
-                error = e;
-            }
-        }
-
-        if(swap==null) {
-            if(error!=null) throw error;
-            throw new Error("No intermediary found!");
-        }
-
-        return swap;
-    }
+    // /**
+    //  * Creates To BTC swap with exactly specified input token amount
+    //  *
+    //  * @param tokenAddress          Token address to pay with
+    //  * @param address               Recipient's bitcoin address
+    //  * @param amount                Amount to send in token base units
+    //  * @param confirmationTarget    How soon should the transaction be confirmed (determines the fee)
+    //  * @param confirmations         How many confirmations must the intermediary wait to claim the funds
+    //  */
+    // async createToBTCSwapExactIn(tokenAddress: string, address: string, amount: BN, confirmationTarget?: number, confirmations?: number): Promise<ToBTCSwap<T>> {
+    //     //Get approximate bitcoin amount
+    //     const approxBtcAmount = await this.options.pricing.getToBtcSwapAmount(amount, tokenAddress);
+    //     const candidates = await this.intermediaryDiscovery.getSwapCandidates(SwapType.TO_BTC, approxBtcAmount, tokenAddress);
+    //
+    //     let swap;
+    //     let error;
+    //     for(let candidate of candidates) {
+    //         try {
+    //             swap = await this.tobtc.createExactIn(address, amount, confirmationTarget || 3, confirmations || 3, candidate.url+"/tobtc", tokenAddress, candidate.address,
+    //                 new BN(candidate.services[SwapType.TO_BTC].swapBaseFee),
+    //                 new BN(candidate.services[SwapType.TO_BTC].swapFeePPM));
+    //             break;
+    //         } catch (e) {
+    //             if(e instanceof IntermediaryError) {
+    //                 //Blacklist that node
+    //                 this.intermediaryDiscovery.removeIntermediary(candidate);
+    //             }
+    //             console.error(e);
+    //             error = e;
+    //         }
+    //     }
+    //
+    //     if(swap==null) {
+    //         if(error!=null) throw error;
+    //         throw new Error("No intermediary found!");
+    //     }
+    //
+    //     return swap;
+    // }
 
     /**
      * Creates To BTCLN swap
@@ -406,9 +415,18 @@ export class Swapper<
      *
      * @param tokenAddress          Token address to receive
      * @param amount                Amount to receive, in satoshis (bitcoin's smallest denomination)
+     * @param exactOut              Whether to use a exact out instead of exact in
      */
-    async createFromBTCSwap(tokenAddress: TokenAddressType, amount: BN): Promise<FromBTCSwap<T>> {
-        const candidates = this.intermediaryDiscovery.getSwapCandidates(SwapType.FROM_BTC, amount, tokenAddress);
+    async createFromBTCSwap(tokenAddress: TokenAddressType, amount: BN, exactOut?: boolean): Promise<FromBTCSwap<T>> {
+        let btcAmt: BN;
+        if(exactOut) {
+            //Get approximate bitcoin amount
+            btcAmt = await this.options.pricing.getToBtcSwapAmount(amount, tokenAddress);
+        } else {
+            btcAmt = amount;
+        }
+
+        const candidates = this.intermediaryDiscovery.getSwapCandidates(SwapType.FROM_BTC, btcAmt, tokenAddress);
         if(candidates.length===0) throw new Error("No intermediary found!");
 
         let swap;
@@ -444,11 +462,19 @@ export class Swapper<
      * @param tokenAddress      Token address to receive
      * @param amount            Amount to receive, in satoshis (bitcoin's smallest denomination)
      * @param invoiceExpiry     Lightning invoice expiry time (in seconds)
+     * @param exactOut          Whether to use exact out instead of exact in
      */
-    async createFromBTCLNSwap(tokenAddress: TokenAddressType, amount: BN, invoiceExpiry?: number): Promise<FromBTCLNSwap<T>> {
-        const candidates = this.intermediaryDiscovery.getSwapCandidates(SwapType.FROM_BTCLN, amount, tokenAddress);
-        if(candidates.length===0) throw new Error("No intermediary found!");
+    async createFromBTCLNSwap(tokenAddress: TokenAddressType, amount: BN, invoiceExpiry?: number, exactOut?: boolean): Promise<FromBTCLNSwap<T>> {
+        let btcAmt: BN;
+        if(exactOut) {
+            //Get approximate bitcoin amount
+            btcAmt = await this.options.pricing.getToBtcSwapAmount(amount, tokenAddress);
+        } else {
+            btcAmt = amount;
+        }
 
+        const candidates = this.intermediaryDiscovery.getSwapCandidates(SwapType.FROM_BTCLN, btcAmt, tokenAddress);
+        if(candidates.length===0) throw new Error("No intermediary found!");
 
         let swap;
         let error;

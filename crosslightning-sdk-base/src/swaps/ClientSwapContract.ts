@@ -227,15 +227,17 @@ export class ClientSwapContract<T extends SwapData> {
 
     async payOnchain(
         address: string,
-        amount: BN,
+        amountOrTokens: BN,
         confirmationTarget: number,
         confirmations: number,
         url: string,
         requiredToken?: TokenAddress,
         requiredClaimerKey?: string,
         requiredBaseFee?: BN,
-        requiredFeePPM?: BN
+        requiredFeePPM?: BN,
+        exactIn?: boolean
     ): Promise<{
+        amount: BN,
         networkFee: BN,
         swapFee: BN,
         totalFee: BN,
@@ -262,154 +264,27 @@ export class ClientSwapContract<T extends SwapData> {
             throw new UserError("Invalid address specified");
         }
 
-        const hash = this.swapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
+        let hash: string;
+        let amount: BN;
+        if(!exactIn) {
+            amount = amountOrTokens;
 
-        console.log("Generated hash: ", hash);
+            hash = this.swapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
 
-        const payStatus = await this.swapContract.getPaymentHashStatus(hash);
+            console.log("Generated hash: ", hash);
 
-        if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
-            throw new UserError("Invoice already being paid for or paid");
+            const payStatus = await this.swapContract.getPaymentHashStatus(hash);
+
+            if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
+                throw new UserError("Invoice already being paid for or paid");
+            }
         }
 
         const response: Response = await fetch(url+"/payInvoice", {
             method: "POST",
             body: JSON.stringify({
                 address,
-                amount: amount.toString(10),
-                confirmationTarget,
-                confirmations,
-                nonce: nonce.toString(10),
-                token: requiredToken==null ? null : requiredToken.toString(),
-                offerer: this.swapContract.getAddress(),
-                exactIn: false
-            }),
-            headers: {'Content-Type': 'application/json'}
-        });
-
-        if(response.status!==200) {
-            let resp: string;
-            try {
-                resp = await response.text();
-            } catch (e) {
-                throw new Error(response.statusText);
-            }
-            throw new Error(resp);
-        }
-
-        let jsonBody: any = await response.json();
-
-        const swapFee = new BN(jsonBody.data.swapFee);
-        const networkFee = new BN(jsonBody.data.networkFee);
-        const totalFee = new BN(jsonBody.data.totalFee);
-
-        if(!totalFee.eq(swapFee.add(networkFee))){
-            throw new IntermediaryError("Invalid totalFee returned");
-        }
-
-        const total = new BN(jsonBody.data.total);
-
-        const data: T = new this.swapDataDeserializer(jsonBody.data.data);
-        this.swapContract.setUsAsOfferer(data);
-
-        if(this.WBTC_ADDRESS!=null) {
-            if(!total.eq(amount.add(totalFee))){
-                throw new IntermediaryError("Invalid total returned");
-            }
-            if(!data.isToken(this.WBTC_ADDRESS)) {
-                throw new IntermediaryError("Invalid data returned - token");
-            }
-        } else {
-            if(requiredToken!=null) if(!data.isToken(requiredToken)) {
-                throw new IntermediaryError("Invalid data returned - token");
-            }
-            if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                if(!(await this.swapPrice.isValidAmountSend(amount, requiredBaseFee, requiredFeePPM, total.sub(networkFee), data.getToken()))) {
-                    throw new IntermediaryError("Fee too high");
-                }
-            }
-        }
-
-        if(
-            !data.getAmount().eq(total) ||
-            data.getHash()!==hash ||
-            !data.getEscrowNonce().eq(nonce) ||
-            data.getConfirmations()!==confirmations ||
-            data.getType()!==ChainSwapType.CHAIN_NONCED
-        ) {
-            throw new IntermediaryError("Invalid data returned");
-        }
-
-        if(requiredClaimerKey!=null) {
-            if(data.getClaimer()!==requiredClaimerKey) throw new IntermediaryError("Invalid data returned");
-        }
-
-        try {
-            await this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
-        } catch (e) {
-            if(e instanceof SignatureVerificationError) {
-                throw new IntermediaryError(e.message);
-            }
-            throw e;
-        }
-
-        return {
-            networkFee: new BN(jsonBody.data.networkFee),
-            swapFee: new BN(jsonBody.data.swapFee),
-            totalFee: new BN(jsonBody.data.totalFee),
-            data,
-            prefix: jsonBody.data.prefix,
-            timeout: jsonBody.data.timeout,
-            signature: jsonBody.data.signature,
-            nonce: jsonBody.data.nonce,
-
-            expiry: await this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)
-        };
-    }
-
-    async payOnchainExactIn(
-        address: string,
-        tokenAmount: BN,
-        confirmationTarget: number,
-        confirmations: number,
-        url: string,
-        requiredToken?: TokenAddress,
-        requiredClaimerKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN
-    ): Promise<{
-        networkFee: BN,
-        swapFee: BN,
-        totalFee: BN,
-        data: T,
-        prefix: string,
-        timeout: string,
-        signature: string,
-        nonce: number,
-        amount: BN,
-        expiry: number
-    }> {
-        const firstPart = new BN(Math.floor((Date.now()/1000)) - 700000000);
-
-        const nonceBuffer = Buffer.concat([
-            Buffer.from(firstPart.toArray("be", 5)),
-            randomBytes(3)
-        ]);
-
-        const nonce = new BN(nonceBuffer, "be");
-
-        let outputScript;
-        try {
-            outputScript = bitcoin.address.toOutputScript(address, this.options.bitcoinNetwork);
-        } catch (e) {
-            throw new UserError("Invalid address specified");
-        }
-
-        const response: Response = await fetch(url+"/payInvoice", {
-            method: "POST",
-            body: JSON.stringify({
-                address,
-                amount: tokenAmount.toString(10),
+                amount: amountOrTokens.toString(10),
                 confirmationTarget,
                 confirmations,
                 nonce: nonce.toString(10),
@@ -432,7 +307,24 @@ export class ClientSwapContract<T extends SwapData> {
 
         let jsonBody: any = await response.json();
 
-        const amount = new BN(jsonBody.data.amount);
+        const total = new BN(jsonBody.data.total);
+
+        if(exactIn) {
+            if(!total.eq(amountOrTokens)) {
+                throw new IntermediaryError("Invalid total returned");
+            }
+            amount = new BN(jsonBody.data.amount);
+
+            hash = this.swapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
+
+            console.log("Generated hash: ", hash);
+
+            const payStatus = await this.swapContract.getPaymentHashStatus(hash);
+
+            if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
+                throw new UserError("Invoice already being paid for or paid");
+            }
+        }
 
         const swapFee = new BN(jsonBody.data.swapFee);
         const networkFee = new BN(jsonBody.data.networkFee);
@@ -440,12 +332,6 @@ export class ClientSwapContract<T extends SwapData> {
 
         if(!totalFee.eq(swapFee.add(networkFee))){
             throw new IntermediaryError("Invalid totalFee returned");
-        }
-
-        const total = new BN(jsonBody.data.total);
-
-        if(!total.eq(tokenAmount)) {
-            throw new IntermediaryError("Invalid total returned");
         }
 
         const data: T = new this.swapDataDeserializer(jsonBody.data.data);
@@ -467,16 +353,6 @@ export class ClientSwapContract<T extends SwapData> {
                     throw new IntermediaryError("Fee too high");
                 }
             }
-        }
-
-        const hash = this.swapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
-
-        console.log("Generated hash: ", hash);
-
-        const payStatus = await this.swapContract.getPaymentHashStatus(hash);
-
-        if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
-            throw new UserError("Invoice already being paid for or paid");
         }
 
         if(
@@ -503,6 +379,7 @@ export class ClientSwapContract<T extends SwapData> {
         }
 
         return {
+            amount,
             networkFee: new BN(jsonBody.data.networkFee),
             swapFee: new BN(jsonBody.data.swapFee),
             totalFee: new BN(jsonBody.data.totalFee),
@@ -511,11 +388,160 @@ export class ClientSwapContract<T extends SwapData> {
             timeout: jsonBody.data.timeout,
             signature: jsonBody.data.signature,
             nonce: jsonBody.data.nonce,
-            amount: amount,
 
             expiry: await this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)
         };
     }
+
+    // async payOnchainExactIn(
+    //     address: string,
+    //     tokenAmount: BN,
+    //     confirmationTarget: number,
+    //     confirmations: number,
+    //     url: string,
+    //     requiredToken?: TokenAddress,
+    //     requiredClaimerKey?: string,
+    //     requiredBaseFee?: BN,
+    //     requiredFeePPM?: BN
+    // ): Promise<{
+    //     networkFee: BN,
+    //     swapFee: BN,
+    //     totalFee: BN,
+    //     data: T,
+    //     prefix: string,
+    //     timeout: string,
+    //     signature: string,
+    //     nonce: number,
+    //     amount: BN,
+    //     expiry: number
+    // }> {
+    //     const firstPart = new BN(Math.floor((Date.now()/1000)) - 700000000);
+    //
+    //     const nonceBuffer = Buffer.concat([
+    //         Buffer.from(firstPart.toArray("be", 5)),
+    //         randomBytes(3)
+    //     ]);
+    //
+    //     const nonce = new BN(nonceBuffer, "be");
+    //
+    //     let outputScript;
+    //     try {
+    //         outputScript = bitcoin.address.toOutputScript(address, this.options.bitcoinNetwork);
+    //     } catch (e) {
+    //         throw new UserError("Invalid address specified");
+    //     }
+    //
+    //     const response: Response = await fetch(url+"/payInvoice", {
+    //         method: "POST",
+    //         body: JSON.stringify({
+    //             address,
+    //             amount: tokenAmount.toString(10),
+    //             confirmationTarget,
+    //             confirmations,
+    //             nonce: nonce.toString(10),
+    //             token: requiredToken==null ? null : requiredToken.toString(),
+    //             offerer: this.swapContract.getAddress(),
+    //             exactIn: true
+    //         }),
+    //         headers: {'Content-Type': 'application/json'}
+    //     });
+    //
+    //     if(response.status!==200) {
+    //         let resp: string;
+    //         try {
+    //             resp = await response.text();
+    //         } catch (e) {
+    //             throw new Error(response.statusText);
+    //         }
+    //         throw new Error(resp);
+    //     }
+    //
+    //     let jsonBody: any = await response.json();
+    //
+    //     const amount = new BN(jsonBody.data.amount);
+    //
+    //     const swapFee = new BN(jsonBody.data.swapFee);
+    //     const networkFee = new BN(jsonBody.data.networkFee);
+    //     const totalFee = new BN(jsonBody.data.totalFee);
+    //
+    //     if(!totalFee.eq(swapFee.add(networkFee))){
+    //         throw new IntermediaryError("Invalid totalFee returned");
+    //     }
+    //
+    //     const total = new BN(jsonBody.data.total);
+    //
+    //     if(!total.eq(tokenAmount)) {
+    //         throw new IntermediaryError("Invalid total returned");
+    //     }
+    //
+    //     const data: T = new this.swapDataDeserializer(jsonBody.data.data);
+    //     this.swapContract.setUsAsOfferer(data);
+    //
+    //     if(this.WBTC_ADDRESS!=null) {
+    //         if(!total.eq(amount.add(totalFee))){
+    //             throw new IntermediaryError("Invalid total returned");
+    //         }
+    //         if(!data.isToken(this.WBTC_ADDRESS)) {
+    //             throw new IntermediaryError("Invalid data returned - token");
+    //         }
+    //     } else {
+    //         if(requiredToken!=null) if(!data.isToken(requiredToken)) {
+    //             throw new IntermediaryError("Invalid data returned - token");
+    //         }
+    //         if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
+    //             if(!(await this.swapPrice.isValidAmountSend(amount, requiredBaseFee, requiredFeePPM, total.sub(networkFee), data.getToken()))) {
+    //                 throw new IntermediaryError("Fee too high");
+    //             }
+    //         }
+    //     }
+    //
+    //     const hash = this.swapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
+    //
+    //     console.log("Generated hash: ", hash);
+    //
+    //     const payStatus = await this.swapContract.getPaymentHashStatus(hash);
+    //
+    //     if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
+    //         throw new UserError("Invoice already being paid for or paid");
+    //     }
+    //
+    //     if(
+    //         !data.getAmount().eq(total) ||
+    //         data.getHash()!==hash ||
+    //         !data.getEscrowNonce().eq(nonce) ||
+    //         data.getConfirmations()!==confirmations ||
+    //         data.getType()!==ChainSwapType.CHAIN_NONCED
+    //     ) {
+    //         throw new IntermediaryError("Invalid data returned");
+    //     }
+    //
+    //     if(requiredClaimerKey!=null) {
+    //         if(data.getClaimer()!==requiredClaimerKey) throw new IntermediaryError("Invalid data returned");
+    //     }
+    //
+    //     try {
+    //         await this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
+    //     } catch (e) {
+    //         if(e instanceof SignatureVerificationError) {
+    //             throw new IntermediaryError(e.message);
+    //         }
+    //         throw e;
+    //     }
+    //
+    //     return {
+    //         networkFee: new BN(jsonBody.data.networkFee),
+    //         swapFee: new BN(jsonBody.data.swapFee),
+    //         totalFee: new BN(jsonBody.data.totalFee),
+    //         data,
+    //         prefix: jsonBody.data.prefix,
+    //         timeout: jsonBody.data.timeout,
+    //         signature: jsonBody.data.signature,
+    //         nonce: jsonBody.data.nonce,
+    //         amount: amount,
+    //
+    //         expiry: await this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)
+    //     };
+    // }
 
     async payLightningLNURL(
         lnurl: string,
@@ -937,7 +963,18 @@ export class ClientSwapContract<T extends SwapData> {
         throw new Error("Aborted");
     }
 
-    async receiveOnchain(amount: BN, url: string, requiredToken?: string, requiredOffererKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, feeSafetyFactor?: BN, blockSafetyFactor?: number): Promise<{
+    async receiveOnchain(
+        amountOrTokens: BN,
+        url: string,
+        requiredToken?: string,
+        requiredOffererKey?: string,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN,
+        feeSafetyFactor?: BN,
+        blockSafetyFactor?: number,
+        exactOut?: boolean
+    ): Promise<{
+        amount: BN,
         address: string,
         swapFee: BN,
         data: T,
@@ -969,7 +1006,7 @@ export class ClientSwapContract<T extends SwapData> {
             method: "POST",
             body: JSON.stringify({
                 address: this.swapContract.getAddress(),
-                amount: amount.toString(),
+                amount: amountOrTokens.toString(),
                 token: requiredToken==null ? null : requiredToken.toString(),
 
                 claimerBounty: {
@@ -978,7 +1015,9 @@ export class ClientSwapContract<T extends SwapData> {
                     startTimestamp: startTimestamp.toString(10),
                     addBlock,
                     addFee: addFee.toString(10)
-                }
+                },
+
+                exactOut
             }),
             headers: {'Content-Type': 'application/json'}
         });
@@ -1002,6 +1041,19 @@ export class ClientSwapContract<T extends SwapData> {
         const blocksDelta = tsDelta.div(new BN(this.options.bitcoinBlocktime)).mul(new BN(blockSafetyFactor));
         const totalBlock = blocksDelta.add(new BN(addBlock));
         const totalClaimerBounty = addFee.add(totalBlock.mul(feePerBlock));
+
+        let amount: BN;
+        if(exactOut) {
+            if(!data.getAmount().eq(amountOrTokens)) {
+                throw new IntermediaryError("Invalid amount returned");
+            }
+            amount = new BN(jsonBody.data.amount);
+        } else {
+            if(!new BN(jsonBody.data.amount).eq(amountOrTokens)) {
+                throw new IntermediaryError("Invalid amount returned");
+            }
+            amount = amountOrTokens;
+        }
 
         if(!data.getClaimerBounty().eq(totalClaimerBounty)) {
             throw new IntermediaryError("Invalid claimer bounty");
@@ -1077,6 +1129,7 @@ export class ClientSwapContract<T extends SwapData> {
         }
 
         return {
+            amount,
             address: jsonBody.data.btcAddress,
             swapFee,
             data,
@@ -1166,7 +1219,15 @@ export class ClientSwapContract<T extends SwapData> {
         return anyResp;
     }
 
-    async receiveLightning(amount: BN, expirySeconds: number, url: string, requiredToken?: TokenAddress, requiredBaseFee?: BN, requiredFeePPM?: BN): Promise<{
+    async receiveLightning(
+        amountOrTokens: BN,
+        expirySeconds: number,
+        url: string,
+        requiredToken?: TokenAddress,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN,
+        exactOut?: boolean
+    ): Promise<{
         secret: Buffer,
         pr: string,
         swapFee: BN,
@@ -1174,7 +1235,6 @@ export class ClientSwapContract<T extends SwapData> {
         intermediaryKey: string,
         securityDeposit: BN
     }> {
-
         const secret = randomBytes(32);
 
         const paymentHash = createHash("sha256").update(secret).digest();
@@ -1183,7 +1243,7 @@ export class ClientSwapContract<T extends SwapData> {
             method: "POST",
             body: JSON.stringify({
                 paymentHash: paymentHash.toString("hex"),
-                amount: amount.toString(),
+                amount: amountOrTokens.toString(),
                 expiry: expirySeconds,
                 address: this.swapContract.getAddress(),
                 token: requiredToken==null ? null : requiredToken.toString()
@@ -1205,7 +1265,16 @@ export class ClientSwapContract<T extends SwapData> {
 
         const decodedPR = bolt11.decode(jsonBody.data.pr);
 
-        if(!new BN(decodedPR.millisatoshis).div(new BN(1000)).eq(amount)) throw new IntermediaryError("Invalid payment request returned, amount mismatch");
+        let amount: BN;
+        if(exactOut) {
+            if(!new BN(jsonBody.data.total).eq(amountOrTokens)) {
+                throw new IntermediaryError("Invalid amount returned");
+            }
+            amount = new BN(jsonBody.data.amount);
+        } else {
+            if(!new BN(decodedPR.millisatoshis).div(new BN(1000)).eq(amountOrTokens)) throw new IntermediaryError("Invalid payment request returned, amount mismatch");
+            amount = amountOrTokens;
+        }
 
         const total = new BN(jsonBody.data.total);
 
