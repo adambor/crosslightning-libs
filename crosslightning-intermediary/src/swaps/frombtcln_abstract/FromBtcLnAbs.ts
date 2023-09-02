@@ -451,12 +451,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 expiry: FieldTypeEnum.Number,
                 token: (val: string) => val!=null &&
                         typeof(val)==="string" &&
-                        this.allowedTokens.has(val) ? val : null,
-                descriptionHash: (val: string) => {
-                    if(val==null) return "none";
-                    if(typeof(val)!=="string" || !HEX_REGEX.test(val) || val.length!==64) return null;
-                    return val;
-                }
+                        this.allowedTokens.has(val) ? val : null
             });
 
             if(parsedBody==null) {
@@ -464,6 +459,14 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     msg: "Invalid request body"
                 });
                 return;
+            }
+
+            if(req.body.descriptionHash!=null) {
+                if(typeof(req.body.descriptionHash)!=="string" || !HEX_REGEX.test(req.body.descriptionHash) || req.body.descriptionHash.length!==64) {
+                    res.status(400).json({
+                        msg: "Invalid request body"
+                    });
+                }
             }
 
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
@@ -569,7 +572,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 expires_at: new Date(Date.now()+(parsedBody.expiry*1000)).toISOString(),
                 id: parsedBody.paymentHash,
                 tokens: amountBD.toString(10),
-                description_hash: parsedBody.descriptionHash==="none" ? null : parsedBody.descriptionHash
+                description_hash: req.body.descriptionHash
             };
 
             console.log("[From BTC-LN: REST.CreateInvoice] creating hodl invoice: ", hodlInvoiceObj);
