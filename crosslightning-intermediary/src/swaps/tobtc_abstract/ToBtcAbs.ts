@@ -564,8 +564,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                         this.allowedTokens.has(val) ? val : null,
                 offerer: (val: string) => val!=null &&
                         typeof(val)==="string" &&
-                        this.swapContract.isValidAddress(val) ? val : null,
-                exactIn: (val: boolean) => val==null || typeof(val)==="boolean" ? val : null
+                        this.swapContract.isValidAddress(val) ? val : null
             });
 
             if (parsedBody==null) {
@@ -640,7 +639,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
             let amountBD: BN;
-            if(parsedBody.exactIn) {
+            if(req.body.exactIn) {
                 amountBD = await this.swapPricing.getToBtcSwapAmount(parsedBody.amount, useToken);
 
                 //Decrease by base fee
@@ -710,7 +709,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             console.log("[To BTC: REST.PayInvoice] Adjusted total network fee: ", networkFeeAdjusted.toString(10));
             console.log("[To BTC: REST.PayInvoice] Adjusted network fee (sats/vB): ", feeSatsPervByteAdjusted.toString(10));
 
-            if(parsedBody.exactIn) {
+            if(req.body.exactIn) {
                 //Decrease by network fee
                 amountBD = amountBD.sub(networkFeeAdjusted);
 
@@ -761,7 +760,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             let amountInToken: BN;
             let total: BN;
-            if(parsedBody.exactIn) {
+            if(req.body.exactIn) {
                 amountInToken = parsedBody.amount.sub(swapFeeInToken).sub(networkFeeInToken);
                 total = parsedBody.amount;
             } else {

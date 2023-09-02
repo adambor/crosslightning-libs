@@ -452,7 +452,11 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 token: (val: string) => val!=null &&
                         typeof(val)==="string" &&
                         this.allowedTokens.has(val) ? val : null,
-                exactOut: (val: boolean) => val==null || typeof(val)==="boolean" ? val : null
+                descriptionHash: (val: string) => {
+                    if(val==null) return "none";
+                    if(typeof(val)!=="string" || !HEX_REGEX.test(val) || val.length!==64) return null;
+                    return val;
+                }
             });
 
             if(parsedBody==null) {
@@ -465,7 +469,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
             let amountBD: BN;
-            if(parsedBody.exactOut) {
+            if(req.body.exactOut) {
                 amountBD = await this.swapPricing.getToBtcSwapAmount(parsedBody.amount, useToken, true);
 
                 // amt = (amt+base_fee)/(1-fee)
@@ -541,7 +545,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
             let amountInToken: BN;
             let total: BN;
-            if(parsedBody.exactOut) {
+            if(req.body.exactOut) {
                 amountInToken = parsedBody.amount.add(swapFeeInToken);
                 total = parsedBody.amount;
             } else {
@@ -564,7 +568,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 cltv_delta: this.config.minCltv.add(new BN(5)).toString(10),
                 expires_at: new Date(Date.now()+(parsedBody.expiry*1000)).toISOString(),
                 id: parsedBody.paymentHash,
-                tokens: amountBD.toString(10)
+                tokens: amountBD.toString(10),
+                description_hash: parsedBody.descriptionHash==="none" ? null : parsedBody.descriptionHash
             };
 
             console.log("[From BTC-LN: REST.CreateInvoice] creating hodl invoice: ", hodlInvoiceObj);

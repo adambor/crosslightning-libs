@@ -294,8 +294,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                     startTimestamp: FieldTypeEnum.BN,
                     addBlock: FieldTypeEnum.BN,
                     addFee: FieldTypeEnum.BN,
-                },
-                exactOut: (val: boolean) => val==null || typeof(val)==="boolean" ? val : null
+                }
             });
 
             if(parsedBody==null) {
@@ -308,7 +307,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
             let amountBD: BN;
-            if(parsedBody.exactOut) {
+            if(req.body.exactOut) {
                 amountBD = await this.swapPricing.getToBtcSwapAmount(parsedBody.amount, useToken, true);
 
                 // amt = (amt+base_fee)/(1-fee)
@@ -378,7 +377,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
             let amountInToken: BN;
             let total: BN;
-            if(parsedBody.exactOut) {
+            if(req.body.exactOut) {
                 amountInToken = parsedBody.amount.add(swapFeeInToken);
                 total = parsedBody.amount;
             } else {
