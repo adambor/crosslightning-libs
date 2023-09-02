@@ -129,7 +129,18 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
 
         let result;
         try {
-            result = await this.wrapper.contract.waitForIncomingPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM, this.data.getSecurityDeposit(), abortController.signal, checkIntervalSeconds);
+            result = await this.wrapper.contract.waitForIncomingPaymentAuthorization(
+                this.pr,
+                this.url,
+                this.data.getToken(),
+                this.data.getOfferer(),
+                this.requiredBaseFee,
+                this.requiredFeePPM,
+                this.data.getSecurityDeposit(),
+                this.data.getAmount(),
+                abortController.signal,
+                checkIntervalSeconds
+            );
         } catch (e) {
             if(callbackError!=null) throw callbackError;
             throw e;

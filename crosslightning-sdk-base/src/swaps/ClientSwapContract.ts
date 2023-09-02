@@ -1171,7 +1171,16 @@ export class ClientSwapContract<T extends SwapData> {
         }
     }
 
-    async receiveLightningLNURL(lnurl: string, amount: BN, expirySeconds: number, url: string, requiredToken?: TokenAddress, requiredBaseFee?: BN, requiredFeePPM?: BN, noInstantReceive?: boolean): Promise<{
+    async receiveLightningLNURL(
+        lnurl: string,
+        amount: BN,
+        url: string,
+        requiredToken?: TokenAddress,
+        requiredKey?: string,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN,
+        noInstantReceive?: boolean
+    ): Promise<{
         secret: Buffer,
         pr: string,
         swapFee: BN,
@@ -1204,7 +1213,7 @@ export class ClientSwapContract<T extends SwapData> {
             throw new Error("Amount more than maximum");
         }
 
-        const resp = await this.receiveLightning(amount, expirySeconds, url, requiredToken, requiredBaseFee, requiredFeePPM);
+        const resp = await this.receiveLightning(amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
 
         if(noInstantReceive) {
             const anyResp: any = resp;
@@ -1221,9 +1230,9 @@ export class ClientSwapContract<T extends SwapData> {
 
     async receiveLightning(
         amountOrTokens: BN,
-        expirySeconds: number,
         url: string,
         requiredToken?: TokenAddress,
+        requiredKey?: string,
         requiredBaseFee?: BN,
         requiredFeePPM?: BN,
         exactOut?: boolean,
@@ -1251,7 +1260,6 @@ export class ClientSwapContract<T extends SwapData> {
             body: JSON.stringify({
                 paymentHash: paymentHash.toString("hex"),
                 amount: amountOrTokens.toString(),
-                expiry: expirySeconds,
                 address: this.swapContract.getAddress(),
                 token: requiredToken==null ? null : requiredToken.toString(),
                 descriptionHash: descriptionHash==null ? null : descriptionHash.toString("hex"),
@@ -1272,6 +1280,10 @@ export class ClientSwapContract<T extends SwapData> {
 
         let jsonBody: any = await response.json();
 
+        if(requiredKey!=null && requiredKey!==jsonBody.data.intermediaryKey) {
+            throw new IntermediaryError("Invalid intermediary address/pubkey");
+        }
+
         const decodedPR = bolt11.decode(jsonBody.data.pr);
 
         if(descriptionHash!=null && decodedPR.tagsObject.purpose_commit_hash!==descriptionHash.toString("hex")) {
@@ -1283,13 +1295,18 @@ export class ClientSwapContract<T extends SwapData> {
             if(!new BN(jsonBody.data.total).eq(amountOrTokens)) {
                 throw new IntermediaryError("Invalid amount returned");
             }
-            amount = new BN(jsonBody.data.amount);
+            amount = new BN(decodedPR.millisatoshis).div(new BN(1000));
         } else {
             if(!new BN(decodedPR.millisatoshis).div(new BN(1000)).eq(amountOrTokens)) throw new IntermediaryError("Invalid payment request returned, amount mismatch");
             amount = amountOrTokens;
         }
 
         const total = new BN(jsonBody.data.total);
+
+        const liquidity = await this.swapContract.getIntermediaryBalance(jsonBody.data.intermediaryKey, requiredToken);
+        if(liquidity.lt(total)) {
+            throw new IntermediaryError("Intermediary doesn't have enough liquidity");
+        }
 
         if(this.WBTC_ADDRESS==null) {
             if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
@@ -1309,7 +1326,17 @@ export class ClientSwapContract<T extends SwapData> {
         };
     }
 
-    async getPaymentAuthorization(bolt11PaymentReq: string, url: string, requiredToken?: TokenAddress, requiredOffererKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, requiredSecurityDeposit?: BN, abortSignal?: AbortSignal): Promise<{
+    async getPaymentAuthorization(
+        bolt11PaymentReq: string,
+        url: string,
+        requiredToken?: TokenAddress,
+        requiredOffererKey?: string,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN,
+        maxSecurityDeposit?: BN,
+        minOut?: BN,
+        abortSignal?: AbortSignal
+    ): Promise<{
         is_paid: boolean,
 
         data?: T,
@@ -1361,13 +1388,17 @@ export class ClientSwapContract<T extends SwapData> {
                 }
             }
 
-            if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                if(!(await this.swapPrice.isValidAmountReceive(new BN(decodedPR.satoshis), requiredBaseFee, requiredFeePPM, data.getAmount(), requiredToken))) {
-                    throw new IntermediaryError("Fee too high");
+            if(minOut!=null && data.getAmount().lt(minOut)) {
+                throw new IntermediaryError("Invalid amount received");
+            } else {
+                if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
+                    if(!(await this.swapPrice.isValidAmountReceive(new BN(decodedPR.satoshis), requiredBaseFee, requiredFeePPM, data.getAmount(), requiredToken))) {
+                        throw new IntermediaryError("Fee too high");
+                    }
                 }
             }
 
-            if(requiredSecurityDeposit!=null && !requiredSecurityDeposit.eq(data.getSecurityDeposit())) {
+            if(maxSecurityDeposit!=null && data.getSecurityDeposit().gt(maxSecurityDeposit)) {
                 throw new IntermediaryError("Invalid security deposit!");
             }
 
@@ -1413,7 +1444,8 @@ export class ClientSwapContract<T extends SwapData> {
         requiredOffererKey?: string,
         requiredBaseFee?: BN,
         requiredFeePPM?: BN,
-        requiredSecurityDeposit?: BN,
+        minSecurityDeposit?: BN,
+        minOut?: BN,
         abortSignal?: AbortSignal,
         intervalSeconds?: number,
     ) : Promise<{
@@ -1429,7 +1461,17 @@ export class ClientSwapContract<T extends SwapData> {
         }
 
         while(abortSignal==null || !abortSignal.aborted) {
-            const result = await this.getPaymentAuthorization(bolt11PaymentReq, url, requiredToken, requiredOffererKey, requiredBaseFee, requiredFeePPM, requiredSecurityDeposit, abortSignal);
+            const result = await this.getPaymentAuthorization(
+                bolt11PaymentReq,
+                url,
+                requiredToken,
+                requiredOffererKey,
+                requiredBaseFee,
+                requiredFeePPM,
+                minSecurityDeposit,
+                minOut,
+                abortSignal
+            );
             if(result.is_paid) return result as any;
             await timeoutPromise(intervalSeconds || 5);
         }

@@ -36,7 +36,6 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
      * Returns a newly created swap, receiving 'amount' on lightning network
      *
      * @param amount            Amount you wish to receive in base units (satoshis)
-     * @param expirySeconds     Swap expiration in seconds, setting this too low might lead to unsuccessful payments, too high and you might lose access to your funds for longer than necessary
      * @param url               Intermediary/Counterparty swap service url
      * @param requiredToken     Token that we want to receive
      * @param requiredKey       Required key of the Intermediary
@@ -46,20 +45,29 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
      * @param exactOut          Whether to create an exact out swap instead of exact in
      * @param descriptionHash   Description hash to use for the invoice
      */
-    async create(amount: BN, expirySeconds: number, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, exactOut?: boolean, descriptionHash?: Buffer): Promise<FromBTCLNSwap<T>> {
+    async create(amount: BN, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, exactOut?: boolean, descriptionHash?: Buffer): Promise<FromBTCLNSwap<T>> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const result = await this.contract.receiveLightning(amount, expirySeconds, url, requiredToken, requiredBaseFee, requiredFeePPM, exactOut, descriptionHash);
+        const result = await this.contract.receiveLightning(
+            amount,
+            url,
+            requiredToken,
+            requiredKey,
+            requiredBaseFee,
+            requiredFeePPM,
+            exactOut,
+            descriptionHash
+        );
 
         const parsed = bolt11.decode(result.pr);
 
         const swapData: T = await this.contract.swapContract.createSwapData(
             ChainSwapType.HTLC,
-            requiredKey || result.intermediaryKey,
+            result.intermediaryKey,
             this.contract.swapContract.getAddress(),
             requiredToken,
-            null,
+            result.total,
             parsed.tagsObject.payment_hash,
             null,
             null,
@@ -93,7 +101,6 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
      *
      * @param lnurl             LNURL-withdraw to withdraw funds from
      * @param amount            Amount you wish to receive in base units (satoshis)
-     * @param expirySeconds     Swap expiration in seconds, setting this too low might lead to unsuccessful payments, too high and you might lose access to your funds for longer than necessary
      * @param url               Intermediary/Counterparty swap service url
      * @param requiredToken     Token that we want to receive
      * @param requiredKey       Required key of the Intermediary
@@ -101,19 +108,19 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
      * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
      * @param noInstantReceive  Flag to disable instantly posting the lightning PR to LN service for withdrawal, when set the lightning PR is sent to LN service when waitForPayment is called
      */
-    async createViaLNURL(lnurl: string, amount: BN, expirySeconds: number, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, noInstantReceive?: boolean): Promise<FromBTCLNSwap<T>> {
+    async createViaLNURL(lnurl: string, amount: BN, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, noInstantReceive?: boolean): Promise<FromBTCLNSwap<T>> {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const result = await this.contract.receiveLightningLNURL(lnurl, amount, expirySeconds, url, requiredToken, requiredBaseFee, requiredFeePPM, noInstantReceive);
+        const result = await this.contract.receiveLightningLNURL(lnurl, amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, noInstantReceive);
 
         const parsed = bolt11.decode(result.pr);
 
         const swapData: T = await this.contract.swapContract.createSwapData(
             ChainSwapType.HTLC,
-            requiredKey || result.intermediaryKey,
+            result.intermediaryKey,
             this.contract.swapContract.getAddress(),
             requiredToken,
-            null,
+            result.total,
             parsed.tagsObject.payment_hash,
             null,
             null,
@@ -125,13 +132,6 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
         );
 
         const total = result.total;
-
-        if(requiredKey!=null) {
-            const liquidity = await this.contract.swapContract.getIntermediaryBalance(requiredKey, requiredToken);
-            if(liquidity.lt(total)) {
-                throw new IntermediaryError("Intermediary doesn't have enough liquidity");
-            }
-        }
 
         const swap = new FromBTCLNSwap<T>(this, result.pr, result.secret, url, swapData, result.swapFee, requiredBaseFee, requiredFeePPM, total, lnurl, result.lnurlCallbackResult, result.withdrawRequest.k1, result.withdrawRequest.callback, !noInstantReceive);
 
