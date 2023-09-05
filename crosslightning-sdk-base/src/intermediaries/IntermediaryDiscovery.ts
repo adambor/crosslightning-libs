@@ -49,17 +49,21 @@ function swapHandlerTypeToSwapType(swapHandlerType: SwapHandlerType): SwapType {
     }
 
 }
-function getIntermediaryComparator(swapType: SwapType, swapAmount: BN, tokenAddress: TokenAddress) {
+function getIntermediaryComparator(swapType: SwapType, tokenAddress: TokenAddress, swapAmount?: BN) {
 
     if(swapType===SwapType.TO_BTC) {
         //TODO: Also take reputation into account
     }
 
     return (a: Intermediary, b: Intermediary): number => {
-        const feeA = new BN(a.services[swapType].swapBaseFee).add(swapAmount.mul(new BN(a.services[swapType].swapFeePPM)).div(new BN(1000000)));
-        const feeB = new BN(b.services[swapType].swapBaseFee).add(swapAmount.mul(new BN(b.services[swapType].swapFeePPM)).div(new BN(1000000)));
+        if(swapAmount==null) {
+            return new BN(a.services[swapType].swapFeePPM).sub(new BN(b.services[swapType].swapFeePPM)).toNumber();
+        } else {
+            const feeA = new BN(a.services[swapType].swapBaseFee).add(swapAmount.mul(new BN(a.services[swapType].swapFeePPM)).div(new BN(1000000)));
+            const feeB = new BN(b.services[swapType].swapBaseFee).add(swapAmount.mul(new BN(b.services[swapType].swapFeePPM)).div(new BN(1000000)));
 
-        return feeA.sub(feeB).toNumber();
+            return feeA.sub(feeB).toNumber();
+        }
     }
 
 }
@@ -288,19 +292,19 @@ export class IntermediaryDiscovery<T extends SwapData> {
         return max;
     }
 
-    getSwapCandidates(swapType: SwapType, amount: BN, tokenAddress: TokenAddress, count?: number): Intermediary[] {
+    getSwapCandidates(swapType: SwapType, tokenAddress: TokenAddress, amount?: BN, count?: number): Intermediary[] {
 
         const candidates = this.intermediaries.filter(e => {
             const swapService = e.services[swapType];
             if(swapService==null) return false;
-            if(amount.lt(new BN(swapService.min))) return false;
-            if(amount.gt(new BN(swapService.max))) return false;
+            if(amount!=null && amount.lt(new BN(swapService.min))) return false;
+            if(amount!=null && amount.gt(new BN(swapService.max))) return false;
             if(swapService.tokens==null) return false;
             if(!swapService.tokens.includes(tokenAddress.toString())) return false;
             return true;
         });
 
-        candidates.sort(getIntermediaryComparator(swapType, amount, tokenAddress));
+        candidates.sort(getIntermediaryComparator(swapType, tokenAddress, amount));
 
         if(count==null) {
             return candidates;

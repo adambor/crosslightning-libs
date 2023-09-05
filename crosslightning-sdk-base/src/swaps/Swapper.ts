@@ -23,8 +23,8 @@ import {ToBTCSwap} from "./tobtc/onchain/ToBTCSwap";
 import {ChainUtils} from "../btc/ChainUtils";
 import {MempoolBitcoinRpc} from "../btc/MempoolBitcoinRpc";
 import {BtcRelay} from "crosslightning-base/dist";
-import { MempoolBtcRelaySynchronizer } from "../btc/synchronizer/MempoolBtcRelaySynchronizer";
-import { LocalWrapperStorage } from "../storage/LocalWrapperStorage";
+import {MempoolBtcRelaySynchronizer} from "../btc/synchronizer/MempoolBtcRelaySynchronizer";
+import {LocalWrapperStorage} from "../storage/LocalWrapperStorage";
 import {OutOfBoundsError} from "../errors/OutOfBoundsError";
 import {Intermediary} from "..";
 
@@ -240,16 +240,14 @@ export class Swapper<
         await this.frombtc.stop();
     }
 
-    async createSwap<S extends ISwap>(create: (candidate: Intermediary) => Promise<S>, amount: BN, tokenAddress: TokenAddressType, inBtc: boolean): Promise<S> {
-        let btcAmt: BN;
+    async createSwap<S extends ISwap>(create: (candidate: Intermediary) => Promise<S>, amount: BN, tokenAddress: TokenAddressType, inBtc: boolean, swapType: SwapType): Promise<S> {
+        let candidates: Intermediary[];
         if(!inBtc) {
-            //Get approximate bitcoin amount
-            btcAmt = await this.options.pricing.getToBtcSwapAmount(amount, tokenAddress);
+            //Get candidates not based on the amount
+            candidates = this.intermediaryDiscovery.getSwapCandidates(swapType, tokenAddress);
         } else {
-            btcAmt = amount;
+            candidates = this.intermediaryDiscovery.getSwapCandidates(swapType, tokenAddress, amount);
         }
-
-        const candidates = this.intermediaryDiscovery.getSwapCandidates(SwapType.TO_BTC, btcAmt, tokenAddress);
         if(candidates.length===0) throw new Error("No intermediary found!");
 
         let min: BN;
@@ -318,7 +316,8 @@ export class Swapper<
             ),
             amount,
             tokenAddress,
-            !exactIn
+            !exactIn,
+            SwapType.TO_BTC
         );
     }
 
@@ -348,7 +347,8 @@ export class Swapper<
             ),
             new BN(parsedPR.millisatoshis).div(new BN(1000)),
             tokenAddress,
-            true
+            true,
+            SwapType.TO_BTCLN
         );
     }
 
@@ -380,7 +380,8 @@ export class Swapper<
             ),
             amount,
             tokenAddress,
-            true
+            true,
+            SwapType.TO_BTCLN
         );
     }
 
@@ -404,7 +405,8 @@ export class Swapper<
             ),
             amount,
             tokenAddress,
-            exactOut
+            exactOut,
+            SwapType.FROM_BTC
         );
     }
 
@@ -430,7 +432,8 @@ export class Swapper<
             ),
             amount,
             tokenAddress,
-            exactOut
+            exactOut,
+            SwapType.FROM_BTCLN
         );
     }
 
@@ -456,7 +459,8 @@ export class Swapper<
             ),
             amount,
             tokenAddress,
-            true
+            true,
+            SwapType.FROM_BTCLN
         );
     }
 
