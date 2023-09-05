@@ -638,12 +638,19 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
+            let tooLow = false;
             let amountBD: BN;
             if(req.body.exactIn) {
                 amountBD = await this.swapPricing.getToBtcSwapAmount(parsedBody.amount, useToken);
 
                 //Decrease by base fee
                 amountBD = amountBD.sub(this.config.baseFee);
+
+                //If it's already smaller than minimum, set it to minimum so we can calculate the network fee
+                if(amountBD.lt(this.config.min)) {
+                    amountBD = this.config.min;
+                    tooLow = true;
+                }
             } else {
                 amountBD = parsedBody.amount;
 
@@ -716,7 +723,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 //Decrease by percentage fee
                 amountBD = amountBD.mul(new BN(1000000)).div(this.config.feePPM.add(new BN(1000000)));
 
-                if(amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)))) {
+                if(tooLow || amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)))) {
                     //Compute min/max
                     let adjustedMin = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
                     let adjustedMax = this.config.max.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
