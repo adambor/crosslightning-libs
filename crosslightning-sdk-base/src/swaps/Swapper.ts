@@ -405,7 +405,7 @@ export class Swapper<
             ),
             amount,
             tokenAddress,
-            exactOut,
+            !exactOut,
             SwapType.FROM_BTC
         );
     }
@@ -432,7 +432,7 @@ export class Swapper<
             ),
             amount,
             tokenAddress,
-            exactOut,
+            !exactOut,
             SwapType.FROM_BTCLN
         );
     }
