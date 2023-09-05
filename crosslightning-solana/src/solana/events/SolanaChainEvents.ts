@@ -123,18 +123,18 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                 }
 
                 const swapData: SolanaSwapData = new SolanaSwapData(
-                    ix.accounts.offerer,
-                    ix.accounts.claimer,
-                    ix.accounts.mint,
-                    ix.data.initializerAmount,
+                    ix.accounts.offerer, //32 bytes
+                    ix.accounts.claimer, //32 bytes
+                    ix.accounts.mint,    //32 bytes
+                    ix.data.initializerAmount, //8 bytes
                     paymentHash.toString("hex"),
-                    ix.data.expiry,
-                    ix.data.escrowNonce,
-                    ix.data.confirmations,
-                    ix.data.payOut,
-                    ix.data.kind,
+                    ix.data.expiry, //8 bytes
+                    ix.data.escrowNonce, //8 bytes
+                    ix.data.confirmations, //2 bytes
+                    ix.data.payOut, //1 byte
+                    ix.data.kind, //1 byte
                     payIn,
-                    ix.accounts.claimerTokenAccount,
+                    ix.accounts.claimerTokenAccount, //32 bytes
                     securityDeposit,
                     claimerBounty,
                     Buffer.from(ix.data.txoHash).toString('hex')
