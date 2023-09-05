@@ -401,7 +401,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
             console.log("[From BTC: REST.CreateInvoice] Created receiving address: ", receiveAddress);
 
-            const createdSwap: FromBtcSwapAbs<T> = new FromBtcSwapAbs<T>(receiveAddress, parsedBody.amount, swapFee);
+            const createdSwap: FromBtcSwapAbs<T> = new FromBtcSwapAbs<T>(receiveAddress, amountBD, swapFee);
 
             const paymentHash = this.getChainHash(createdSwap);
 
@@ -419,7 +419,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 baseSD = (await this.swapContract.getRefundFee()).mul(new BN(2));
             }
             console.log("[From BTC: REST.CreateInvoice] Base security deposit: ", baseSD.toString(10));
-            const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount.sub(swapFee), this.swapContract.getNativeCurrencyAddress(), true);
+            const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(amountBD.sub(swapFee), this.swapContract.getNativeCurrencyAddress(), true);
             console.log("[From BTC: REST.CreateInvoice] Swap output value in native currency: ", swapValueInNativeCurrency.toString(10));
             const apyPPM = new BN(Math.floor(this.config.securityDepositAPY*1000000));
             console.log("[From BTC: REST.CreateInvoice] APY PPM: ", apyPPM.toString(10));
