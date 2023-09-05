@@ -25,6 +25,8 @@ import {MempoolBitcoinRpc} from "../btc/MempoolBitcoinRpc";
 import {BtcRelay} from "crosslightning-base/dist";
 import { MempoolBtcRelaySynchronizer } from "../btc/synchronizer/MempoolBtcRelaySynchronizer";
 import { LocalWrapperStorage } from "../storage/LocalWrapperStorage";
+import {OutOfBoundsError} from "../errors/OutOfBoundsError";
+import {Intermediary} from "..";
 
 export type SwapperOptions = {
     intermediaryUrl?: string,
@@ -238,19 +240,9 @@ export class Swapper<
         await this.frombtc.stop();
     }
 
-    /**
-     * Creates To BTC swap
-     *
-     * @param tokenAddress          Token address to pay with
-     * @param address               Recipient's bitcoin address
-     * @param amount                Amount to send in satoshis (bitcoin's smallest denomination)
-     * @param confirmationTarget    How soon should the transaction be confirmed (determines the fee)
-     * @param confirmations         How many confirmations must the intermediary wait to claim the funds
-     * @param exactIn               Whether to use exact in instead of exact out
-     */
-    async createToBTCSwap(tokenAddress: TokenAddressType, address: string, amount: BN, confirmationTarget?: number, confirmations?: number, exactIn?: boolean): Promise<ToBTCSwap<T>> {
+    async createSwap<S extends ISwap>(create: (candidate: Intermediary) => Promise<S>, amount: BN, tokenAddress: TokenAddressType, inBtc: boolean): Promise<S> {
         let btcAmt: BN;
-        if(exactIn) {
+        if(!inBtc) {
             //Get approximate bitcoin amount
             btcAmt = await this.options.pricing.getToBtcSwapAmount(amount, tokenAddress);
         } else {
@@ -260,23 +252,36 @@ export class Swapper<
         const candidates = this.intermediaryDiscovery.getSwapCandidates(SwapType.TO_BTC, btcAmt, tokenAddress);
         if(candidates.length===0) throw new Error("No intermediary found!");
 
-        let swap;
+        let min: BN;
+        let max: BN;
+
+        let swap: S;
         let error;
         for(let candidate of candidates) {
             try {
-                swap = await this.tobtc.create(address, amount, confirmationTarget || 3, confirmations || 3, candidate.url+"/tobtc", tokenAddress, candidate.address,
-                    new BN(candidate.services[SwapType.TO_BTC].swapBaseFee),
-                    new BN(candidate.services[SwapType.TO_BTC].swapFeePPM),
-                    exactIn);
+                swap = await create(candidate);
                 break;
             } catch (e) {
                 if(e instanceof IntermediaryError) {
                     //Blacklist that node
                     this.intermediaryDiscovery.removeIntermediary(candidate);
                 }
+                if(e instanceof OutOfBoundsError) {
+                    if(min==null || max==null) {
+                        min = e.min;
+                        max = e.max;
+                    } else {
+                        min = BN.min(min, e.min);
+                        max = BN.max(max, e.max);
+                    }
+                }
                 console.error(e);
                 error = e;
             }
+        }
+
+        if(min!=null && max!=null) {
+            throw new OutOfBoundsError("Out of bounds", 400, min, max);
         }
 
         if(swap==null) {
@@ -287,46 +292,35 @@ export class Swapper<
         return swap;
     }
 
-
-    // /**
-    //  * Creates To BTC swap with exactly specified input token amount
-    //  *
-    //  * @param tokenAddress          Token address to pay with
-    //  * @param address               Recipient's bitcoin address
-    //  * @param amount                Amount to send in token base units
-    //  * @param confirmationTarget    How soon should the transaction be confirmed (determines the fee)
-    //  * @param confirmations         How many confirmations must the intermediary wait to claim the funds
-    //  */
-    // async createToBTCSwapExactIn(tokenAddress: string, address: string, amount: BN, confirmationTarget?: number, confirmations?: number): Promise<ToBTCSwap<T>> {
-    //     //Get approximate bitcoin amount
-    //     const approxBtcAmount = await this.options.pricing.getToBtcSwapAmount(amount, tokenAddress);
-    //     const candidates = await this.intermediaryDiscovery.getSwapCandidates(SwapType.TO_BTC, approxBtcAmount, tokenAddress);
-    //
-    //     let swap;
-    //     let error;
-    //     for(let candidate of candidates) {
-    //         try {
-    //             swap = await this.tobtc.createExactIn(address, amount, confirmationTarget || 3, confirmations || 3, candidate.url+"/tobtc", tokenAddress, candidate.address,
-    //                 new BN(candidate.services[SwapType.TO_BTC].swapBaseFee),
-    //                 new BN(candidate.services[SwapType.TO_BTC].swapFeePPM));
-    //             break;
-    //         } catch (e) {
-    //             if(e instanceof IntermediaryError) {
-    //                 //Blacklist that node
-    //                 this.intermediaryDiscovery.removeIntermediary(candidate);
-    //             }
-    //             console.error(e);
-    //             error = e;
-    //         }
-    //     }
-    //
-    //     if(swap==null) {
-    //         if(error!=null) throw error;
-    //         throw new Error("No intermediary found!");
-    //     }
-    //
-    //     return swap;
-    // }
+    /**
+     * Creates To BTC swap
+     *
+     * @param tokenAddress          Token address to pay with
+     * @param address               Recipient's bitcoin address
+     * @param amount                Amount to send in satoshis (bitcoin's smallest denomination)
+     * @param confirmationTarget    How soon should the transaction be confirmed (determines the fee)
+     * @param confirmations         How many confirmations must the intermediary wait to claim the funds
+     * @param exactIn               Whether to use exact in instead of exact out
+     */
+    createToBTCSwap(tokenAddress: TokenAddressType, address: string, amount: BN, confirmationTarget?: number, confirmations?: number, exactIn?: boolean): Promise<ToBTCSwap<T>> {
+        return this.createSwap<ToBTCSwap<T>>(
+            (candidate: Intermediary) => this.tobtc.create(
+                address,
+                amount,
+                confirmationTarget || 3,
+                confirmations || 3,
+                candidate.url+"/tobtc",
+                tokenAddress,
+                candidate.address,
+                new BN(candidate.services[SwapType.TO_BTC].swapBaseFee),
+                new BN(candidate.services[SwapType.TO_BTC].swapFeePPM),
+                exactIn
+            ),
+            amount,
+            tokenAddress,
+            !exactIn
+        );
+    }
 
     /**
      * Creates To BTCLN swap
@@ -339,33 +333,23 @@ export class Swapper<
      */
     async createToBTCLNSwap(tokenAddress: TokenAddressType, paymentRequest: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN): Promise<ToBTCLNSwap<T>> {
         const parsedPR = bolt11.decode(paymentRequest);
-        const candidates = this.intermediaryDiscovery.getSwapCandidates(SwapType.TO_BTCLN, new BN(parsedPR.millisatoshis).div(new BN(1000)), tokenAddress);
-        if(candidates.length===0) throw new Error("No intermediary found!");
 
-        let swap;
-        let error;
-        for(let candidate of candidates) {
-            try {
-                swap = await this.tobtcln.create(paymentRequest, expirySeconds || (3*24*3600), candidate.url+"/tobtcln", maxRoutingBaseFee, maxRoutingPPM, tokenAddress, candidate.address,
-                    new BN(candidate.services[SwapType.TO_BTCLN].swapBaseFee),
-                    new BN(candidate.services[SwapType.TO_BTCLN].swapFeePPM));
-                break;
-            } catch (e) {
-                if(e instanceof IntermediaryError) {
-                    //Blacklist that node
-                    this.intermediaryDiscovery.removeIntermediary(candidate);
-                }
-                console.error(e);
-                error = e;
-            }
-        }
-
-        if(swap==null) {
-            if(error!=null) throw error;
-            throw new Error("No intermediary found!");
-        }
-
-        return swap;
+        return this.createSwap<ToBTCLNSwap<T>>(
+            (candidate: Intermediary) => this.tobtcln.create(
+                paymentRequest,
+                expirySeconds || (3*24*3600),
+                candidate.url+"/tobtcln",
+                maxRoutingBaseFee,
+                maxRoutingPPM,
+                tokenAddress,
+                candidate.address,
+                new BN(candidate.services[SwapType.TO_BTCLN].swapBaseFee),
+                new BN(candidate.services[SwapType.TO_BTCLN].swapFeePPM)
+            ),
+            new BN(parsedPR.millisatoshis).div(new BN(1000)),
+            tokenAddress,
+            true
+        );
     }
 
     /**
@@ -380,34 +364,24 @@ export class Swapper<
      * @param maxRoutingPPM         Maximum routing fee to use - proportional fee in PPM (higher routing fee means higher probability of payment success)
      */
     async createToBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurlPay: string, amount: BN, comment: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN): Promise<ToBTCLNSwap<T>> {
-        const candidates = this.intermediaryDiscovery.getSwapCandidates(SwapType.TO_BTCLN, amount, tokenAddress);
-        if(candidates.length===0) throw new Error("No intermediary found!");
-
-        let swap;
-        let error;
-        for(let candidate of candidates) {
-            try {
-                swap = await this.tobtcln.createViaLNURL(lnurlPay, amount, comment, expirySeconds || (3*24*3600), candidate.url+"/tobtcln", maxRoutingBaseFee, maxRoutingPPM, tokenAddress, candidate.address,
-                    new BN(candidate.services[SwapType.TO_BTCLN].swapBaseFee),
-                    new BN(candidate.services[SwapType.TO_BTCLN].swapFeePPM));
-                break;
-            } catch (e) {
-                if(e instanceof IntermediaryError) {
-                    //Blacklist that node
-                    this.intermediaryDiscovery.removeIntermediary(candidate);
-                }
-                console.error(e);
-                error = e;
-            }
-        }
-
-        if(swap==null) {
-            if(error!=null) throw error;
-            throw new Error("No intermediary found!");
-        }
-
-
-        return swap;
+        return this.createSwap<ToBTCLNSwap<T>>(
+            (candidate: Intermediary) => this.tobtcln.createViaLNURL(
+                lnurlPay,
+                amount,
+                comment,
+                expirySeconds || (3*24*3600),
+                candidate.url+"/tobtcln",
+                maxRoutingBaseFee,
+                maxRoutingPPM,
+                tokenAddress,
+                candidate.address,
+                new BN(candidate.services[SwapType.TO_BTCLN].swapBaseFee),
+                new BN(candidate.services[SwapType.TO_BTCLN].swapFeePPM)
+            ),
+            amount,
+            tokenAddress,
+            true
+        );
     }
 
     /**
@@ -418,43 +392,20 @@ export class Swapper<
      * @param exactOut              Whether to use a exact out instead of exact in
      */
     async createFromBTCSwap(tokenAddress: TokenAddressType, amount: BN, exactOut?: boolean): Promise<FromBTCSwap<T>> {
-        let btcAmt: BN;
-        if(exactOut) {
-            //Get approximate bitcoin amount
-            btcAmt = await this.options.pricing.getToBtcSwapAmount(amount, tokenAddress);
-        } else {
-            btcAmt = amount;
-        }
-
-        const candidates = this.intermediaryDiscovery.getSwapCandidates(SwapType.FROM_BTC, btcAmt, tokenAddress);
-        if(candidates.length===0) throw new Error("No intermediary found!");
-
-        let swap;
-        let error;
-        for(let candidate of candidates) {
-            try {
-                swap = await this.frombtc.create(amount, candidate.url+"/frombtc", tokenAddress, candidate.address,
-                    new BN(candidate.services[SwapType.FROM_BTC].swapBaseFee),
-                    new BN(candidate.services[SwapType.FROM_BTC].swapFeePPM),
-                    exactOut);
-                break;
-            } catch (e) {
-                if(e instanceof IntermediaryError) {
-                    //Blacklist that node
-                    this.intermediaryDiscovery.removeIntermediary(candidate);
-                }
-                console.error(e);
-                error = e;
-            }
-        }
-
-        if(swap==null) {
-            if(error!=null) throw error;
-            throw new Error("No intermediary found!");
-        }
-
-
-        return swap;
+        return this.createSwap<FromBTCSwap<T>>(
+            (candidate: Intermediary) => this.frombtc.create(
+                amount,
+                candidate.url+"/frombtc",
+                tokenAddress,
+                candidate.address,
+                new BN(candidate.services[SwapType.FROM_BTC].swapBaseFee),
+                new BN(candidate.services[SwapType.FROM_BTC].swapFeePPM),
+                exactOut
+            ),
+            amount,
+            tokenAddress,
+            exactOut
+        );
     }
 
     /**
@@ -466,48 +417,21 @@ export class Swapper<
      * @param descriptionHash   Description hash for ln invoice
      */
     async createFromBTCLNSwap(tokenAddress: TokenAddressType, amount: BN, exactOut?: boolean, descriptionHash?: Buffer): Promise<FromBTCLNSwap<T>> {
-        let btcAmt: BN;
-        if(exactOut) {
-            //Get approximate bitcoin amount
-            btcAmt = await this.options.pricing.getToBtcSwapAmount(amount, tokenAddress);
-        } else {
-            btcAmt = amount;
-        }
-
-        const candidates = this.intermediaryDiscovery.getSwapCandidates(SwapType.FROM_BTCLN, btcAmt, tokenAddress);
-        if(candidates.length===0) throw new Error("No intermediary found!");
-
-        let swap;
-        let error;
-        for(let candidate of candidates) {
-            try {
-                swap = await this.frombtcln.create(
-                    amount,
-                    candidate.url+"/frombtcln",
-                    tokenAddress,
-                    candidate.address,
-                    new BN(candidate.services[SwapType.FROM_BTCLN].swapBaseFee),
-                    new BN(candidate.services[SwapType.FROM_BTCLN].swapFeePPM),
-                    exactOut,
-                    descriptionHash
-                );
-                break;
-            } catch (e) {
-                if(e instanceof IntermediaryError) {
-                    //Blacklist that node
-                    this.intermediaryDiscovery.removeIntermediary(candidate);
-                }
-                error = e;
-                console.error(e);
-            }
-        }
-
-        if(swap==null) {
-            if(error!=null) throw error;
-            throw new Error("No intermediary found!");
-        }
-
-        return swap;
+        return this.createSwap<FromBTCLNSwap<T>>(
+            (candidate: Intermediary) => this.frombtcln.create(
+                amount,
+                candidate.url+"/frombtcln",
+                tokenAddress,
+                candidate.address,
+                new BN(candidate.services[SwapType.FROM_BTCLN].swapBaseFee),
+                new BN(candidate.services[SwapType.FROM_BTCLN].swapFeePPM),
+                exactOut,
+                descriptionHash
+            ),
+            amount,
+            tokenAddress,
+            exactOut
+        );
     }
 
     /**
@@ -519,40 +443,21 @@ export class Swapper<
      * @param noInstantReceive  Flag to disable instantly posting the lightning PR to LN service for withdrawal, when set the lightning PR is sent to LN service when waitForPayment is called
      */
     async createFromBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurl: string, amount: BN, noInstantReceive?: boolean): Promise<FromBTCLNSwap<T>> {
-        const candidates = this.intermediaryDiscovery.getSwapCandidates(SwapType.FROM_BTCLN, amount, tokenAddress);
-        if(candidates.length===0) throw new Error("No intermediary found!");
-
-        let swap;
-        let error;
-        for(let candidate of candidates) {
-            try {
-                swap = await this.frombtcln.createViaLNURL(
-                    lnurl,
-                    amount,
-                    candidate.url+"/frombtcln",
-                    tokenAddress,
-                    candidate.address,
-                    new BN(candidate.services[SwapType.FROM_BTCLN].swapBaseFee),
-                    new BN(candidate.services[SwapType.FROM_BTCLN].swapFeePPM),
-                    noInstantReceive
-                );
-                break;
-            } catch (e) {
-                if(e instanceof IntermediaryError) {
-                    //Blacklist that node
-                    this.intermediaryDiscovery.removeIntermediary(candidate);
-                }
-                error = e;
-                console.error(e);
-            }
-        }
-
-        if(swap==null) {
-            if(error!=null) throw error;
-            throw new Error("No intermediary found!");
-        }
-
-        return swap;
+        return this.createSwap<FromBTCLNSwap<T>>(
+            (candidate: Intermediary) => this.frombtcln.createViaLNURL(
+                lnurl,
+                amount,
+                candidate.url+"/frombtcln",
+                tokenAddress,
+                candidate.address,
+                new BN(candidate.services[SwapType.FROM_BTCLN].swapBaseFee),
+                new BN(candidate.services[SwapType.FROM_BTCLN].swapFeePPM),
+                noInstantReceive
+            ),
+            amount,
+            tokenAddress,
+            true
+        );
     }
 
     /**

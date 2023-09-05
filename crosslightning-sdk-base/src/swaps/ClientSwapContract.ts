@@ -10,6 +10,8 @@ import {ISwapPrice} from "./ISwapPrice";
 import {ChainSwapType, SignatureVerificationError, SwapCommitStatus, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
 import {BitcoinRpc, BtcRelay} from "crosslightning-base/dist";
 import {findlnurl, getParams, LNURLPayParams, LNURLPaySuccessAction, LNURLWithdrawParams} from "js-lnurl/lib";
+import {RequestError} from "../errors/RequestError";
+import {AbortError} from "../errors/AbortError";
 
 export class PaymentAuthError extends Error {
 
@@ -148,9 +150,9 @@ export class ClientSwapContract<T extends SwapData> {
                 try {
                     resp = await response.text();
                 } catch (e) {
-                    throw new Error(response.statusText);
+                    throw new RequestError(response.statusText, response.status);
                 }
-                throw new Error(resp);
+                throw new RequestError(resp, response.status);
             }
 
             let jsonBody: any = await response.json();
@@ -300,9 +302,9 @@ export class ClientSwapContract<T extends SwapData> {
             try {
                 resp = await response.text();
             } catch (e) {
-                throw new Error(response.statusText);
+                throw new RequestError(response.statusText, response.status);
             }
-            throw new Error(resp);
+            throw RequestError.parse(resp, response.status);
         }
 
         let jsonBody: any = await response.json();
@@ -575,10 +577,10 @@ export class ClientSwapContract<T extends SwapData> {
     }> {
         let res: any = await this.getLNURL(lnurl);
         if(res==null) {
-            throw new Error("Invalid LNURL");
+            throw new UserError("Invalid LNURL");
         }
         if(res.tag!=="payRequest") {
-            throw new Error("Not a lnurl-pay");
+            throw new UserError("Not a lnurl-pay");
         }
 
         const payRequest: LNURLPayParams = res;
@@ -587,16 +589,16 @@ export class ClientSwapContract<T extends SwapData> {
         const max = new BN(payRequest.maxSendable).div(new BN(1000));
 
         if(amount.lt(min)) {
-            throw new Error("Amount less than minimum");
+            throw new UserError("Amount less than minimum");
         }
 
         if(amount.gt(max)) {
-            throw new Error("Amount more than maximum");
+            throw new UserError("Amount more than maximum");
         }
 
         if(comment!=null) {
             if(payRequest.commentAllowed==null || comment.length>payRequest.commentAllowed) {
-                throw new Error("Comment not allowed or too long");
+                throw new UserError("Comment not allowed or too long");
             }
         }
 
@@ -618,15 +620,15 @@ export class ClientSwapContract<T extends SwapData> {
             try {
                 resp = await response.text();
             } catch (e) {
-                throw new Error(response.statusText);
+                throw new RequestError(response.statusText, response.status);
             }
-            throw new Error(resp);
+            throw new RequestError(resp, response.status);
         }
 
         let jsonBody: any = await response.json();
 
         if(jsonBody.status==="ERROR") {
-            throw new Error("LNURL callback error: "+jsonBody.reason);
+            throw new RequestError("LNURL callback error: "+jsonBody.reason, response.status);
         }
 
         const invoice = jsonBody.pr;
@@ -637,24 +639,24 @@ export class ClientSwapContract<T extends SwapData> {
             switch(successAction.tag) {
                 case "message":
                     if(successAction.message==null || successAction.message.length>144) {
-                        throw new Error("Invalid LNURL success action!");
+                        throw new RequestError("Invalid LNURL success action!", response.status);
                     }
                     break;
                 case "url":
                     if(successAction.description==null || successAction.description.length>144 ||
                         successAction.url==null || new URL(successAction.url).hostname!==payRequest.domain) {
-                        throw new Error("Invalid LNURL success action!");
+                        throw new RequestError("Invalid LNURL success action!", response.status);
                     }
                     break;
                 case "aes":
                     if(successAction.description==null || successAction.description.length>144 ||
                         successAction.ciphertext==null || successAction.ciphertext.length>4096 || !BASE64_REGEX.test(successAction.ciphertext) ||
                         successAction.iv==null || successAction.iv.length>24 || !BASE64_REGEX.test(successAction.iv)) {
-                        throw new Error("Invalid LNURL success action!");
+                        throw new RequestError("Invalid LNURL success action!", response.status);
                     }
                     break;
                 default:
-                    throw new Error("Unsupported LNURL success action!");
+                    throw new RequestError("Unsupported LNURL success action!", response.status);
             }
         }
 
@@ -663,13 +665,13 @@ export class ClientSwapContract<T extends SwapData> {
         const descHash = createHash("sha256").update(payRequest.metadata).digest().toString("hex");
 
         if(parsedPR.tagsObject.purpose_commit_hash!==descHash) {
-            throw new Error("Invalid invoice received!");
+            throw new RequestError("Invalid invoice received!", response.status);
         }
 
         const invoiceMSats = new BN(parsedPR.millisatoshis);
 
         if(!invoiceMSats.eq(amount.mul(new BN(1000)))) {
-            throw new Error("Invalid lightning invoice received!");
+            throw new RequestError("Invalid lightning invoice received!", response.status);
         }
 
         const resp: any = await this.payLightning(
@@ -747,9 +749,9 @@ export class ClientSwapContract<T extends SwapData> {
             try {
                 resp = await response.text();
             } catch (e) {
-                throw new Error(response.statusText);
+                throw new RequestError(response.statusText, response.status);
             }
-            throw new Error(resp);
+            throw new RequestError(resp, response.status);
         }
 
         let jsonBody: any = await response.json();
@@ -862,9 +864,9 @@ export class ClientSwapContract<T extends SwapData> {
             try {
                 resp = await response.text();
             } catch (e) {
-                throw new Error(response.statusText);
+                throw new RequestError(response.statusText, response.status);
             }
-            throw new Error(resp);
+            throw RequestError.parse(resp, response.status);
         }
 
         let jsonBody: any = await response.json();
@@ -951,7 +953,7 @@ export class ClientSwapContract<T extends SwapData> {
         signature?: string
     }> {
         if(abortSignal!=null && abortSignal.aborted) {
-            throw new Error("Aborted");
+            throw new AbortError();
         }
 
         while(abortSignal==null || !abortSignal.aborted) {
@@ -960,7 +962,7 @@ export class ClientSwapContract<T extends SwapData> {
             await timeoutPromise(intervalSeconds || 5);
         }
 
-        throw new Error("Aborted");
+        throw new AbortError();
     }
 
     async receiveOnchain(
@@ -1027,9 +1029,9 @@ export class ClientSwapContract<T extends SwapData> {
             try {
                 resp = await response.text();
             } catch (e) {
-                throw new Error(response.statusText);
+                throw new RequestError(response.statusText, response.status);
             }
-            throw new Error(resp);
+            throw RequestError.parse(resp, response.status);
         }
 
         let jsonBody: any = await response.json();
@@ -1159,15 +1161,15 @@ export class ClientSwapContract<T extends SwapData> {
             try {
                 resp = await response.text();
             } catch (e) {
-                throw new Error(response.statusText);
+                throw new RequestError(response.statusText, response.status);
             }
-            throw new Error(resp);
+            throw new RequestError(resp, response.status);
         }
 
         let jsonBody: any = await response.json();
 
         if(jsonBody.status==="ERROR") {
-            throw new Error("LNURL callback error: " + jsonBody.reason);
+            throw new RequestError("LNURL callback error: " + jsonBody.reason, response.status);
         }
     }
 
@@ -1193,10 +1195,10 @@ export class ClientSwapContract<T extends SwapData> {
     }> {
         let res: any = await this.getLNURL(lnurl);
         if(res==null) {
-            throw new Error("Invalid LNURL");
+            throw new UserError("Invalid LNURL");
         }
         if(res.tag!=="withdrawRequest") {
-            throw new Error("Not a lnurl-pay");
+            throw new UserError("Not a lnurl-pay");
         }
 
         const withdrawRequest: LNURLWithdrawParams = res;
@@ -1206,11 +1208,11 @@ export class ClientSwapContract<T extends SwapData> {
 
 
         if(amount.lt(min)) {
-            throw new Error("Amount less than minimum");
+            throw new UserError("Amount less than minimum");
         }
 
         if(amount.gt(max)) {
-            throw new Error("Amount more than maximum");
+            throw new UserError("Amount more than maximum");
         }
 
         const resp = await this.receiveLightning(amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
@@ -1247,7 +1249,7 @@ export class ClientSwapContract<T extends SwapData> {
     }> {
         if(descriptionHash!=null) {
             if(descriptionHash.length!==32) {
-                throw new Error("Invalid description hash length");
+                throw new UserError("Invalid description hash length");
             }
         }
 
@@ -1273,9 +1275,9 @@ export class ClientSwapContract<T extends SwapData> {
             try {
                 resp = await response.text();
             } catch (e) {
-                throw new Error(response.statusText);
+                throw new RequestError(response.statusText, response.status);
             }
-            throw new Error(resp);
+            throw RequestError.parse(resp, response.status);
         }
 
         let jsonBody: any = await response.json();
@@ -1356,16 +1358,16 @@ export class ClientSwapContract<T extends SwapData> {
             method: "GET"
         });
 
-        if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
+        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
 
         if(response.status!==200) {
             let resp: string;
             try {
                 resp = await response.text();
             } catch (e) {
-                throw new Error(response.statusText);
+                throw new RequestError(response.statusText, response.status);
             }
-            throw new Error(resp);
+            throw RequestError.parse(resp, response.status);
         }
 
         let jsonBody: any = await response.json();
@@ -1457,7 +1459,7 @@ export class ClientSwapContract<T extends SwapData> {
         expiry: number
     }> {
         if(abortSignal!=null && abortSignal.aborted) {
-            throw new Error("Aborted");
+            throw new AbortError();
         }
 
         while(abortSignal==null || !abortSignal.aborted) {
@@ -1476,7 +1478,7 @@ export class ClientSwapContract<T extends SwapData> {
             await timeoutPromise(intervalSeconds || 5);
         }
 
-        throw new Error("Aborted");
+        throw new AbortError();
     }
 
 }
