@@ -66,7 +66,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
     ) {
         super(storageDirectory, path, swapContract, chainEvents, swapNonce, allowedTokens, lnd, swapPricing);
         this.config = config;
-        this.config.invoiceTimeoutSeconds = this.config.invoiceTimeoutSeconds || 60;
+        this.config.invoiceTimeoutSeconds = this.config.invoiceTimeoutSeconds || 90;
     }
 
     /**
