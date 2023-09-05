@@ -5,6 +5,9 @@ export * from "./btc/MempoolBitcoinBlock";
 
 export * from "./errors/IntermediaryError";
 export * from "./errors/UserError";
+export * from "./errors/AbortError";
+export * from "./errors/OutOfBoundsError";
+export * from "./errors/RequestError";
 
 export * from "./intermediaries/Intermediary";
 export * from "./intermediaries/IntermediaryDiscovery";
