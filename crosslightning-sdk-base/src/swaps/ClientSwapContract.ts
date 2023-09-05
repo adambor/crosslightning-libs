@@ -292,7 +292,7 @@ export class ClientSwapContract<T extends SwapData> {
                 nonce: nonce.toString(10),
                 token: requiredToken==null ? null : requiredToken.toString(),
                 offerer: this.swapContract.getAddress(),
-                exactIn: true
+                exactIn
             }),
             headers: {'Content-Type': 'application/json'}
         });
