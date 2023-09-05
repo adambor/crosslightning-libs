@@ -21,7 +21,7 @@ export class RequestError extends Error {
             const parsed = JSON.parse(msg);
             msg = parsed.msg;
             if(parsed.code===20003 || parsed.code===20004) {
-                return new OutOfBoundsError(parsed.msg, httpCode, new BN(parsed.min), new BN(parsed.max));
+                return new OutOfBoundsError(parsed.msg, httpCode, new BN(parsed.data.min), new BN(parsed.data.max));
             }
         } catch (e) {}
         return new RequestError(msg, httpCode);

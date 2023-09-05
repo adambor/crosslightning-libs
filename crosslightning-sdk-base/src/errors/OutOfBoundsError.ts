@@ -10,6 +10,7 @@ export class OutOfBoundsError extends RequestError {
         super(msg, httpCode);
         this.max = max;
         this.min = min;
+        Object.setPrototypeOf(this, OutOfBoundsError.prototype);
     }
 
 }
