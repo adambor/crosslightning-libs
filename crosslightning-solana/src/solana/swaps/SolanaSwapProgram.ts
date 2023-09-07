@@ -23,6 +23,7 @@ import {SolanaBtcStoredHeader} from "../btcrelay/headers/SolanaBtcStoredHeader";
 import {RelaySynchronizer, StorageObject} from "crosslightning-base/dist";
 import Utils from "./Utils";
 import * as bs58 from "bs58";
+import AnchorSigner from "../../../../../Solana/SOLBridge-ts/src/chains/solana/signer/AnchorSigner";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
@@ -1296,7 +1297,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         });
 
         if(swapData.isPayOut()) {
-            if (swapData.token.equals(WSOL_ADDRESS)) {
+            if (swapData.token.equals(WSOL_ADDRESS) && swapData.claimer.equals(this.signer.publicKey)) {
                 //Move to normal SOL
                 const tx = new Transaction();
                 tx.add(
@@ -1805,7 +1806,16 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     async txsWithdraw(token: any, amount: BN): Promise<SolTx[]> {
         const ata = await SplToken.getAssociatedTokenAddress(token, this.signer.publicKey);
 
-        let result = await this.program.methods
+        const tx = new Transaction();
+
+        const account = await SplToken.getAccount(this.signer.connection, ata).catch(e => console.error(e));
+        if(account==null) {
+            tx.add(
+                SplToken.createAssociatedTokenAccountInstruction(this.signer.publicKey, ata, this.signer.publicKey, token)
+            );
+        }
+
+        let ix = await this.program.methods
             .withdraw(new BN(amount))
             .accounts({
                 initializer: this.signer.publicKey,
@@ -1818,10 +1828,19 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 rent: SYSVAR_RENT_PUBKEY,
                 tokenProgram: SplToken.TOKEN_PROGRAM_ID,
             })
-            .transaction();
+            .instruction();
+
+        tx.add(ix);
+
+        if (WSOL_ADDRESS.equals(token)) {
+            //Move to normal SOL
+            tx.add(
+                SplToken.createCloseAccountInstruction(ata, this.signer.publicKey, this.signer.publicKey)
+            );
+        }
 
         return [{
-            tx: result,
+            tx,
             signers: []
         }];
     }
@@ -1833,7 +1852,33 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     async txsDeposit(token: any, amount: BN): Promise<SolTx[]> {
         const ata = await SplToken.getAssociatedTokenAddress(token, this.signer.publicKey);
 
-        let result = await this.program.methods
+        const tx = new Transaction();
+
+        if(WSOL_ADDRESS.equals(token)) {
+            let accountExists: boolean = false;
+            let balance: BN = new BN(0);
+
+            const ataAcc = await SplToken.getAccount(AnchorSigner.connection, ata);
+            if(ataAcc!=null) {
+                accountExists = true;
+                balance = balance.add(new BN(ataAcc.amount.toString()));
+            }
+            if(balance.lt(amount)) {
+                const remainder = amount.sub(balance);
+                if(!accountExists) {
+                    //Need to create account
+                    tx.add(SplToken.createAssociatedTokenAccountInstruction(AnchorSigner.publicKey, ata, AnchorSigner.publicKey, token));
+                }
+                tx.add(SystemProgram.transfer({
+                    fromPubkey: AnchorSigner.publicKey,
+                    toPubkey: ata,
+                    lamports: remainder.toNumber()
+                }));
+                tx.add(SplToken.createSyncNativeInstruction(ata));
+            }
+        }
+
+        let depositIx = await this.program.methods
             .deposit(new BN(amount))
             .accounts({
                 initializer: this.signer.publicKey,
@@ -1846,10 +1891,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 rent: SYSVAR_RENT_PUBKEY,
                 tokenProgram: SplToken.TOKEN_PROGRAM_ID,
             })
-            .transaction();
+            .instruction();
+
+        tx.add(depositIx);
 
         return [{
-            tx: result,
+            tx,
             signers: []
         }]
     }
@@ -1859,12 +1906,32 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         return txId;
     }
     async txsTransfer(token: any, amount: BN, dstAddress: string): Promise<SolTx[]> {
+        if(WSOL_ADDRESS.equals(token)) {
+            return [{
+                tx: new Transaction().add(SystemProgram.transfer({
+                    fromPubkey: this.signer.publicKey,
+                    toPubkey: new PublicKey(dstAddress),
+                    lamports: amount
+                })),
+                signers: []
+            }];
+        }
+
         const ata = await SplToken.getAssociatedTokenAddress(token, this.signer.publicKey);
         if(PublicKey.isOnCurve(new PublicKey(dstAddress))) {
             dstAddress = SplToken.getAssociatedTokenAddressSync(token, new PublicKey(dstAddress), false).toBase58();
         }
-        const ix = SplToken.createTransferInstruction(ata, new PublicKey(dstAddress), this.signer.publicKey, amount);
+
         const tx = new Transaction();
+
+        const account = await SplToken.getAccount(this.signer.connection, ata).catch(e => console.error(e));
+        if(account==null) {
+            tx.add(
+                SplToken.createAssociatedTokenAccountInstruction(this.signer.publicKey, ata, new PublicKey(dstAddress), token)
+            );
+        }
+
+        const ix = SplToken.createTransferInstruction(ata, new PublicKey(dstAddress), this.signer.publicKey, amount);
         tx.add(ix);
 
         return [{
