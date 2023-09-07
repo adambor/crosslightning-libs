@@ -901,8 +901,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             }
         } else {
             let lastTx;
+            let lastUnsignedTx;
             if(!waitForConfirmation) {
                 lastTx = signedTxs.pop();
+                lastUnsignedTx = txs.pop();
             }
             for(let i=0;i<signedTxs.length;i++) {
                 const tx = signedTxs[i];
@@ -924,6 +926,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             }
             if(lastTx!=null) {
                 console.log("Send TX: ", lastTx);
+                if(onBeforePublish!=null) await onBeforePublish(bs58.encode(lastTx.signature), await this.serializeTx({
+                    tx: lastTx,
+                    signers: lastUnsignedTx.signers
+                }));
                 const txResult = await this.signer.connection.sendRawTransaction(lastTx.serialize(), options);
                 console.log("Send signed TX: ", txResult);
                 signatures.push(txResult);
