@@ -23,7 +23,6 @@ import {SolanaBtcStoredHeader} from "../btcrelay/headers/SolanaBtcStoredHeader";
 import {RelaySynchronizer, StorageObject} from "crosslightning-base/dist";
 import Utils from "./Utils";
 import * as bs58 from "bs58";
-import AnchorSigner from "../../../../../Solana/SOLBridge-ts/src/chains/solana/signer/AnchorSigner";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
@@ -1858,7 +1857,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             let accountExists: boolean = false;
             let balance: BN = new BN(0);
 
-            const ataAcc = await SplToken.getAccount(AnchorSigner.connection, ata);
+            const ataAcc = await SplToken.getAccount(this.signer.connection, ata);
             if(ataAcc!=null) {
                 accountExists = true;
                 balance = balance.add(new BN(ataAcc.amount.toString()));
@@ -1867,10 +1866,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 const remainder = amount.sub(balance);
                 if(!accountExists) {
                     //Need to create account
-                    tx.add(SplToken.createAssociatedTokenAccountInstruction(AnchorSigner.publicKey, ata, AnchorSigner.publicKey, token));
+                    tx.add(SplToken.createAssociatedTokenAccountInstruction(this.signer.publicKey, ata, this.signer.publicKey, token));
                 }
                 tx.add(SystemProgram.transfer({
-                    fromPubkey: AnchorSigner.publicKey,
+                    fromPubkey: this.signer.publicKey,
                     toPubkey: ata,
                     lamports: remainder.toNumber()
                 }));
@@ -1918,20 +1917,24 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         }
 
         const ata = await SplToken.getAssociatedTokenAddress(token, this.signer.publicKey);
-        if(PublicKey.isOnCurve(new PublicKey(dstAddress))) {
-            dstAddress = SplToken.getAssociatedTokenAddressSync(token, new PublicKey(dstAddress), false).toBase58();
+
+        if(!PublicKey.isOnCurve(new PublicKey(dstAddress))) {
+            throw new Error("Recipient must be a valid public key");
         }
+
+        const dstAta = SplToken.getAssociatedTokenAddressSync(token, new PublicKey(dstAddress), false);
 
         const tx = new Transaction();
 
-        const account = await SplToken.getAccount(this.signer.connection, ata).catch(e => console.error(e));
+        const account = await SplToken.getAccount(this.signer.connection, dstAta).catch(e => console.error(e));
+        console.log("Account ATA: ", account);
         if(account==null) {
             tx.add(
-                SplToken.createAssociatedTokenAccountInstruction(this.signer.publicKey, ata, new PublicKey(dstAddress), token)
+                SplToken.createAssociatedTokenAccountInstruction(this.signer.publicKey, dstAta, new PublicKey(dstAddress), token)
             );
         }
 
-        const ix = SplToken.createTransferInstruction(ata, new PublicKey(dstAddress), this.signer.publicKey, amount);
+        const ix = SplToken.createTransferInstruction(ata, dstAta, this.signer.publicKey, amount);
         tx.add(ix);
 
         return [{
