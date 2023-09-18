@@ -18,7 +18,7 @@ export class StatePredictorUtils {
         for(let i=0;i<32;i++) {
             const val = arr[i] + remainder;
             const result = Math.floor(val/divisor);
-            remainder = (val % divisor) << 8;
+            remainder = (val % divisor) * 256;
             arr[i] = result;
         }
 
