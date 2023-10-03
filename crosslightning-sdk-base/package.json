@@ -29,7 +29,9 @@
     "cross-fetch": "^3.1.5",
     "crosslightning-base": "^4.0.8",
     "crypto-browserify": "^3.12.0",
-    "js-lnurl": "^0.5.1",
+    "js-lnurl": "^0.5.1"
+  },
+  "devDependencies": {
     "typescript": "^4.9.5"
   }
 }
