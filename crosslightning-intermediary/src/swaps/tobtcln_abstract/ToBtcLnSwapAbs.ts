@@ -6,6 +6,7 @@ import {PluginManager} from "../../plugins/PluginManager";
 import {ToBtcSwapState} from "../..";
 
 export enum ToBtcLnSwapState {
+    REFUNDED = -3,
     CANCELED = -2,
     NON_PAYABLE = -1,
     SAVED = 0,

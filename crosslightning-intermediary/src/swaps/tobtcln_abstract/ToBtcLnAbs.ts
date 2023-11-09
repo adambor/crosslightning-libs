@@ -21,6 +21,7 @@ import {SwapNonce} from "../SwapNonce";
 import {AuthenticatedLnd} from "lightning";
 import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
+import {ToBtcSwapState} from "../..";
 
 export type ToBtcLnConfig = {
     authorizationTimeout: number,
@@ -401,6 +402,21 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 continue;
             }
             if(event instanceof RefundEvent) {
+                const paymentHash = event.paymentHash;
+
+                const savedInvoice = this.storageManager.data[paymentHash];
+
+                if(savedInvoice==null) {
+                    console.error("[To BTC-LN: Solana.RefundEvent] No invoice submitted");
+                    continue;
+                }
+
+                console.log("[To BTC-LN: Solana.RefundEvent] Transaction refunded! Event: ", event);
+
+                await savedInvoice.setState(ToBtcLnSwapState.REFUNDED);
+
+                await this.storageManager.removeData(paymentHash);
+
                 continue;
             }
         }

@@ -487,7 +487,6 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 console.log("[To BTC: Solana.ClaimEvent] Transaction confirmed! Event: ", event);
 
                 await savedInvoice.setState(ToBtcSwapState.CLAIMED);
-                // await PluginManager.swapStateChange(savedInvoice);
 
                 await this.storageManager.removeData(paymentHash);
 
@@ -512,8 +511,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                     }
                 }
 
-                await savedInvoice.setState(ToBtcSwapState.CANCELED);
-                //await PluginManager.swapStateChange(savedInvoice);
+                await savedInvoice.setState(ToBtcSwapState.REFUNDED);
 
                 await this.storageManager.removeData(paymentHash);
 
