@@ -3,7 +3,7 @@ import * as bolt11 from "bolt11";
 import {Lockable, StorageObject, SwapData} from "crosslightning-base";
 import {SwapHandlerSwap} from "../SwapHandlerSwap";
 import {PluginManager} from "../../plugins/PluginManager";
-import {ToBtcSwapState} from "../..";
+import {SwapHandlerType} from "../..";
 
 export enum ToBtcLnSwapState {
     REFUNDED = -3,
@@ -46,6 +46,7 @@ export class ToBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
             this.signatureExpiry = prOrObj.signatureExpiry==null ? null : new BN(prOrObj.signatureExpiry);
             this.secret = prOrObj.secret;
         }
+        this.type = SwapHandlerType.TO_BTCLN;
     }
 
     serialize(): any {

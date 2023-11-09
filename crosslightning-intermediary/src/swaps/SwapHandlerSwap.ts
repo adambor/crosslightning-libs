@@ -1,7 +1,9 @@
 import {Lockable, StorageObject, SwapData} from "crosslightning-base";
+import {SwapHandlerType} from "./SwapHandler";
 
 export class SwapHandlerSwap<T extends SwapData> extends Lockable implements StorageObject {
 
+    type: SwapHandlerType;
     data: T;
 
     constructor();

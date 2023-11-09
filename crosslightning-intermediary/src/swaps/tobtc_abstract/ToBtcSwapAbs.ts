@@ -4,7 +4,7 @@ import * as bitcoin from "bitcoinjs-lib";
 import {Lockable, StorageObject, SwapData} from "crosslightning-base";
 import {SwapHandlerSwap} from "../SwapHandlerSwap";
 import {PluginManager} from "../../plugins/PluginManager";
-import {FromBtcLnSwapState} from "../..";
+import {FromBtcLnSwapState, SwapHandlerType} from "../..";
 
 export enum ToBtcSwapState {
     REFUNDED = -3,
@@ -58,6 +58,7 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
 
             this.txId = prOrObj.txId;
         }
+        this.type = SwapHandlerType.TO_BTC;
     }
 
     serialize(): any {

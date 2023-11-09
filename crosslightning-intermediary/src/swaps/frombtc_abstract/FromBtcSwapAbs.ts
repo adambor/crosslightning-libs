@@ -4,6 +4,7 @@ import {createHash} from "crypto";
 import {Lockable, StorageObject, SwapData} from "crosslightning-base";
 import {SwapHandlerSwap} from "../SwapHandlerSwap";
 import {PluginManager} from "../../plugins/PluginManager";
+import {SwapHandlerType} from "../SwapHandler";
 
 export enum FromBtcSwapState {
     REFUNDED = -2,
@@ -39,6 +40,7 @@ export class FromBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
             this.swapFee = new BN(prOrObj.swapFee);
             this.authorizationExpiry = prOrObj.authorizationExpiry==null ? null : new BN(prOrObj.authorizationExpiry);
         }
+        this.type = SwapHandlerType.FROM_BTC;
     }
 
     serialize(): any {

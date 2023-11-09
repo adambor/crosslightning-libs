@@ -2,7 +2,7 @@ import * as BN from "bn.js";
 import {Lockable, StorageObject, SwapData} from "crosslightning-base";
 import {SwapHandlerSwap} from "../SwapHandlerSwap";
 import {PluginManager} from "../../plugins/PluginManager";
-import {FromBtcSwapState} from "../..";
+import {FromBtcSwapState, SwapHandlerType} from "../..";
 
 export enum FromBtcLnSwapState {
     REFUNDED = -2,
@@ -47,6 +47,7 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
             this.timeout = prOrObj.timeout;
             this.signature = prOrObj.signature;
         }
+        this.type = SwapHandlerType.FROM_BTCLN;
     }
 
     serialize(): any {
