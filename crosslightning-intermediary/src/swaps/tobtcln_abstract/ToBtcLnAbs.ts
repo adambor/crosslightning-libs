@@ -132,7 +132,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
         if(lnPaymentStatus.is_confirmed) {
             invoiceData.secret = lnPaymentStatus.payment.secret;
-            await invoiceData.setState(ToBtcLnSwapState.PAID)
+            invoiceData.realRoutingFee = new BN(lnPaymentStatus.payment.fee_mtokens).div(new BN(1000));
+            await invoiceData.setState(ToBtcLnSwapState.PAID);
             // await PluginManager.swapStateChange(invoiceData);
             await this.storageManager.saveData(decodedPR.tagsObject.payment_hash, invoiceData);
 

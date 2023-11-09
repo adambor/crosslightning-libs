@@ -23,6 +23,7 @@ export class ToBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
     readonly maxFee: BN;
     readonly signatureExpiry: BN;
 
+    realRoutingFee: BN;
     secret: string;
 
     constructor(pr: string, swapFee: BN, maxFee: BN, signatureExpiry: BN);

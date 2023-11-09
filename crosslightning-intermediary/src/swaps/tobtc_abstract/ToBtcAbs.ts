@@ -396,6 +396,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             payment.data = data;
             payment.txId = txId;
+            payment.realNetworkFee = txFee;
             await payment.setState(ToBtcSwapState.BTC_SENDING);
             // await PluginManager.swapStateChange(payment);
             await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);

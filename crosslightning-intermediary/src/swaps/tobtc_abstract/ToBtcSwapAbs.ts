@@ -28,6 +28,7 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
     readonly preferedConfirmationTarget: number;
     readonly signatureExpiry: BN;
 
+    realNetworkFee: BN;
     txId: string;
 
     constructor(address: string, amount: BN, swapFee: BN, networkFee: BN, nonce: BN, preferedConfirmationTarget: number, signatureExpiry: BN);
