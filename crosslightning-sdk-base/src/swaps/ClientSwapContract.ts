@@ -722,39 +722,46 @@ export class ClientSwapContract<T extends SwapData> {
             throw new UserError("Must be an invoice with amount");
         }
 
-        const payStatus = await this.swapContract.getPaymentHashStatus(parsedPR.tagsObject.payment_hash);
-
-        if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
-            throw new UserError("Invoice already being paid for or paid");
-        }
-
         const sats: BN = new BN(parsedPR.satoshis);
-
         const expiryTimestamp = (Math.floor(Date.now()/1000)+expirySeconds).toString();
 
-        const response: Response = await fetch(url+"/payInvoice", {
-            method: "POST",
-            body: JSON.stringify({
-                pr: bolt11PayReq,
-                maxFee: maxFee.toString(),
-                expiryTimestamp,
-                token: requiredToken==null ? null : requiredToken.toString(),
-                offerer: this.swapContract.getAddress()
-            }),
-            headers: {'Content-Type': 'application/json'}
-        });
+        const abortController = new AbortController();
+        const [_, jsonBody] = await Promise.all([
+            (async () => {
+                const payStatus = await this.swapContract.getPaymentHashStatus(parsedPR.tagsObject.payment_hash);
 
-        if(response.status!==200) {
-            let resp: string;
-            try {
-                resp = await response.text();
-            } catch (e) {
-                throw new RequestError(response.statusText, response.status);
-            }
-            throw new RequestError(resp, response.status);
-        }
+                if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
+                    throw new UserError("Invoice already being paid for or paid");
+                }
+            })(),
+            (async () => {
+                const response: Response = await fetch(url+"/payInvoice", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        pr: bolt11PayReq,
+                        maxFee: maxFee.toString(),
+                        expiryTimestamp,
+                        token: requiredToken==null ? null : requiredToken.toString(),
+                        offerer: this.swapContract.getAddress()
+                    }),
+                    headers: {'Content-Type': 'application/json'},
+                    signal: abortController.signal
+                });
 
-        let jsonBody: any = await response.json();
+                if(response.status!==200) {
+                    let resp: string;
+                    try {
+                        resp = await response.text();
+                    } catch (e) {
+                        throw new RequestError(response.statusText, response.status);
+                    }
+                    throw new RequestError(resp, response.status);
+                }
+
+                return await response.json();
+            })()
+        ]);
+        abortController.abort();
 
         const routingFeeSats = new BN(jsonBody.data.routingFeeSats);
 
@@ -772,24 +779,6 @@ export class ClientSwapContract<T extends SwapData> {
         this.swapContract.setUsAsOfferer(data);
 
         console.log("Parsed data: ", data);
-
-        if(this.WBTC_ADDRESS!=null) {
-            if(!total.eq(sats.add(totalFee))){
-                throw new IntermediaryError("Invalid total returned");
-            }
-            if(!data.isToken(this.WBTC_ADDRESS)) {
-                throw new IntermediaryError("Invalid data returned - token");
-            }
-        } else {
-            if(requiredToken!=null) if(!data.isToken(requiredToken)) {
-                throw new IntermediaryError("Invalid data returned - token");
-            }
-            if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                if(!(await this.swapPrice.isValidAmountSend(sats, requiredBaseFee.add(routingFeeSats), requiredFeePPM, total, data.getToken()))) {
-                    throw new IntermediaryError("Fee too high");
-                }
-            }
-        }
 
         if(!data.getAmount().eq(total)) {
             throw new IntermediaryError("Invalid data returned - amount");
@@ -819,14 +808,37 @@ export class ClientSwapContract<T extends SwapData> {
             if(data.getClaimer()!==requiredClaimerKey) throw new IntermediaryError("Invalid data returned");
         }
 
-        try {
-            await this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
-        } catch (e) {
-            if(e instanceof SignatureVerificationError) {
-                throw new IntermediaryError(e.message);
-            }
-            throw e;
-        }
+        await Promise.all([
+            (async() => {
+                if(this.WBTC_ADDRESS!=null) {
+                    if(!total.eq(sats.add(totalFee))){
+                        throw new IntermediaryError("Invalid total returned");
+                    }
+                    if(!data.isToken(this.WBTC_ADDRESS)) {
+                        throw new IntermediaryError("Invalid data returned - token");
+                    }
+                } else {
+                    if(requiredToken!=null) if(!data.isToken(requiredToken)) {
+                        throw new IntermediaryError("Invalid data returned - token");
+                    }
+                    if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
+                        if(!(await this.swapPrice.isValidAmountSend(sats, requiredBaseFee.add(routingFeeSats), requiredFeePPM, total, data.getToken()))) {
+                            throw new IntermediaryError("Fee too high");
+                        }
+                    }
+                }
+            })(),
+            (async() => {
+                try {
+                    await this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
+                } catch (e) {
+                    if(e instanceof SignatureVerificationError) {
+                        throw new IntermediaryError(e.message);
+                    }
+                    throw e;
+                }
+            })()
+        ]);
 
         return {
             confidence: jsonBody.data.confidence,
