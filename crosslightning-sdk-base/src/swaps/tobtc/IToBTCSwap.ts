@@ -4,7 +4,7 @@ import {ISwap} from "../ISwap";
 import * as BN from "bn.js";
 import * as EventEmitter from "events";
 import {SwapType} from "../SwapType";
-import {SwapData} from "crosslightning-base";
+import {SignatureVerificationError, SwapData} from "crosslightning-base";
 import {TokenAddress} from "crosslightning-base";
 
 export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
@@ -148,16 +148,27 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
 
         console.log(this);
 
-        try {
-            await this.wrapper.contract.swapContract.isValidClaimInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
-        } catch (e) {
-            console.error(e);
-            this.state = ToBTCSwapState.FAILED;
-            await this.save();
-            throw new Error("Expired, please retry");
-        }
+        // try {
+        //     await this.wrapper.contract.swapContract.isValidClaimInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+        // } catch (e) {
+        //     console.error(e);
+        //     this.state = ToBTCSwapState.FAILED;
+        //     await this.save();
+        //     throw new Error("Expired, please retry");
+        // }
 
-        const txResult = await this.wrapper.contract.swapContract.initPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce, !noWaitForConfirmation, abortSignal);
+        let txResult;
+        try {
+            txResult = await this.wrapper.contract.swapContract.initPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce, !noWaitForConfirmation, abortSignal);
+        } catch (e) {
+            if(e instanceof SignatureVerificationError) {
+                console.error(e);
+                this.state = ToBTCSwapState.FAILED;
+                await this.save();
+                throw new Error("Expired, please retry");
+            }
+            throw e;
+        }
 
         this.commitTxId = txResult;
         await this.save();
