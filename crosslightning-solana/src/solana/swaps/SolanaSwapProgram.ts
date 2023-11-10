@@ -1536,9 +1536,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     async txsInitPayIn(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<SolTx[]> {
 
-        await this.isValidClaimInitAuthorization(swapData, timeout, prefix, signature, nonce);
+        const [_, payStatus] = await Promise.all([
+            this.isValidClaimInitAuthorization(swapData, timeout, prefix, signature, nonce),
+            this.getPaymentHashStatus(swapData.paymentHash)
+        ]);
 
-        const payStatus = await this.getPaymentHashStatus(swapData.paymentHash);
+        //await this.isValidClaimInitAuthorization(swapData, timeout, prefix, signature, nonce);
+        //const payStatus = await this.getPaymentHashStatus(swapData.paymentHash);
 
         if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
             throw new SwapDataVerificationError("Invoice already being paid for or paid");
