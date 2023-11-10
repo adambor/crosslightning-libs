@@ -2,6 +2,7 @@ import {SolanaSwapData} from "./SolanaSwapData";
 import {AnchorProvider, BorshCoder, EventParser, Program} from "@coral-xyz/anchor";
 import * as BN from "bn.js";
 import {
+    Commitment,
     ComputeBudgetInstruction, ComputeBudgetProgram,
     Ed25519Program,
     Keypair, ParsedAccountsModeBlockResponse,
@@ -68,17 +69,61 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     } = {};
 
     //Parsed block caching
-    private async getParsedBlock(slot: number): Promise<ParsedAccountsModeBlockResponse> {
-        if(this.blockCache[slot]==null) {
-            const latestBlock = await this.signer.connection.getParsedBlock(slot, {
-                transactionDetails: "none",
-                commitment: "confirmed",
-                rewards: false
-            });
-            this.blockCache[slot] = latestBlock;
-            return latestBlock;
+    private async findLatestParsedBlock(commitment: Commitment): Promise<{
+        block: ParsedAccountsModeBlockResponse,
+        slot: number
+    }> {
+        let slot = await this.signer.connection.getSlot(commitment);
+
+        if(this.blockCache[slot]!=null) {
+            return {
+                block: this.blockCache[slot],
+                slot
+            };
         }
-        return this.blockCache[slot];
+
+        let error;
+        for(let i=0;i<10;i++) {
+            try {
+                const fetchedBlock = await this.signer.connection.getParsedBlock(slot, {
+                    transactionDetails: "none",
+                    commitment: "confirmed",
+                    rewards: false
+                });
+                this.blockCache[slot] = fetchedBlock;
+
+                return {
+                    block: fetchedBlock,
+                    slot
+                }
+            } catch (e) {
+                console.error(e);
+                if(e.toString().startsWith("SolanaJSONRPCError: failed to get block: Block not available for slot")) {
+                    slot--;
+                    error = e;
+                } else {
+                    throw e;
+                }
+            }
+        }
+
+        throw error;
+    }
+
+    //Parsed block caching
+    private async getParsedBlock(slot: number): Promise<ParsedAccountsModeBlockResponse> {
+        if(this.blockCache[slot]!=null) {
+            return this.blockCache[slot];
+        }
+
+        const fetchedBlock = await this.signer.connection.getParsedBlock(slot, {
+            transactionDetails: "none",
+            commitment: "confirmed",
+            rewards: false
+        });
+        this.blockCache[slot] = fetchedBlock;
+
+        return fetchedBlock;
     }
 
     claimWithSecretTimeout: number = 45;
@@ -389,8 +434,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const txToSign = await this.getClaimInitMessage(swapData, useNonce, authPrefix, authTimeout.toString());
 
-        const latestSlot = await this.signer.connection.getSlot("finalized");
-        const latestBlock = await this.getParsedBlock(latestSlot);
+        const {block: latestBlock, slot: latestSlot} = await this.findLatestParsedBlock("finalized");
 
         txToSign.recentBlockhash = latestBlock.blockhash;
         txToSign.sign(this.signer.signer);
@@ -531,8 +575,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const txToSign = await this.getInitMessage(swapData, useNonce, authPrefix, authTimeout.toString(10));
 
-        const latestSlot = await this.signer.connection.getSlot("finalized");
-        const latestBlock = await this.getParsedBlock(latestSlot);
+        const {block: latestBlock, slot: latestSlot} = await this.findLatestParsedBlock("finalized");
         txToSign.recentBlockhash = latestBlock.blockhash;
         txToSign.sign(this.signer.signer);
 
