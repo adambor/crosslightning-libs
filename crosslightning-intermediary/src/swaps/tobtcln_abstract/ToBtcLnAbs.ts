@@ -473,7 +473,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 return;
             }
 
-            let zeroConfidence = false;
+            let halfConfidence = false;
             if(parsedPR.timeExpireDate < ((Date.now()/1000)+(this.config.authorizationTimeout+(2*60)))) {
                 if(!this.config.allowShortExpiry) {
                     res.status(400).json({
@@ -486,7 +486,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     });
                     return;
                 }
-                zeroConfidence = true;
+                halfConfidence = true;
             }
 
             const currentTimestamp = new BN(Math.floor(Date.now()/1000));
@@ -612,6 +612,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 }
 
                 obj = routingObj;
+                obj.route.confidence = 0;
             }
 
             let actualRoutingFee: BN = new BN(obj.route.safe_fee).mul(this.config.routingFeeMultiplier);
@@ -661,7 +662,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     maxFee: routingFeeInToken.toString(10),
                     swapFee: swapFeeInToken.toString(10),
                     total: total.toString(10),
-                    confidence: zeroConfidence ? 0 : obj.route.confidence/1000000,
+                    confidence: halfConfidence ? obj.route.confidence/2000000 : obj.route.confidence/1000000,
                     address: this.swapContract.getAddress(),
 
                     routingFeeSats: actualRoutingFee.toString(10),
