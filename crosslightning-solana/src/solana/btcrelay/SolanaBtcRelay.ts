@@ -576,11 +576,18 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
         let i = lastSweepId==null ? 0 : lastSweepId+1;
         for(; i<=forkId; i++) {
             const accountAddr = this.BtcRelayFork(i, this.provider.publicKey);
-            const forkState: any = await this.program.account.forkState.fetch(accountAddr);
+            let forkState: any;
+            try {
+                forkState = await this.program.account.forkState.fetch(accountAddr);
+            } catch (e) {
+                if(e.message.startsWith("Account does not exist or has no data")) return null;
+                throw e;
+            }
+
             if(forkState!=null) {
                 const ix = await this.program.methods
                     .closeForkAccount(
-                        i
+                        new BN(i)
                     )
                     .accounts({
                         signer: this.provider.publicKey,
