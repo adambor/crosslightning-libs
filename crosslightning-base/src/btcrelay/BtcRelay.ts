@@ -6,6 +6,7 @@ export interface BtcRelay<V extends BtcStoredHeader<any>, T, B extends BtcBlock>
 
     maxHeadersPerTx: number;
     maxForkHeadersPerTx: number;
+    maxShortForkHeadersPerTx?: number;
 
     getTipData(): Promise<{
         blockheight: number,
@@ -44,10 +45,17 @@ export interface BtcRelay<V extends BtcStoredHeader<any>, T, B extends BtcBlock>
         tx: T,
         computedCommitedHeaders: V[]
     }>;
-
+    saveShortForkHeaders?(forkHeaders: B[], storedHeader: V, tipWork: Buffer): Promise<{
+        forkId: number,
+        lastStoredHeader: V,
+        tx: T,
+        computedCommitedHeaders: V[]
+    }>;
 
     estimateSynchronizeFee(requiredBlockheight: number): Promise<BN>;
 
     getFeePerBlock(): Promise<BN>;
+
+    sweepForkData?(lastSweepTimestamp?: number): Promise<number | null>;
 
 }
