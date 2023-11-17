@@ -574,6 +574,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
         let tx = new Transaction();
 
         let i = lastSweepId==null ? 0 : lastSweepId+1;
+        let lastCheckedId = lastSweepId;
         for(; i<=forkId; i++) {
             const accountAddr = this.BtcRelayFork(i, this.provider.publicKey);
             let forkState: any;
@@ -598,19 +599,18 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
                 if(tx.instructions.length>=MAX_CLOSE_IX_PER_TX) {
                     const signature = await this.provider.sendAndConfirm(tx);
                     console.log("[SolanaBtcRelay]: Success sweep tx: ", signature);
-                    lastSweepId = i;
                     tx = new Transaction();
                 }
             }
+            lastCheckedId = i;
         }
 
         if(tx.instructions.length>0) {
             const signature = await this.provider.sendAndConfirm(tx);
             console.log("[SolanaBtcRelay]: Success sweep tx: ", signature);
-            lastSweepId = i;
         }
 
-        return i;
+        return lastCheckedId;
 
     }
 
