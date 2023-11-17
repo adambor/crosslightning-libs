@@ -604,7 +604,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             lastSweepId = i;
         }
 
-        return lastSweepId;
+        return i;
 
     }
 
