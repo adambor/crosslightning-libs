@@ -580,8 +580,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             try {
                 forkState = await this.program.account.forkState.fetch(accountAddr);
             } catch (e) {
-                if(e.message.startsWith("Account does not exist or has no data")) return null;
-                throw e;
+                if(!e.message.startsWith("Account does not exist or has no data")) throw e;
             }
 
             if(forkState!=null) {
