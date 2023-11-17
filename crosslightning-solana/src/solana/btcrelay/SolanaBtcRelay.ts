@@ -4,6 +4,8 @@ import {SolanaBtcStoredHeader} from "./headers/SolanaBtcStoredHeader";
 import {SolanaBtcHeader} from "./headers/SolanaBtcHeader";
 import {programIdl} from "./program/programIdl";
 import {BitcoinRpc, BtcBlock, BtcRelay, StatePredictorUtils} from "crosslightning-base";
+import {fork} from "child_process";
+import {sign} from "tweetnacl";
 
 const LOG_FETCH_LIMIT = 500;
 
@@ -14,6 +16,8 @@ const BTC_RELAY_STATE_SEED = "state";
 const limit = 500;
 
 const SOL_PER_BLOCKHEADER = new BN(5000);
+
+const MAX_CLOSE_IX_PER_TX = 10;
 
 export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcStoredHeader, {tx: Transaction, signers: Signer[]}, B> {
 
@@ -29,6 +33,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
 
     readonly maxHeadersPerTx: number = 7;
     readonly maxForkHeadersPerTx: number = 6;
+    readonly maxShortForkHeadersPerTx: number = 6;
 
     constructor(provider: AnchorProvider, bitcoinRpc: BitcoinRpc<B>, programAddress?: string) {
         this.provider = provider;
@@ -461,6 +466,53 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
         }
     }
 
+    async saveShortForkHeaders(forkHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, tipWork: Buffer) {
+        const blockHeaderObj = forkHeaders.map(SolanaBtcRelay.serializeBlockHeader);
+
+        let forkId: BN = new BN(-1);
+
+        const tx = await this.program.methods
+            .submitShortForkHeaders(
+                blockHeaderObj,
+                storedHeader
+            )
+            .accounts({
+                signer: this.provider.publicKey,
+                mainState: this.BtcRelayMainState
+            })
+            .remainingAccounts(blockHeaderObj.map(e => {
+                return {
+                    pubkey: this.BtcRelayHeader(e.hash),
+                    isSigner: false,
+                    isWritable: false
+                }
+            }))
+            .transaction();
+
+        const computedCommitedHeaders = [storedHeader];
+        for(let blockHeader of blockHeaderObj) {
+            computedCommitedHeaders.push(computedCommitedHeaders[computedCommitedHeaders.length-1].computeNext(blockHeader));
+        }
+
+        const changedCommitedHeader = computedCommitedHeaders[computedCommitedHeaders.length-1];
+
+        if(StatePredictorUtils.gtBuffer(Buffer.from(changedCommitedHeader.chainWork), tipWork)) {
+            //Already main chain
+            forkId = new BN(0);
+        }
+
+        return {
+            forkId: forkId.toNumber(),
+            lastStoredHeader: changedCommitedHeader,
+            tx: {
+                tx,
+                signers: []
+            },
+            computedCommitedHeaders
+        }
+    }
+
+
     async getTipData(): Promise<{ commitHash: string; blockhash: string, chainWork: Buffer, blockheight: number }> {
         let acc;
         try {
@@ -511,6 +563,49 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
 
     getFeePerBlock(): Promise<BN> {
         return Promise.resolve(SOL_PER_BLOCKHEADER);
+    }
+
+    async sweepForkData(lastSweepId?: number): Promise<number | null> {
+
+        const mainState: any = await this.program.account.mainState.fetch(this.BtcRelayMainState);
+
+        let forkId: BN = mainState.forkCounter.toNumber();
+
+        let tx = new Transaction();
+
+        let i = lastSweepId==null ? 0 : lastSweepId+1;
+        for(; i<=forkId; i++) {
+            const accountAddr = this.BtcRelayFork(i, this.provider.publicKey);
+            const forkState: any = await this.program.account.forkState.fetch(accountAddr);
+            if(forkState!=null) {
+                const ix = await this.program.methods
+                    .closeForkAccount(
+                        i
+                    )
+                    .accounts({
+                        signer: this.provider.publicKey,
+                        forkState: accountAddr,
+                        systemProgram: SystemProgram.programId,
+                    })
+                    .instruction();
+                tx.add(ix);
+                if(tx.instructions.length>=MAX_CLOSE_IX_PER_TX) {
+                    const signature = await this.provider.sendAndConfirm(tx);
+                    console.log("[SolanaBtcRelay]: Success sweep tx: ", signature);
+                    lastSweepId = i;
+                    tx = new Transaction();
+                }
+            }
+        }
+
+        if(tx.instructions.length>0) {
+            const signature = await this.provider.sendAndConfirm(tx);
+            console.log("[SolanaBtcRelay]: Success sweep tx: ", signature);
+            lastSweepId = i;
+        }
+
+        return lastSweepId;
+
     }
 
 }
