@@ -182,7 +182,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         console.log("[To BTC-LN: BTCLN.PaymentResult] Subscribed to payment: ", decodedPR.tagsObject.payment_hash);
 
         const onResult = (lnPaymentStatus: {is_confirmed?: boolean, is_failed?: boolean, payment?: any}) => {
-            this.processPaymentResult(invoiceData, lnPaymentStatus);
+            this.processPaymentResult(invoiceData, lnPaymentStatus).catch(e => console.error(e));
             sub.removeAllListeners();
             this.activeSubscriptions.delete(decodedPR.tagsObject.payment_hash);
         };
