@@ -357,6 +357,7 @@ export class ClientSwapContract<T extends SwapData> {
             }
         }
 
+        //TODO: Add sanity check for returned expiry time
         if(
             !data.getAmount().eq(total) ||
             data.getHash()!==hash ||
