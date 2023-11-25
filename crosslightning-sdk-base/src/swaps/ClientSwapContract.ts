@@ -113,7 +113,7 @@ export class ClientSwapContract<T extends SwapData> {
         this.options.safetyFactor = options.safetyFactor || 2;
         this.options.blocksTillTxConfirms = options.blocksTillTxConfirms || 12;
         this.options.maxConfirmations = options.maxConfirmations || 6;
-        this.options.minSendWindow = options.minSendWindow || 30*60;
+        this.options.minSendWindow = options.minSendWindow || 30*60; //Minimum time window for user to send in the on-chain funds for From BTC swap
         this.options.lightningBaseFee = options.lightningBaseFee || 10;
         this.options.lightningFeePPM = options.lightningFeePPM || 2000;
         this.options.bitcoinBlocktime = options.bitcoinBlocktime|| (60*10);
@@ -1416,6 +1416,7 @@ export class ClientSwapContract<T extends SwapData> {
                 throw new IntermediaryError("Invalid security deposit!");
             }
 
+            //NOTE: Also checks that expiry time is enough to be able to claim the swap
             await this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
 
             const paymentHashInTx = data.getHash().toLowerCase();
