@@ -52,7 +52,10 @@ export type ClientSwapContractOptions = {
     lightningBaseFee?: number,
     lightningFeePPM?: number,
 
-    bitcoinBlocktime?: number
+    bitcoinBlocktime?: number,
+
+    maxExpectedOnchainSendSafetyFactor?: number,
+    maxExpectedOnchainSendGracePeriodBlocks?: number,
 }
 
 const BITCOIN_BLOCKTIME = 10*60;
@@ -117,6 +120,8 @@ export class ClientSwapContract<T extends SwapData> {
         this.options.lightningBaseFee = options.lightningBaseFee || 10;
         this.options.lightningFeePPM = options.lightningFeePPM || 2000;
         this.options.bitcoinBlocktime = options.bitcoinBlocktime|| (60*10);
+        this.options.maxExpectedOnchainSendSafetyFactor = options.maxExpectedOnchainSendSafetyFactor || 4;
+        this.options.maxExpectedOnchainSendGracePeriodBlocks = options.maxExpectedOnchainSendGracePeriodBlocks || 12;
     }
 
     getOnchainSendTimeout(data: SwapData) {
@@ -357,7 +362,15 @@ export class ClientSwapContract<T extends SwapData> {
             }
         }
 
-        //TODO: Add sanity check for returned expiry time
+        const maxAllowedExpiryDelta = new BN(confirmations+confirmationTarget+this.options.maxExpectedOnchainSendGracePeriodBlocks).mul(new BN(this.options.safetyFactor))
+        const currentTimestamp = new BN(Math.floor(Date.now()/1000));
+        const maxAllowedExpiryTimestamp = currentTimestamp.add(maxAllowedExpiryDelta);
+
+        if(data.getExpiry().gt(maxAllowedExpiryTimestamp)) {
+            console.error("Expiry time returned: "+data.getExpiry()+" maxAllowed: "+maxAllowedExpiryTimestamp);
+            throw new IntermediaryError("Expiry time returned too high!");
+        }
+
         if(
             !data.getAmount().eq(total) ||
             data.getHash()!==hash ||
