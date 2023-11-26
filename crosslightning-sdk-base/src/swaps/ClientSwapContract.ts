@@ -362,7 +362,7 @@ export class ClientSwapContract<T extends SwapData> {
             }
         }
 
-        const maxAllowedExpiryDelta = new BN(confirmations+confirmationTarget+this.options.maxExpectedOnchainSendGracePeriodBlocks).mul(new BN(this.options.safetyFactor))
+        const maxAllowedExpiryDelta = new BN(confirmations+confirmationTarget+this.options.maxExpectedOnchainSendGracePeriodBlocks).mul(new BN(this.options.safetyFactor)).mul(new BN(this.options.bitcoinBlocktime))
         const currentTimestamp = new BN(Math.floor(Date.now()/1000));
         const maxAllowedExpiryTimestamp = currentTimestamp.add(maxAllowedExpiryDelta);
 
