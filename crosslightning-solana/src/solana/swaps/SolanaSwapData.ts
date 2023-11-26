@@ -2,6 +2,7 @@ import {PublicKey} from "@solana/web3.js";
 import * as BN from "bn.js";
 import {SwapData, ChainSwapType, TokenAddress} from "crosslightning-base";
 
+const EXPIRY_BLOCKHEIGHT_THRESHOLD = new BN("1000000000");
 
 export class SolanaSwapData extends SwapData {
 
@@ -163,6 +164,7 @@ export class SolanaSwapData extends SwapData {
     }
 
     getExpiry(): BN {
+        if(this.expiry.lt(EXPIRY_BLOCKHEIGHT_THRESHOLD)) return null;
         return this.expiry;
     }
 
