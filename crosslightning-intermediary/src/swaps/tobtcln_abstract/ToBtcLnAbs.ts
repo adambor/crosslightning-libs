@@ -40,7 +40,10 @@ export type ToBtcLnConfig = {
     swapCheckInterval: number,
 
     allowProbeFailedSwaps: boolean,
-    allowShortExpiry: boolean
+    allowShortExpiry: boolean,
+
+    minLnRoutingFeePPM?: BN,
+    minLnBaseFee?: BN
 };
 
 const SNOWFLAKE_LIST: Set<string> = new Set([
@@ -73,6 +76,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         const anyConfig = config as any;
         anyConfig.minTsSendCltv = config.gracePeriod.add(config.bitcoinBlocktime.mul(config.minSendCltv).mul(config.safetyFactor));
         this.config = anyConfig;
+        this.config.minLnRoutingFeePPM = this.config.minLnRoutingFeePPM || new BN(1000);
+        this.config.minLnBaseFee = this.config.minLnRoutingFeePPM || new BN(5);
     }
 
     /**
@@ -616,6 +621,15 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             }
 
             let actualRoutingFee: BN = new BN(obj.route.safe_fee).mul(this.config.routingFeeMultiplier);
+
+            const minRoutingFee: BN = amountBD.mul(this.config.minLnRoutingFeePPM).div(new BN(1000000)).add(this.config.minLnBaseFee);
+            if(actualRoutingFee.lt(minRoutingFee)) {
+                actualRoutingFee = minRoutingFee;
+                if(actualRoutingFee.gt(parsedBody.maxFee)) {
+                    obj.route.confidence = 0;
+                }
+            }
+
             if(actualRoutingFee.gt(parsedBody.maxFee)) {
                 actualRoutingFee = parsedBody.maxFee;
             }
