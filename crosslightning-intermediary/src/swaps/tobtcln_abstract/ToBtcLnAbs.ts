@@ -77,7 +77,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         anyConfig.minTsSendCltv = config.gracePeriod.add(config.bitcoinBlocktime.mul(config.minSendCltv).mul(config.safetyFactor));
         this.config = anyConfig;
         this.config.minLnRoutingFeePPM = this.config.minLnRoutingFeePPM || new BN(1000);
-        this.config.minLnBaseFee = this.config.minLnRoutingFeePPM || new BN(5);
+        this.config.minLnBaseFee = this.config.minLnBaseFee || new BN(5);
     }
 
     /**
