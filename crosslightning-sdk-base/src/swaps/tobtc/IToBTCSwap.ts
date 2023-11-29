@@ -7,7 +7,6 @@ import {SwapType} from "../SwapType";
 import {SignatureVerificationError, SwapCommitStatus, SwapData} from "crosslightning-base";
 import {TokenAddress} from "crosslightning-base";
 import {tryWithRetries} from "../../utils/RetryUtils";
-import {AbortError} from "../../errors/AbortError";
 
 export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
 
@@ -229,11 +228,19 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
             const abortController = new AbortController();
 
             const intervalWatchdog = setInterval(() => {
-                if(abortSignal.aborted) return;
                 this.wrapper.contract.swapContract.getCommitStatus(this.data).then((status) => {
                     if(status!==SwapCommitStatus.NOT_COMMITED) {
                         abortController.abort();
-                        resolve();
+                        if(this.state<ToBTCSwapState.COMMITED) {
+                            this.state = ToBTCSwapState.COMMITED;
+                            this.save().then(() => {
+                                this.emitEvent();
+                                if(abortSignal!=null && abortSignal.aborted) return;
+                                resolve();
+                            });
+                        } else {
+                            resolve();
+                        }
                     }
                 }).catch(e => console.error(e));
             }, 5000);
@@ -274,6 +281,10 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
         if(abortSignal!=null) abortSignal.onabort = () => {
             abortController.abort();
         };
+
+        abortController.signal.addEventListener("abort", () => {
+            if(abortSignal!=null) abortSignal.onabort = null;
+        });
 
         return Promise.race([
             new Promise<boolean>((resolve, reject) => {
@@ -395,11 +406,19 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
             const abortController = new AbortController();
 
             const intervalWatchdog = setInterval(() => {
-                if(abortSignal.aborted) return;
                 this.wrapper.contract.swapContract.isCommited(this.data).then((status) => {
                     if(!status) {
                         abortController.abort();
-                        resolve();
+                        if(this.state!=ToBTCSwapState.CLAIMED) {
+                            this.state = ToBTCSwapState.REFUNDED;
+                            this.save().then(() => {
+                                this.emitEvent();
+                                if(abortSignal!=null && abortSignal.aborted) return;
+                                resolve();
+                            });
+                        } else {
+                            resolve();
+                        }
                     }
                 }).catch(e => console.error(e));
             }, 5000);

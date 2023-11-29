@@ -3,10 +3,9 @@ import {FromBTCLNWrapper} from "./FromBTCLNWrapper";
 import {IFromBTCSwap} from "../IFromBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
-import {SwapData} from "crosslightning-base";
+import {SwapCommitStatus, SwapData} from "crosslightning-base";
 import {tryWithRetries} from "../../../utils/RetryUtils";
 import {SignatureVerificationError} from "crosslightning-base";
-
 
 export enum FromBTCLNSwapState {
     EXPIRED = -2,
@@ -257,7 +256,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
      *
      * @param abortSignal   AbortSignal
      */
-    async waitTillCommited(abortSignal?: AbortSignal): Promise<void> {
+    waitTillCommited(abortSignal?: AbortSignal): Promise<void> {
         return new Promise((resolve, reject) => {
             if(abortSignal!=null && abortSignal.aborted) {
                 reject("Aborted");
@@ -267,17 +266,43 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
                 resolve();
                 return;
             }
-            let listener;
-            listener = (swap) => {
+
+            const abortController = new AbortController();
+
+            const intervalWatchdog = setInterval(() => {
+                this.wrapper.contract.swapContract.getCommitStatus(this.data).then((status) => {
+                    if(status!==SwapCommitStatus.NOT_COMMITED) {
+                        abortController.abort();
+                        if(this.state<FromBTCLNSwapState.CLAIM_COMMITED) {
+                            this.state = FromBTCLNSwapState.CLAIM_COMMITED;
+                            this.save().then(() => {
+                                this.emitEvent();
+                                if(abortSignal!=null && abortSignal.aborted) return;
+                                resolve();
+                            });
+                        } else {
+                            resolve();
+                        }
+                    }
+                }).catch(e => console.error(e));
+            }, 5000);
+            abortController.signal.addEventListener("abort", () => clearInterval(intervalWatchdog));
+
+            const listener = (swap) => {
                 if(swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
-                    this.events.removeListener("swapState", listener);
-                    if(abortSignal!=null) abortSignal.onabort = null;
+                    abortController.abort();
                     resolve();
                 }
             };
             this.events.on("swapState", listener);
+            abortController.signal.addEventListener("abort", () => this.events.removeListener("swapState", listener));
+
+            abortController.signal.addEventListener("abort", () => {
+                if(abortSignal!=null) abortSignal.onabort = null;
+            });
+
             if(abortSignal!=null) abortSignal.onabort = () => {
-                this.events.removeListener("swapState", listener);
+                abortController.abort();
                 reject("Aborted");
             };
         });
@@ -340,11 +365,11 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
     }
 
     /**
-     * Returns a promise that resolves when swap is claimed
+     * Returns a promise that resolves when swap is committed
      *
      * @param abortSignal   AbortSignal
      */
-    async waitTillClaimed(abortSignal?: AbortSignal): Promise<void> {
+    waitTillClaimed(abortSignal?: AbortSignal): Promise<void> {
         return new Promise((resolve, reject) => {
             if(abortSignal!=null && abortSignal.aborted) {
                 reject("Aborted");
@@ -354,17 +379,43 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
                 resolve();
                 return;
             }
-            let listener;
-            listener = (swap) => {
+
+            const abortController = new AbortController();
+
+            const intervalWatchdog = setInterval(() => {
+                this.wrapper.contract.swapContract.isCommited(this.data).then((status) => {
+                    if(!status) {
+                        abortController.abort();
+                        if(this.state<FromBTCLNSwapState.CLAIM_CLAIMED) {
+                            this.state = FromBTCLNSwapState.CLAIM_CLAIMED;
+                            this.save().then(() => {
+                                this.emitEvent();
+                                if(abortSignal!=null && abortSignal.aborted) return;
+                                resolve();
+                            });
+                        } else {
+                            resolve();
+                        }
+                    }
+                }).catch(e => console.error(e));
+            }, 5000);
+            abortController.signal.addEventListener("abort", () => clearInterval(intervalWatchdog));
+
+            const listener = (swap) => {
                 if(swap.state===FromBTCLNSwapState.CLAIM_CLAIMED) {
-                    this.events.removeListener("swapState", listener);
-                    if(abortSignal!=null) abortSignal.onabort = null;
+                    abortController.abort();
                     resolve();
                 }
             };
             this.events.on("swapState", listener);
+            abortController.signal.addEventListener("abort", () => this.events.removeListener("swapState", listener));
+
+            abortController.signal.addEventListener("abort", () => {
+                if(abortSignal!=null) abortSignal.onabort = null;
+            });
+
             if(abortSignal!=null) abortSignal.onabort = () => {
-                this.events.removeListener("swapState", listener);
+                abortController.abort();
                 reject("Aborted");
             };
         });
