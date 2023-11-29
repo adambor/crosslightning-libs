@@ -281,6 +281,7 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
 
                  listener = (swap) => {
                      if(swap.state===ToBTCSwapState.CLAIMED) {
+                         console.log("IToBTCSwap: waitForPayment(): Triggered from on-chain listener!");
                          resolve(true);
                          abortController.abort();
                      }
@@ -289,13 +290,14 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
 
                  abortController.signal.addEventListener("abort", () => {
                      this.events.removeListener("swapState", listener);
-                     reject(new AbortError());
                  });
             }),
             (async() => {
                 const result = await this.wrapper.contract.waitForRefundAuthorization(this.data, this.url, abortController.signal, checkIntervalSeconds); //Throws on abort
 
                 abortController.abort();
+
+                console.log("IToBTCSwap: waitForPayment(): Triggered from http request!");
 
                 if(!result.is_paid) {
                     this.state = ToBTCSwapState.REFUNDABLE;
