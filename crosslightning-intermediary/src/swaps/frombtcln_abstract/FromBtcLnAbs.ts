@@ -620,7 +620,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             const hodlInvoice = await lncli.createHodlInvoice(hodlInvoiceObj);
 
             metadata.times.invoiceCreated = Date.now();
-            metadata.invoiceResponse = {...hodlInvoiceObj};
+            metadata.invoiceResponse = {...hodlInvoice};
 
             console.log("[From BTC-LN: REST.CreateInvoice] hodl invoice created: ", hodlInvoice);
 
