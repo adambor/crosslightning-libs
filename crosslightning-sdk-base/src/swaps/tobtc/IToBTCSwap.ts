@@ -4,9 +4,10 @@ import {ISwap} from "../ISwap";
 import * as BN from "bn.js";
 import * as EventEmitter from "events";
 import {SwapType} from "../SwapType";
-import {SignatureVerificationError, SwapData} from "crosslightning-base";
+import {SignatureVerificationError, SwapCommitStatus, SwapData} from "crosslightning-base";
 import {TokenAddress} from "crosslightning-base";
 import {tryWithRetries} from "../../utils/RetryUtils";
+import {AbortError} from "../../errors/AbortError";
 
 export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
 
@@ -224,17 +225,35 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
                 resolve();
                 return;
             }
-            let listener;
-            listener = (swap) => {
+
+            const abortController = new AbortController();
+
+            const intervalWatchdog = setInterval(() => {
+                if(abortSignal.aborted) return;
+                this.wrapper.contract.swapContract.getCommitStatus(this.data).then((status) => {
+                    if(status!==SwapCommitStatus.NOT_COMMITED) {
+                        abortController.abort();
+                        resolve();
+                    }
+                }).catch(e => console.error(e));
+            }, 5000);
+            abortController.signal.addEventListener("abort", () => clearInterval(intervalWatchdog));
+
+            const listener = (swap) => {
                 if(swap.state===ToBTCSwapState.COMMITED) {
-                    this.events.removeListener("swapState", listener);
-                    if(abortSignal!=null) abortSignal.onabort = null;
+                    abortController.abort();
                     resolve();
                 }
             };
             this.events.on("swapState", listener);
+            abortController.signal.addEventListener("abort", () => this.events.removeListener("swapState", listener));
+
+            abortController.signal.addEventListener("abort", () => {
+                if(abortSignal!=null) abortSignal.onabort = null;
+            });
+
             if(abortSignal!=null) abortSignal.onabort = () => {
-                this.events.removeListener("swapState", listener);
+                abortController.abort();
                 reject("Aborted");
             };
         });
@@ -249,24 +268,51 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
      *
      * @returns {Promise<boolean>}  Was the payment successful? If not we can refund.
      */
-    async waitForPayment(abortSignal?: AbortSignal, checkIntervalSeconds?: number): Promise<boolean> {
-        const result = await this.wrapper.contract.waitForRefundAuthorization(this.data, this.url, abortSignal, checkIntervalSeconds);
+    waitForPayment(abortSignal?: AbortSignal, checkIntervalSeconds?: number): Promise<boolean> {
+        const abortController = new AbortController();
 
-        if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
+        if(abortSignal!=null) abortSignal.onabort = () => {
+            abortController.abort();
+        };
 
-        if(!result.is_paid) {
-            this.state = ToBTCSwapState.REFUNDABLE;
+        return Promise.race([
+            new Promise<boolean>((resolve, reject) => {
+                let listener;
 
-            await this.save();
+                 listener = (swap) => {
+                     if(swap.state===ToBTCSwapState.CLAIMED) {
+                         resolve(true);
+                         abortController.abort();
+                     }
+                 };
+                 this.events.on("swapState", listener);
 
-            this.emitEvent();
-            return false;
-        } else {
-            this.secret = result.secret;
-            await this.save();
+                 abortController.signal.addEventListener("abort", () => {
+                     this.events.removeListener("swapState", listener);
+                     reject(new AbortError());
+                 });
+            }),
+            (async() => {
+                const result = await this.wrapper.contract.waitForRefundAuthorization(this.data, this.url, abortController.signal, checkIntervalSeconds); //Throws on abort
 
-            return true;
-        }
+                abortController.abort();
+
+                if(!result.is_paid) {
+                    this.state = ToBTCSwapState.REFUNDABLE;
+
+                    await this.save();
+
+                    this.emitEvent();
+                    return false;
+                } else {
+                    this.secret = result.secret;
+                    await this.save();
+
+                    return true;
+                }
+            })()
+        ]);
+
     }
 
     /**
@@ -343,17 +389,35 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
                 resolve();
                 return;
             }
-            let listener;
-            listener = (swap) => {
+
+            const abortController = new AbortController();
+
+            const intervalWatchdog = setInterval(() => {
+                if(abortSignal.aborted) return;
+                this.wrapper.contract.swapContract.isCommited(this.data).then((status) => {
+                    if(!status) {
+                        abortController.abort();
+                        resolve();
+                    }
+                }).catch(e => console.error(e));
+            }, 5000);
+            abortController.signal.addEventListener("abort", () => clearInterval(intervalWatchdog));
+
+            const listener = (swap) => {
                 if(swap.state===ToBTCSwapState.REFUNDED) {
-                    this.events.removeListener("swapState", listener);
-                    if(abortSignal!=null) abortSignal.onabort = null;
+                    abortController.abort();
                     resolve();
                 }
             };
             this.events.on("swapState", listener);
+            abortController.signal.addEventListener("abort", () => this.events.removeListener("swapState", listener));
+
+            abortController.signal.addEventListener("abort", () => {
+                if(abortSignal!=null) abortSignal.onabort = null;
+            });
+
             if(abortSignal!=null) abortSignal.onabort = () => {
-                this.events.removeListener("swapState", listener);
+                abortController.abort();
                 reject("Aborted");
             };
         });
