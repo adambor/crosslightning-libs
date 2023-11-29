@@ -483,12 +483,13 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
     }
 
     getTimeoutTime(): number {
+        if(this.pr==null) return null;
         const decoded = bolt11.decode(this.pr);
-        return (decoded.timeExpireDate*1000)-45;
+        return (decoded.timeExpireDate*1000);
     }
 
     /**
-     * Is this an LNURL-pay swap?
+     * Is this an LNURL-withdraw swap?
      */
     isLNURL(): boolean {
         return this.lnurl!=null;

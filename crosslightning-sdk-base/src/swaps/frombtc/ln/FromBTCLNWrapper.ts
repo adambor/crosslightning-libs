@@ -233,6 +233,11 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
         const processSwap: (swap: FromBTCLNSwap<T>) => Promise<boolean> = async (swap: FromBTCLNSwap<T>) => {
             if(swap.state===FromBTCLNSwapState.PR_CREATED) {
+                if(swap.getTimeoutTime()<Date.now()) {
+                    swap.state = FromBTCLNSwapState.EXPIRED;
+                    return true;
+                }
+
                 //Check if it's maybe already paid
                 try {
                     const res = await this.contract.getPaymentAuthorization(swap.pr, swap.url, swap.data.getToken(), swap.data.getOfferer(), swap.requiredBaseFee, swap.requiredFeePPM);
