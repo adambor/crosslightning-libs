@@ -199,6 +199,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     secret: swap.secret
                 });
 
+                if(swap.metadata!=null) swap.metadata.times.htlcSettled = Date.now();
+
                 await swap.setState(FromBtcLnSwapState.SETTLED);
                 // await PluginManager.swapStateChange(swap);
 
@@ -240,6 +242,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
                 const isSwapFound = savedSwap != null;
                 if (isSwapFound) {
+                    if(savedSwap.metadata!=null) savedSwap.metadata.times.initTxReceived = Date.now();
                     await savedSwap.setState(FromBtcLnSwapState.COMMITED);
                     // await PluginManager.swapStateChange(savedSwap);
                 }
@@ -273,6 +276,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     continue;
                 }
 
+                if(savedSwap.metadata!=null) savedSwap.metadata.times.claimTxReceived = Date.now();
+
                 try {
                     await lncli.settleHodlInvoice({
                         lnd: this.LND,
@@ -280,6 +285,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     });
                     console.log("[From BTC-LN: BTCLN.SettleHodlInvoice] Invoice settled, id: ", paymentHashHex);
                     savedSwap.secret = secretHex;
+                    if(savedSwap.metadata!=null) savedSwap.metadata.times.htlcSettled = Date.now();
                     await savedSwap.setState(FromBtcLnSwapState.SETTLED);
                     // await PluginManager.swapStateChange(savedSwap);
                     await this.removeSwapData(paymentHashHex);
@@ -339,6 +345,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
      * @param invoice
      */
     private async htlcReceived(invoiceData: FromBtcLnSwapAbs<T>, invoice: any) {
+        if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcReceived = Date.now();
+
         const useToken: TokenAddress = invoiceData.data.getToken();
 
         // const invoiceAmount: BN = new BN(invoice.received);
@@ -373,6 +381,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             };
         }
 
+        if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcBalanceChecked = Date.now();
+
         let timeout: number = null;
         invoice.payments.forEach((curr) => {
             if (timeout == null || timeout > curr.timeout) timeout = curr.timeout;
@@ -397,6 +407,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
         console.log("[From BTC-LN: REST.GetInvoicePaymentAuth] expiry timeout: ", expiryTimeout.toString(10));
 
+        if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcTimeoutCalculated = Date.now();
+
         const payInvoiceObject: T = await this.swapContract.createSwapData(
             ChainSwapType.HTLC,
             this.swapContract.getAddress(),
@@ -413,7 +425,11 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             new BN(0)
         );
 
+        if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcSwapCreated = Date.now();
+
         const sigData = await this.swapContract.getInitSignature(payInvoiceObject, this.nonce, this.config.authorizationTimeout);
+
+        if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcSwapSigned = Date.now();
 
         if(invoiceData.state===FromBtcLnSwapState.CREATED) {
             invoiceData.data = payInvoiceObject;
@@ -435,6 +451,14 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
     startRestServer(restServer: Express) {
 
         restServer.post(this.path+"/createInvoice", expressHandlerWrapper(async (req, res) => {
+            const metadata: {
+                request: any,
+                invoiceRequest?: any,
+                invoiceResponse?: any,
+                times: {[key: string]: number}
+            } = {request: req.body, times: {}};
+
+            metadata.times.requestReceived = Date.now();
             /**
              * address: string              solana address of the recipient
              * paymentHash: string          payment hash of the to-be-created invoice
@@ -472,6 +496,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     });
                 }
             }
+
+            metadata.times.requestChecked = Date.now();
 
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
@@ -541,6 +567,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 }
             }
 
+            metadata.times.amountsChecked = Date.now();
+
             // if(parsedBody.expiry<=0) {
             //     res.status(400).json({
             //         msg: "Invalid request body (expiry)"
@@ -560,6 +588,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 total = amountInToken.sub(swapFeeInToken);
             }
 
+            metadata.times.priceCalculated = Date.now();
+
             const balance = await this.swapContract.getBalance(useToken, true);
 
             const hasEnoughBalance = balance.gte(total);
@@ -570,6 +600,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 return;
             }
 
+            metadata.times.balanceChecked = Date.now();
+
             const hodlInvoiceObj: any = {
                 description: parsedBody.address,
                 cltv_delta: this.config.minCltv.add(new BN(5)).toString(10),
@@ -579,11 +611,16 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 description_hash: req.body.descriptionHash
             };
 
+            metadata.invoiceRequest = {...hodlInvoiceObj};
+
             console.log("[From BTC-LN: REST.CreateInvoice] creating hodl invoice: ", hodlInvoiceObj);
 
             hodlInvoiceObj.lnd = this.LND;
 
             const hodlInvoice = await lncli.createHodlInvoice(hodlInvoiceObj);
+
+            metadata.times.invoiceCreated = Date.now();
+            metadata.invoiceResponse = {...hodlInvoiceObj};
 
             console.log("[From BTC-LN: REST.CreateInvoice] hodl invoice created: ", hodlInvoice);
 
@@ -600,11 +637,15 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 baseSD = (await this.swapContract.getRefundFee()).mul(new BN(2));
             }
 
+            metadata.times.refundFeeFetched = Date.now();
+
             const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(amountBD.sub(swapFee), this.swapContract.getNativeCurrencyAddress(), true);
             const apyPPM = new BN(Math.floor(this.config.securityDepositAPY*1000000));
             const variableSD = swapValueInNativeCurrency.mul(apyPPM).mul(expiryTimeout).div(new BN(1000000)).div(secondsInYear);
 
             const totalSecurityDeposit = baseSD.add(variableSD);
+
+            metadata.times.securityDepositCalculated = Date.now();
 
             createdSwap.data = await this.swapContract.createSwapData(
                 ChainSwapType.HTLC,
@@ -621,6 +662,9 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 totalSecurityDeposit,
                 new BN(0)
             );
+
+            metadata.times.swapCreated = Date.now();
+            createdSwap.metadata = metadata;
 
             await PluginManager.swapCreate(createdSwap);
 

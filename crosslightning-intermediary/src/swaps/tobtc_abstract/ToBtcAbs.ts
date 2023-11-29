@@ -120,6 +120,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
         const result = await this.swapContract.claimWithTxData(payment.data, blockHeader.getHeight(), tx, vout, null, null, false, true);
 
+        if(payment.metadata!=null) payment.metadata.times.txClaimed = Date.now();
+
         unlock();
 
         return true;
@@ -210,6 +212,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                     console.error("Cannot find vout!!");
                     continue;
                 }
+
+                if(payment.metadata!=null) payment.metadata.times.payTxConfirmed = Date.now();
 
                 const success = await this.processPaymentResult(tx, payment, vout.n);
 
@@ -303,6 +307,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 return;
             }
 
+            if(payment.metadata!=null) payment.metadata.times.payCLTVChecked = Date.now();
+
             const maxNetworkFee = payment.networkFee;
 
             let fundPsbtResponse;
@@ -327,6 +333,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 console.error("[To BTC: Solana.Initialize] Failed to call fundPsbt on this.LND");
                 return;
             }
+
+            if(payment.metadata!=null) payment.metadata.times.payFundPSBT = Date.now();
 
             let psbt = bitcoin.Psbt.fromHex(fundPsbtResponse.psbt);
 
@@ -363,6 +371,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             } catch (e) {
                 console.error(e);
             }
+
+            if(payment.metadata!=null) payment.metadata.times.paySignPSBT = Date.now();
 
             const unlockUtxos = async() => {
                 for(let input of fundPsbtResponse.inputs) {
@@ -416,6 +426,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             } catch (e) {
                 console.error(e);
             }
+
+            if(payment.metadata!=null) payment.metadata.times.payTxSent = Date.now();
 
             if(txSendResult==null) {
                 console.error("[To BTC: Solana.Initialize] Failed to broadcast transaction!");
@@ -474,6 +486,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                     console.error("[To BTC: Solana.Initialize] No invoice submitted");
                     continue;
                 }
+
+                if(savedInvoice.metadata!=null) savedInvoice.metadata.times.txReceived = Date.now();
 
                 console.log("[To BTC: Solana.Initialize] SOL request submitted");
 
@@ -548,6 +562,12 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
     startRestServer(restServer: Express) {
         restServer.post(this.path+"/payInvoice", expressHandlerWrapper(async (req, res) => {
+            const metadata: {
+                request: any,
+                times: {[key: string]: number}
+            } = {request: req.body, times: {}};
+
+            metadata.times.requestReceived = Date.now();
             /**
              * address: string                      Bitcoin destination address
              * amount: string                       Amount to send (in satoshis)
@@ -643,6 +663,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
+            metadata.times.requestChecked = Date.now();
+
             let tooLow = false;
             let amountBD: BN;
             if(req.body.exactIn) {
@@ -683,6 +705,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 }
             }
 
+            metadata.times.amountsChecked = Date.now();
+
             let chainFeeResp;
             try {
                 chainFeeResp = await lncli.getChainFeeEstimate({
@@ -699,6 +723,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             } catch (e) {
                 console.error(e);
             }
+
+            metadata.times.chainFeeFetched = Date.now();
 
             const hasEnoughFunds = chainFeeResp!=null;
             if(!hasEnoughFunds) {
@@ -765,6 +791,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 }
             }
 
+            metadata.times.chainFeeCalculated = Date.now();
+
             const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
 
             const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(networkFeeAdjusted, useToken, true);
@@ -779,6 +807,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 amountInToken = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount, useToken, true);
                 total = amountInToken.add(swapFeeInToken).add(networkFeeInToken);
             }
+
+            metadata.times.priceCalculated = Date.now();
 
             //Add grace period another time, so the user has 1 hour to commit
             const expirySeconds = this.getExpiryFromCLTV(parsedBody.confirmationTarget, parsedBody.confirmations).add(new BN(this.config.gracePeriod));
@@ -801,11 +831,16 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 new BN(0)
             );
 
+            metadata.times.swapCreated = Date.now();
+
             const sigData = await this.swapContract.getClaimInitSignature(payObject, this.nonce, this.config.authorizationTimeout);
+
+            metadata.times.swapSigned = Date.now();
 
             const createdSwap = new ToBtcSwapAbs<T>(parsedBody.address, amountBD, swapFee, networkFeeAdjusted, parsedBody.nonce, parsedBody.confirmationTarget, new BN(sigData.timeout));
             const paymentHash = this.getChainHash(createdSwap);
             createdSwap.data = payObject;
+            createdSwap.metadata = metadata;
 
             await PluginManager.swapCreate(createdSwap);
 

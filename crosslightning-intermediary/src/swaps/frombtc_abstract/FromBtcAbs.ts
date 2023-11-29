@@ -204,6 +204,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
                 const isSwapFound = savedSwap != null;
                 if (isSwapFound) {
+                    if(savedSwap.metadata!=null) savedSwap.metadata.times.initTxReceived = Date.now();
                     await savedSwap.setState(FromBtcSwapState.COMMITED);
                 }
 
@@ -232,6 +233,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 if (isSwapNotFound) {
                     continue;
                 }
+
+                if(savedSwap.metadata!=null) savedSwap.metadata.times.claimTxReceived = Date.now();
 
                 await savedSwap.setState(FromBtcSwapState.CLAIMED);
                 //await PluginManager.swapStateChange(savedSwap);
@@ -271,6 +274,12 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
     startRestServer(restServer: Express) {
 
         restServer.post(this.path+"/getAddress", expressHandlerWrapper(async (req, res) => {
+            const metadata: {
+                request: any,
+                times: {[key: string]: number}
+            } = {request: req.body, times: {}};
+
+            metadata.times.requestReceived = Date.now();
             /**
              * address: string              solana address of the recipient
              * amount: string               amount (in sats) of the invoice
@@ -307,6 +316,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 });
                 return;
             }
+
+            metadata.times.requestChecked = Date.now();
 
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
@@ -376,6 +387,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 }
             }
 
+            metadata.times.amountsChecked = Date.now();
+
             const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
             const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true);
 
@@ -389,6 +402,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 total = amountInToken.sub(swapFeeInToken);
             }
 
+            metadata.times.priceCalculated = Date.now();
+
             const balance = await this.swapContract.getBalance(useToken, true);
 
             if(total.gt(balance)) {
@@ -398,10 +413,14 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 return;
             }
 
+            metadata.times.balanceChecked = Date.now();
+
             const {address: receiveAddress} = await lncli.createChainAddress({
                 lnd: this.LND,
                 format: "p2wpkh"
             });
+
+            metadata.times.addressCreated = Date.now();
 
             console.log("[From BTC: REST.CreateInvoice] Created receiving address: ", receiveAddress);
 
@@ -422,6 +441,9 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
             } else {
                 baseSD = (await this.swapContract.getRefundFee()).mul(new BN(2));
             }
+
+            metadata.times.refundFeeFetched = Date.now();
+
             console.log("[From BTC: REST.CreateInvoice] Base security deposit: ", baseSD.toString(10));
             const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(amountBD.sub(swapFee), this.swapContract.getNativeCurrencyAddress(), true);
             console.log("[From BTC: REST.CreateInvoice] Swap output value in native currency: ", swapValueInNativeCurrency.toString(10));
@@ -437,6 +459,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
             const blocksDelta = tsDelta.div(this.config.bitcoinBlocktime).mul(parsedBody.claimerBounty.safetyFactor);
             const totalBlock = blocksDelta.add(parsedBody.claimerBounty.addBlock);
             const totalClaimerBounty = parsedBody.claimerBounty.addFee.add(totalBlock.mul(parsedBody.claimerBounty.feePerBlock));
+
+            metadata.times.securityDepositCalculated = Date.now();
 
             const data: T = await this.swapContract.createSwapData(
                 ChainSwapType.CHAIN,
@@ -454,12 +478,16 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 totalClaimerBounty
             );
 
+            metadata.times.swapCreated = Date.now();
+
             data.setTxoHash(this.getChainTxoHash(createdSwap).toString("hex"));
 
             createdSwap.data = data;
 
             const sigData = await this.swapContract.getInitSignature(data, this.nonce, this.config.authorizationTimeout);
 
+            metadata.times.swapSigned = Date.now();
+            createdSwap.metadata = metadata;
             createdSwap.authorizationExpiry = new BN(sigData.timeout);
 
             await PluginManager.swapCreate(createdSwap);

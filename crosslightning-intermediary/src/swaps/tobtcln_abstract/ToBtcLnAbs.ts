@@ -238,6 +238,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             console.error(e);
         });
 
+        if(invoiceData.metadata!=null) invoiceData.metadata.times.payPaymentChecked = Date.now();
+
         const markAsNonPayable = async() => {
             invoiceData.data = data;
             await invoiceData.setState(ToBtcLnSwapState.NON_PAYABLE);
@@ -325,6 +327,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 console.error(e);
             });
 
+            if(invoiceData.metadata!=null) invoiceData.metadata.times.payComplete = Date.now();
+
             if(payment==null) {
                 console.error("[To BTC-LN: Solana.Initialize] Failed to initiate invoice payment!");
                 await markAsNonPayable();
@@ -386,6 +390,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     continue;
                 }
 
+                if(savedInvoice.metadata!=null) savedInvoice.metadata.times.txReceived = Date.now();
+
                 console.log("[To BTC-LN: Solana.Initialize] SOL request submitted: ", paymentHash);
 
                 await this.processInitialized(savedInvoice, event.swapData);
@@ -436,6 +442,15 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
     startRestServer(restServer: Express) {
         restServer.post(this.path+"/payInvoice", expressHandlerWrapper(async (req, res) => {
+            const metadata: {
+                request: any,
+                probeRequest?: any,
+                probeResponse?: any,
+                routeResponse?: any,
+                times: {[key: string]: number}
+            } = {request: req.body, times: {}};
+
+            metadata.times.requestReceived = Date.now();
             /**
              * pr: string                   bolt11 lightning invoice
              * maxFee: string               maximum routing fee
@@ -534,6 +549,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 return;
             }
 
+            metadata.times.requestChecked = Date.now();
+
             //Check if prior payment has been made
             try {
                 const payment = await lncli.getPayment({
@@ -550,15 +567,22 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 }
             } catch (e) {}
 
+            metadata.times.priorPaymentChecked = Date.now();
+
             const maxUsableCLTV: BN = parsedBody.expiryTimestamp.sub(currentTimestamp).sub(this.config.gracePeriod).div(this.config.bitcoinBlocktime.mul(this.config.safetyFactor));
 
             const { current_block_height } = await lncli.getHeight({lnd: this.LND});
+
+            metadata.times.blockheightFetched = Date.now();
 
             //Probe for a route
             const parsedRequest = await lncli.parsePaymentRequest({
                 request: parsedBody.pr
             });
             console.log("[To BTC-LN: REST.payInvoice] Parsed PR: ", JSON.stringify(parsedRequest, null, 4));
+
+            metadata.times.prParsed = Date.now();
+
             const probeReq: any = {
                 destination: parsedPR.payeeNodeKey,
                 cltv_delta: parsedPR.tagsObject.min_final_cltv_expiry,
@@ -569,6 +593,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 total_mtokens: parsedPR.millisatoshis,
                 routes: parsedRequest.routes
             };
+            metadata.probeRequest = {...probeReq};
+
             //if(hints.length>0) req.routes = [hints];
             console.log("[To BTC-LN: REST.payInvoice] Probe for route: ", JSON.stringify(probeReq, null, 4));
             probeReq.lnd = this.LND;
@@ -588,6 +614,9 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             } catch (e) {
                 console.error(e);
             }
+
+            metadata.times.probeResult = Date.now();
+            metadata.probeResponse = {...obj};
 
             console.log("[To BTC-LN: REST.payInvoice] Probe result: ", obj);
 
@@ -619,6 +648,9 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     return;
                 }
 
+                metadata.times.routingResult = Date.now();
+                metadata.routeResponse = {...routingObj};
+
                 obj = routingObj;
                 obj.route.confidence = 0;
             }
@@ -647,6 +679,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             const total = amountInToken.add(routingFeeInToken).add(swapFeeInToken);
 
+            metadata.times.priceCalculated = Date.now();
+
             const payObject: T = await this.swapContract.createSwapData(
                 ChainSwapType.HTLC,
                 parsedBody.offerer,
@@ -663,10 +697,15 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 new BN(0)
             );
 
+            metadata.times.swapCreated = Date.now();
+
             const sigData = await this.swapContract.getClaimInitSignature(payObject, this.nonce, this.config.authorizationTimeout);
+
+            metadata.times.swapSigned = Date.now();
 
             const createdSwap = new ToBtcLnSwapAbs<T>(parsedBody.pr, swapFee, actualRoutingFee, new BN(sigData.timeout));
             createdSwap.data = payObject;
+            createdSwap.metadata = metadata;
 
             await PluginManager.swapCreate(createdSwap);
 
