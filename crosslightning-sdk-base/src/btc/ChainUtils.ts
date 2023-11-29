@@ -2,6 +2,7 @@ import fetch, {Response} from "cross-fetch";
 import * as bitcoin from "bitcoinjs-lib";
 import {createHash} from "crypto-browserify";
 import * as BN from "bn.js";
+import {tryWithRetries} from "../utils/RetryUtils";
 
 let url = "https://mempool.space/testnet/api/";
 
@@ -112,9 +113,9 @@ export class ChainUtils {
 
     static async getTransaction(txId: string): Promise<BitcoinTransaction> {
 
-        const response: Response = await fetch(url+"tx/"+txId, {
+        const response: Response = await tryWithRetries(() => fetch(url+"tx/"+txId, {
             method: "GET"
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -134,9 +135,9 @@ export class ChainUtils {
 
     static async getRawTransaction(txId: string): Promise<Buffer> {
 
-        const response: Response = await fetch(url+"tx/"+txId+"/hex", {
+        const response: Response = await tryWithRetries(() => fetch(url+"tx/"+txId+"/hex", {
             method: "GET"
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -163,9 +164,9 @@ export class ChainUtils {
 
     static async getAddressTransactions(address: string): Promise<BitcoinTransaction[]> {
 
-        const response: Response = await fetch(url+"address/"+address+"/txs", {
+        const response: Response = await tryWithRetries(() => fetch(url+"address/"+address+"/txs", {
             method: "GET"
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -278,9 +279,9 @@ export class ChainUtils {
 
     static async getTipBlockHash(): Promise<string> {
 
-        const response: Response = await fetch(url+"blocks/tip/hash", {
+        const response: Response = await tryWithRetries(() => fetch(url+"blocks/tip/hash", {
             method: "GET"
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -299,9 +300,9 @@ export class ChainUtils {
 
     static async getTipBlockHeight() : Promise<number> {
 
-        const response: Response = await fetch(url+"blocks/tip/height", {
+        const response: Response = await tryWithRetries(() => fetch(url+"blocks/tip/height", {
             method: "GET"
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -323,9 +324,9 @@ export class ChainUtils {
 
     static async getBlock(blockhash: string): Promise<BitcoinBlockHeader> {
 
-        const response: Response = await fetch(url+"block/"+blockhash, {
+        const response: Response = await tryWithRetries(() => fetch(url+"block/"+blockhash, {
             method: "GET"
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -345,9 +346,9 @@ export class ChainUtils {
 
     static async getBlockStatus(blockhash: string): Promise<{in_best_chain: boolean, height: number, next_best: string}> {
 
-        const response: Response = await fetch(url+"block/"+blockhash+"/status", {
+        const response: Response = await tryWithRetries(() => fetch(url+"block/"+blockhash+"/status", {
             method: "GET"
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -371,9 +372,9 @@ export class ChainUtils {
         pos: number
     }> {
 
-        const response: Response = await fetch(url+"tx/"+txId+"/merkle-proof", {
+        const response: Response = await tryWithRetries(() => fetch(url+"tx/"+txId+"/merkle-proof", {
             method: "GET"
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -393,9 +394,9 @@ export class ChainUtils {
 
     static async getBlockHash(height: number): Promise<string> {
 
-        const response: Response = await fetch(url+"block-height/"+height, {
+        const response: Response = await tryWithRetries(() => fetch(url+"block-height/"+height, {
             method: "GET"
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -415,9 +416,9 @@ export class ChainUtils {
 
     static async getPast15Blocks(endHeight: number) : Promise<BlockData[]> {
 
-        const response: Response = await fetch(url+"v1/blocks/"+endHeight, {
+        const response: Response = await tryWithRetries(() => fetch(url+"v1/blocks/"+endHeight, {
             method: "GET"
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;

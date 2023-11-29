@@ -4,8 +4,9 @@ import {ClientSwapContract} from "../ClientSwapContract";
 import * as BN from "bn.js";
 import * as EventEmitter from "events";
 import {SwapCommitStatus, SwapData, TokenAddress, ChainEvents, RefundEvent, ClaimEvent,
-    InitializeEvent, SwapEvent} from "crosslightning-base";
+    InitializeEvent, SwapEvent, SignatureVerificationError} from "crosslightning-base";
 import {FromBTCLNSwapState, FromBTCSwap, FromBTCSwapState} from "../..";
+import {tryWithRetries} from "../../utils/RetryUtils";
 
 
 export abstract class IToBTCWrapper<T extends SwapData> {
@@ -138,7 +139,7 @@ export abstract class IToBTCWrapper<T extends SwapData> {
         const processSwap: (swap: IToBTCSwap<T>) => Promise<boolean> = async (swap: IToBTCSwap<T>) => {
             if(swap.state===ToBTCSwapState.CREATED) {
                 //Check if it's already committed
-                const res = await this.contract.swapContract.getCommitStatus(swap.data);
+                const res = await tryWithRetries(() => this.contract.swapContract.getCommitStatus(swap.data));
                 if(res===SwapCommitStatus.PAID) {
                     swap.state = ToBTCSwapState.CLAIMED;
                     return true;
@@ -158,15 +159,23 @@ export abstract class IToBTCWrapper<T extends SwapData> {
 
                 //Not committed yet, check if still valid
                 try {
-                    await this.contract.swapContract.isValidClaimInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce);
+                    await tryWithRetries(
+                        () => this.contract.swapContract.isValidClaimInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce),
+                        null,
+                        e => e instanceof SignatureVerificationError
+                    );
                 } catch (e) {
-                    swap.state = ToBTCSwapState.FAILED;
-                    return true;
+                    if(e instanceof SignatureVerificationError) {
+                        swap.state = ToBTCSwapState.FAILED;
+                        return true;
+                    }
                 }
+
+                return false;
             }
 
             if(swap.state===ToBTCSwapState.COMMITED) {
-                const res = await this.contract.swapContract.getCommitStatus(swap.data);
+                const res = await tryWithRetries(() => this.contract.swapContract.getCommitStatus(swap.data));
                 if(res===SwapCommitStatus.COMMITED) {
                     //Check if that maybe already concluded
                     try {

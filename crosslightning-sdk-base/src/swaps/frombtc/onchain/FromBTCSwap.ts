@@ -6,6 +6,8 @@ import {ChainUtils} from "../../../btc/ChainUtils";
 import {FromBTCWrapper} from "./FromBTCWrapper";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
+import {tryWithRetries} from "../../../utils/RetryUtils";
+import {SignatureVerificationError} from "crosslightning-base";
 
 export enum FromBTCSwapState {
     FAILED = -2,
@@ -175,9 +177,18 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
         }
 
         try {
-            await this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+            await tryWithRetries(
+                () => this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce),
+                null,
+                (e) => e instanceof SignatureVerificationError,
+                abortSignal
+            );
         } catch (e) {
-            throw new Error("Request timed out!")
+            if(e instanceof SignatureVerificationError) {
+                throw new Error("Request timed out!");
+            } else {
+                throw e;
+            }
         }
 
         const txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.nonce, this.getTxoHash(), !noWaitForConfirmation, abortSignal);
@@ -219,9 +230,17 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
         }
 
         try {
-            await this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+            await tryWithRetries(
+                () => this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce),
+                null,
+                (e) => e instanceof SignatureVerificationError
+            );
         } catch (e) {
-            throw new Error("Request timed out!")
+            if(e instanceof SignatureVerificationError) {
+                throw new Error("Request timed out!");
+            } else {
+                throw e;
+            }
         }
 
         return await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, this.getTxoHash());

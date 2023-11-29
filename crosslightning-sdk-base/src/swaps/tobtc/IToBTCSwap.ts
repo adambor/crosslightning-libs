@@ -6,6 +6,7 @@ import * as EventEmitter from "events";
 import {SwapType} from "../SwapType";
 import {SignatureVerificationError, SwapData} from "crosslightning-base";
 import {TokenAddress} from "crosslightning-base";
+import {tryWithRetries} from "../../utils/RetryUtils";
 
 export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
 
@@ -192,10 +193,17 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
         console.log(this);
 
         try {
-            await this.wrapper.contract.swapContract.isValidClaimInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+            await tryWithRetries(
+                () => this.wrapper.contract.swapContract.isValidClaimInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce),
+                null,
+                e => e instanceof SignatureVerificationError
+            );
         } catch (e) {
-            console.error(e);
-            throw new Error("Expired, please retry");
+            if(e instanceof SignatureVerificationError) {
+                console.error(e);
+                throw new Error("Expired, please retry");
+            }
+            throw e;
         }
 
         return await this.wrapper.contract.swapContract.txsInitPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce);

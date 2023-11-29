@@ -4,6 +4,8 @@ import {IFromBTCSwap} from "../IFromBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
+import {tryWithRetries} from "../../../utils/RetryUtils";
+import {SignatureVerificationError} from "crosslightning-base";
 
 
 export enum FromBTCLNSwapState {
@@ -185,7 +187,12 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
         }
 
         try {
-            await this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+            await tryWithRetries(
+                () => this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce),
+                null,
+                e => e instanceof SignatureVerificationError,
+                abortSignal
+            );
         } catch (e) {
             throw new Error("Request timed out!")
         }
@@ -229,9 +236,17 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
         }
 
         try {
-            await this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+            await tryWithRetries(
+                () => this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce),
+                null,
+                e => e instanceof SignatureVerificationError
+            );
         } catch (e) {
-            throw new Error("Request timed out!")
+            if(e instanceof SignatureVerificationError) {
+                throw new Error("Request timed out!")
+            } else {
+                throw e;
+            }
         }
 
         return await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, null);
@@ -375,14 +390,23 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
         }
 
         try {
-            await this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+            await tryWithRetries(
+                () => this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce),
+                null,
+                (e) => e instanceof SignatureVerificationError,
+                abortSignal
+            );
         } catch (e) {
-            const result = await this.wrapper.contract.getPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM);
-            this.data = result.data;
-            this.prefix = result.prefix;
-            this.timeout = result.timeout;
-            this.signature = result.signature;
-            this.nonce = result.nonce;
+            if(e instanceof SignatureVerificationError) {
+                const result = await this.wrapper.contract.getPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM);
+                this.data = result.data;
+                this.prefix = result.prefix;
+                this.timeout = result.timeout;
+                this.signature = result.signature;
+                this.nonce = result.nonce;
+            } else {
+                throw e;
+            }
         }
 
         const txResult = await this.wrapper.contract.swapContract.initAndClaimWithSecret(
@@ -423,14 +447,22 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
         }
 
         try {
-            await this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+            await tryWithRetries(
+                () => this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce),
+                null,
+                (e) => e instanceof SignatureVerificationError
+            );
         } catch (e) {
-            const result = await this.wrapper.contract.getPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM);
-            this.data = result.data;
-            this.prefix = result.prefix;
-            this.timeout = result.timeout;
-            this.signature = result.signature;
-            this.nonce = result.nonce;
+            if(e instanceof SignatureVerificationError) {
+                const result = await this.wrapper.contract.getPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM);
+                this.data = result.data;
+                this.prefix = result.prefix;
+                this.timeout = result.timeout;
+                this.signature = result.signature;
+                this.nonce = result.nonce;
+            } else {
+                throw e;
+            }
         }
 
         const initTxs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce);
@@ -477,8 +509,8 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
      * Estimated transaction fee for commitAndClaim tx
      */
     async getCommitAndClaimFee(): Promise<BN> {
-        const commitFee = await this.getCommitFee();
-        const claimFee = await this.getClaimFee();
+        const commitFee = await tryWithRetries(() => this.getCommitFee());
+        const claimFee = await tryWithRetries(() => this.getClaimFee());
         return commitFee.add(claimFee);
     }
 

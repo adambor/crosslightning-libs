@@ -17,6 +17,7 @@ import {
     SwapEvent,
     TokenAddress
 } from "crosslightning-base";
+import {tryWithRetries} from "../../../utils/RetryUtils";
 
 export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
@@ -265,7 +266,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
             if(swap.state===FromBTCLNSwapState.PR_PAID) {
                 //Check if it's already committed
                 try {
-                    const status = await this.contract.swapContract.getCommitStatus(swap.data);
+                    const status = await tryWithRetries(() => this.contract.swapContract.getCommitStatus(swap.data));
                     if(status===SwapCommitStatus.PAID) {
                         swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
                         return true;
@@ -283,7 +284,11 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
                 }
 
                 try {
-                    await this.contract.swapContract.isValidInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce);
+                    await tryWithRetries(
+                        () => this.contract.swapContract.isValidInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce),
+                        null,
+                        (e) => e instanceof SignatureVerificationError
+                    );
                 } catch (e) {
                     console.error(e);
                     if(e instanceof SignatureVerificationError) {
@@ -298,7 +303,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
             if(swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
                 //Check if it's already successfully paid
                 try {
-                    const commitStatus = await this.contract.swapContract.getCommitStatus(swap.data);
+                    const commitStatus = await tryWithRetries(() => this.contract.swapContract.getCommitStatus(swap.data));
                     if(commitStatus===SwapCommitStatus.PAID) {
                         swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
                         return true;
