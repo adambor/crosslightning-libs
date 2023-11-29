@@ -12,6 +12,7 @@ import {BitcoinRpc, BtcRelay} from "crosslightning-base/dist";
 import {findlnurl, getParams, LNURLPayParams, LNURLPaySuccessAction, LNURLWithdrawParams} from "js-lnurl/lib";
 import {RequestError} from "../errors/RequestError";
 import {AbortError} from "../errors/AbortError";
+import {tryWithRetries} from "../utils/RetryUtils";
 
 export class PaymentAuthError extends Error {
 
@@ -146,9 +147,9 @@ export class ClientSwapContract<T extends SwapData> {
                 scheme = "http";
             }
 
-            const response: Response = await fetch(scheme+"://"+domain+"/.well-known/lnurlp/"+username, {
+            const response: Response = await tryWithRetries(() => fetch(scheme+"://"+domain+"/.well-known/lnurlp/"+username, {
                 method: "GET"
-            });
+            }));
 
             if(response.status!==200) {
                 let resp: string;
@@ -280,14 +281,14 @@ export class ClientSwapContract<T extends SwapData> {
 
             console.log("Generated hash: ", hash);
 
-            const payStatus = await this.swapContract.getPaymentHashStatus(hash);
+            const payStatus = await tryWithRetries(() => this.swapContract.getPaymentHashStatus(hash));
 
             if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
                 throw new UserError("Invoice already being paid for or paid");
             }
         }
 
-        const response: Response = await fetch(url+"/payInvoice", {
+        const response: Response = await tryWithRetries(() => fetch(url+"/payInvoice", {
             method: "POST",
             body: JSON.stringify({
                 address,
@@ -300,7 +301,7 @@ export class ClientSwapContract<T extends SwapData> {
                 exactIn
             }),
             headers: {'Content-Type': 'application/json'}
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -326,7 +327,7 @@ export class ClientSwapContract<T extends SwapData> {
 
             console.log("Generated hash: ", hash);
 
-            const payStatus = await this.swapContract.getPaymentHashStatus(hash);
+            const payStatus = await tryWithRetries(() => this.swapContract.getPaymentHashStatus(hash));
 
             if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
                 throw new UserError("Invoice already being paid for or paid");
@@ -356,7 +357,8 @@ export class ClientSwapContract<T extends SwapData> {
                 throw new IntermediaryError("Invalid data returned - token");
             }
             if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                if(!(await this.swapPrice.isValidAmountSend(amount, requiredBaseFee, requiredFeePPM, total.sub(networkFee), data.getToken()))) {
+                const isValidSendAmount = await tryWithRetries(() => this.swapPrice.isValidAmountSend(amount, requiredBaseFee, requiredFeePPM, total.sub(networkFee), data.getToken()));
+                if(!isValidSendAmount) {
                     throw new IntermediaryError("Fee too high");
                 }
             }
@@ -385,14 +387,19 @@ export class ClientSwapContract<T extends SwapData> {
             if(data.getClaimer()!==requiredClaimerKey) throw new IntermediaryError("Invalid data returned");
         }
 
-        try {
-            await this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
-        } catch (e) {
-            if(e instanceof SignatureVerificationError) {
-                throw new IntermediaryError(e.message);
+        const isValidAuthorization = await tryWithRetries(async () => {
+            try {
+                await this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
+                return null;
+            } catch (e) {
+                if(e instanceof SignatureVerificationError) {
+                    return e;
+                }
+                throw e;
             }
-            throw e;
-        }
+        });
+
+        if(isValidAuthorization!=null) throw new IntermediaryError(isValidAuthorization.message);
 
         return {
             amount,
@@ -405,7 +412,7 @@ export class ClientSwapContract<T extends SwapData> {
             signature: jsonBody.data.signature,
             nonce: jsonBody.data.nonce,
 
-            expiry: await this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)
+            expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce))
         };
     }
 
@@ -625,9 +632,9 @@ export class ClientSwapContract<T extends SwapData> {
 
         const queryParams = (payRequest.callback.includes("?") ? "&" : "?")+params.join("&");
 
-        const response: Response = await fetch(payRequest.callback+queryParams, {
+        const response: Response = await tryWithRetries(() => fetch(payRequest.callback+queryParams, {
             method: "GET",
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -742,14 +749,14 @@ export class ClientSwapContract<T extends SwapData> {
         const abortController = new AbortController();
         const [_, jsonBody] = await Promise.all([
             (async () => {
-                const payStatus = await this.swapContract.getPaymentHashStatus(parsedPR.tagsObject.payment_hash);
+                const payStatus = await tryWithRetries(() => this.swapContract.getPaymentHashStatus(parsedPR.tagsObject.payment_hash));
 
                 if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
                     throw new UserError("Invoice already being paid for or paid");
                 }
             })(),
             (async () => {
-                const response: Response = await fetch(url+"/payInvoice", {
+                const response: Response = await tryWithRetries(() => fetch(url+"/payInvoice", {
                     method: "POST",
                     body: JSON.stringify({
                         pr: bolt11PayReq,
@@ -760,7 +767,7 @@ export class ClientSwapContract<T extends SwapData> {
                     }),
                     headers: {'Content-Type': 'application/json'},
                     signal: abortController.signal
-                });
+                }));
 
                 if(response.status!==200) {
                     let resp: string;
@@ -836,21 +843,27 @@ export class ClientSwapContract<T extends SwapData> {
                         throw new IntermediaryError("Invalid data returned - token");
                     }
                     if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                        if(!(await this.swapPrice.isValidAmountSend(sats, requiredBaseFee.add(routingFeeSats), requiredFeePPM, total, data.getToken()))) {
+                        const isValidSendAmount = await tryWithRetries(() => this.swapPrice.isValidAmountSend(sats, requiredBaseFee.add(routingFeeSats), requiredFeePPM, total, data.getToken()));
+                        if(!isValidSendAmount) {
                             throw new IntermediaryError("Fee too high");
                         }
                     }
                 }
             })(),
             (async() => {
-                try {
-                    await this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
-                } catch (e) {
-                    if(e instanceof SignatureVerificationError) {
-                        throw new IntermediaryError(e.message);
+                const isValidAuthorization = await tryWithRetries(async () => {
+                    try {
+                        await this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
+                        return null;
+                    } catch (e) {
+                        if(e instanceof SignatureVerificationError) {
+                            return e;
+                        }
+                        throw e;
                     }
-                    throw e;
-                }
+                });
+
+                if(isValidAuthorization!=null) throw new IntermediaryError(isValidAuthorization.message);
             })()
         ]);
 
@@ -868,7 +881,7 @@ export class ClientSwapContract<T extends SwapData> {
             signature: jsonBody.data.signature,
             nonce: jsonBody.data.nonce,
 
-            expiry: await this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)
+            expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce))
         }
     }
 
@@ -881,9 +894,9 @@ export class ClientSwapContract<T extends SwapData> {
         signature?: string
     }> {
 
-        const response: Response = await fetch(url+"/getRefundAuthorization?paymentHash="+encodeURIComponent(data.getHash()), {
+        const response: Response = await tryWithRetries(() => fetch(url+"/getRefundAuthorization?paymentHash="+encodeURIComponent(data.getHash()), {
             method: "GET"
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -917,7 +930,7 @@ export class ClientSwapContract<T extends SwapData> {
             }
 
             if(txId!=null) {
-                const btcTx = await ChainUtils.getTransaction(txId).catch(e => console.error(e));
+                const btcTx = await tryWithRetries(() => ChainUtils.getTransaction(txId).catch(e => console.error(e)));
                 if(btcTx==null) {
                     console.log("BTC tx not found yet!");
                     return null;
@@ -952,14 +965,19 @@ export class ClientSwapContract<T extends SwapData> {
 
         if(jsonBody.code===20000) {
             //Success
-            try {
-                await this.swapContract.isValidRefundAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature);
-            } catch (e) {
-                if(e instanceof SignatureVerificationError) {
-                    throw new IntermediaryError(e.message);
+            const isValidAuthorization = await tryWithRetries(async () => {
+                try {
+                    await this.swapContract.isValidRefundAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature);
+                    return null;
+                } catch (e) {
+                    if(e instanceof SignatureVerificationError) {
+                        return e;
+                    }
+                    throw e;
                 }
-                throw e;
-            }
+            });
+
+            if(isValidAuthorization!=null) throw new IntermediaryError(isValidAuthorization.message);
 
             return {
                 is_paid: false,
@@ -1013,24 +1031,25 @@ export class ClientSwapContract<T extends SwapData> {
         expiry: number
     }> {
 
-        const feePerBlock: BN = (await this.btcRelay.getFeePerBlock()).mul(feeSafetyFactor || new BN(2));
+        const feePerBlock: BN = await tryWithRetries(() => this.btcRelay.getFeePerBlock().then(val => val.mul(feeSafetyFactor || new BN(2))));
         blockSafetyFactor = blockSafetyFactor || 2;
         const startTimestamp = new BN(Math.floor(Date.now()/1000));
-        const btcRelayData = await this.btcRelay.getTipData();
+        const btcRelayData = await tryWithRetries(() => this.btcRelay.getTipData());
         const currentBtcRelayBlock = btcRelayData.blockheight;
-        const currentBtcBlock = await this.btcRpc.getTipHeight();
+        const currentBtcBlock = await tryWithRetries(() => this.btcRpc.getTipHeight());
 
         const addBlock = Math.max(currentBtcBlock-currentBtcRelayBlock, 0);
 
-        let addFee: BN;
-        if((this.swapContract as any).getRawClaimFee!=null) {
-            //Workaround for sol
-            addFee = await (this.swapContract as any).getRawClaimFee();
-        } else {
-            addFee = (await this.swapContract.getClaimFee()).mul(feeSafetyFactor || new BN(2));
-        }
+        let addFee: BN = await tryWithRetries<BN>(() => {
+            if((this.swapContract as any).getRawClaimFee!=null) {
+                //Workaround for sol
+                return (this.swapContract as any).getRawClaimFee();
+            } else {
+                return this.swapContract.getClaimFee().then(value => value.mul(feeSafetyFactor || new BN(2)));
+            }
+        });
 
-        const response: Response = await fetch(url+"/getAddress", {
+        const response: Response = await tryWithRetries(() => fetch(url+"/getAddress", {
             method: "POST",
             body: JSON.stringify({
                 address: this.swapContract.getAddress(),
@@ -1048,7 +1067,7 @@ export class ClientSwapContract<T extends SwapData> {
                 exactOut
             }),
             headers: {'Content-Type': 'application/json'}
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -1110,7 +1129,8 @@ export class ClientSwapContract<T extends SwapData> {
                 throw new IntermediaryError("Invalid data returned - token");
             }
             if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                if(!(await this.swapPrice.isValidAmountReceive(amount, requiredBaseFee, requiredFeePPM, data.getAmount(), data.getToken()))) {
+                const isValidAmount = await tryWithRetries(() => this.swapPrice.isValidAmountReceive(amount, requiredBaseFee, requiredFeePPM, data.getAmount(), data.getToken()));
+                if(!isValidAmount) {
                     throw new IntermediaryError("Fee too high");
                 }
             }
@@ -1119,7 +1139,7 @@ export class ClientSwapContract<T extends SwapData> {
         console.log("Swap data returned: ", data);
 
         //Get intermediary's liquidity
-        const liquidity = await this.swapContract.getIntermediaryBalance(data.getOfferer(), data.getToken());
+        const liquidity = await tryWithRetries(() => this.swapContract.getIntermediaryBalance(data.getOfferer(), data.getToken()));
 
         console.log("Intermediary balance: ", liquidity);
 
@@ -1147,14 +1167,19 @@ export class ClientSwapContract<T extends SwapData> {
             if(data.getOfferer()!==requiredOffererKey) throw new IntermediaryError("Invalid data returned");
         }
 
-        try {
-            await this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
-        } catch (e) {
-            if(e instanceof SignatureVerificationError) {
-                throw new IntermediaryError(e.message);
+        const isValidAuthorization = await tryWithRetries(async () => {
+            try {
+                await this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
+                return null;
+            } catch (e) {
+                if(e instanceof SignatureVerificationError) {
+                    return e;
+                }
+                throw e;
             }
-            throw e;
-        }
+        });
+
+        if(isValidAuthorization!=null) throw new IntermediaryError(isValidAuthorization.message);
 
         return {
             amount,
@@ -1165,7 +1190,7 @@ export class ClientSwapContract<T extends SwapData> {
             timeout: jsonBody.data.timeout,
             signature: jsonBody.data.signature,
             nonce: jsonBody.data.nonce,
-            expiry: await this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)
+            expiry: await tryWithRetries(() => this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce))
         };
 
     }
@@ -1178,9 +1203,9 @@ export class ClientSwapContract<T extends SwapData> {
 
         const queryParams = (callbackUrl.includes("?") ? "&" : "?")+params.join("&");
 
-        const response: Response = await fetch(callbackUrl+queryParams, {
+        const response: Response = await tryWithRetries(() => fetch(callbackUrl+queryParams, {
             method: "GET",
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -1283,7 +1308,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         const paymentHash = createHash("sha256").update(secret).digest();
 
-        const response: Response = await fetch(url+"/createInvoice", {
+        const response: Response = await tryWithRetries(() => fetch(url+"/createInvoice", {
             method: "POST",
             body: JSON.stringify({
                 paymentHash: paymentHash.toString("hex"),
@@ -1294,7 +1319,7 @@ export class ClientSwapContract<T extends SwapData> {
                 exactOut
             }),
             headers: {'Content-Type': 'application/json'}
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
@@ -1331,14 +1356,15 @@ export class ClientSwapContract<T extends SwapData> {
 
         const total = new BN(jsonBody.data.total);
 
-        const liquidity = await this.swapContract.getIntermediaryBalance(jsonBody.data.intermediaryKey, requiredToken);
+        const liquidity = await tryWithRetries(() => this.swapContract.getIntermediaryBalance(jsonBody.data.intermediaryKey, requiredToken));
         if(liquidity.lt(total)) {
             throw new IntermediaryError("Intermediary doesn't have enough liquidity");
         }
 
         if(this.WBTC_ADDRESS==null) {
             if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                if(!(await this.swapPrice.isValidAmountReceive(amount, requiredBaseFee, requiredFeePPM, total, requiredToken))) {
+                const isValidAmount = await tryWithRetries(() => this.swapPrice.isValidAmountReceive(amount, requiredBaseFee, requiredFeePPM, total, requiredToken));
+                if(!isValidAmount) {
                     throw new IntermediaryError("Fee too high");
                 }
             }
@@ -1380,9 +1406,9 @@ export class ClientSwapContract<T extends SwapData> {
 
         const paymentHash = decodedPR.tagsObject.payment_hash;
 
-        const response: Response = await fetch(url+"/getInvoicePaymentAuth?paymentHash="+encodeURIComponent(paymentHash), {
+        const response: Response = await tryWithRetries(() => fetch(url+"/getInvoicePaymentAuth?paymentHash="+encodeURIComponent(paymentHash), {
             method: "GET"
-        });
+        }));
 
         if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
 
@@ -1420,7 +1446,8 @@ export class ClientSwapContract<T extends SwapData> {
                 throw new IntermediaryError("Invalid amount received");
             } else {
                 if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                    if(!(await this.swapPrice.isValidAmountReceive(new BN(decodedPR.satoshis), requiredBaseFee, requiredFeePPM, data.getAmount(), requiredToken))) {
+                    const isValidAmount = await tryWithRetries(() => this.swapPrice.isValidAmountReceive(new BN(decodedPR.satoshis), requiredBaseFee, requiredFeePPM, data.getAmount(), requiredToken));
+                    if(!isValidAmount) {
                         throw new IntermediaryError("Fee too high");
                     }
                 }
@@ -1430,8 +1457,21 @@ export class ClientSwapContract<T extends SwapData> {
                 throw new IntermediaryError("Invalid security deposit!");
             }
 
-            //NOTE: Also checks that expiry time is enough to be able to claim the swap
-            await this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
+
+            const isValidAuthorization = await tryWithRetries(async () => {
+                try {
+                    //NOTE: Also checks that expiry time is enough to be able to claim the swap
+                    await this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce);
+                    return null;
+                } catch (e) {
+                    if(e instanceof SignatureVerificationError) {
+                        return e;
+                    }
+                    throw e;
+                }
+            });
+
+            if(isValidAuthorization!=null) throw new IntermediaryError(isValidAuthorization.message);
 
             const paymentHashInTx = data.getHash().toLowerCase();
 
@@ -1452,7 +1492,7 @@ export class ClientSwapContract<T extends SwapData> {
                 timeout: jsonBody.data.timeout,
                 signature: jsonBody.data.signature,
                 nonce: jsonBody.data.nonce,
-                expiry: await this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)
+                expiry: await tryWithRetries(() => this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce))
             }
         }
 
