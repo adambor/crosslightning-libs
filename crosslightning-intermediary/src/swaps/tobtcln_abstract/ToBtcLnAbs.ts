@@ -95,7 +95,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
                 const isSignatureExpired = invoiceData.signatureExpiry!=null && invoiceData.signatureExpiry.lt(timestamp);
                 if(isSignatureExpired) {
-                    await this.storageManager.removeData(invoiceData.getHash());
+                    await invoiceData.setState(ToBtcLnSwapState.CANCELED);
+                    await this.removeSwapData(invoiceData.getHash());
                     continue;
                 }
 
@@ -103,7 +104,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 const isInvoiceExpired = decodedPR.timeExpireDate < Date.now() / 1000;
                 if (isInvoiceExpired) {
                     //Expired
-                    await this.storageManager.removeData(invoiceData.getHash());
+                    await invoiceData.setState(ToBtcLnSwapState.CANCELED);
+                    await this.removeSwapData(invoiceData.getHash());
                     continue;
                 }
             }
@@ -127,7 +129,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             console.error("[To BTC-LN: BTCLN.PaymentResult] Invoice payment failed, should refund offerer");
             await invoiceData.setState(ToBtcLnSwapState.CANCELED);
             //await PluginManager.swapStateChange(invoiceData);
-            await this.storageManager.removeData(decodedPR.tagsObject.payment_hash);
+            await this.removeSwapData(decodedPR.tagsObject.payment_hash);
             return;
         }
 
@@ -159,7 +161,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             if(success) {
                 await invoiceData.setState(ToBtcLnSwapState.CLAIMED);
                 // await PluginManager.swapStateChange(invoiceData);
-                await this.storageManager.removeData(decodedPR.tagsObject.payment_hash);
+                await this.removeSwapData(decodedPR.tagsObject.payment_hash);
             }
             unlock();
 
@@ -403,7 +405,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
                 console.log("[To BTC-LN: Solana.ClaimEvent] Transaction confirmed! Event: ", event);
 
-                await this.storageManager.removeData(paymentHash);
+                await savedInvoice.setState(ToBtcLnSwapState.CLAIMED);
+                await this.removeSwapData(paymentHash);
 
                 continue;
             }
@@ -421,7 +424,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
                 await savedInvoice.setState(ToBtcLnSwapState.REFUNDED);
 
-                await this.storageManager.removeData(paymentHash);
+                await this.removeSwapData(paymentHash);
 
                 continue;
             }
@@ -665,7 +668,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const createdSwap = new ToBtcLnSwapAbs<T>(parsedBody.pr, swapFee, actualRoutingFee, new BN(sigData.timeout));
             createdSwap.data = payObject;
 
-            await PluginManager.swapStateChange(createdSwap);
+            await PluginManager.swapCreate(createdSwap);
 
             await this.storageManager.saveData(parsedPR.tagsObject.payment_hash, createdSwap);
 

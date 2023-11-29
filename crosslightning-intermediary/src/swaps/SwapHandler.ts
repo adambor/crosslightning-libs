@@ -5,6 +5,7 @@ import {ISwapPrice} from "./ISwapPrice";
 import {ChainEvents, StorageObject, SwapContract, SwapData, TokenAddress, IStorageManager} from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
 import {SwapHandlerSwap} from "./SwapHandlerSwap";
+import {PluginManager} from "../plugins/PluginManager";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -71,5 +72,11 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
      * Returns swap handler info
      */
     abstract getInfo(): SwapHandlerInfoType;
+
+    async removeSwapData(hash: string) {
+        const swap = this.storageManager.data[hash];
+        if(swap!=null) await PluginManager.swapRemove<T>(swap);
+        await this.storageManager.removeData(hash);
+    }
 
 }

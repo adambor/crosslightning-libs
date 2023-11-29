@@ -66,9 +66,31 @@ export class PluginManager {
     static async swapStateChange<T extends SwapData>(swap: SwapHandlerSwap<T>, oldState?: any) {
         for(let plugin of PluginManager.plugins) {
             try {
-                await plugin.onSwapStateChange(swap);
+                if(plugin.onSwapStateChange!=null) await plugin.onSwapStateChange(swap);
             } catch (e) {
                 console.error("Plugin onSwapStateChange error: ", plugin.name);
+                console.error(e);
+            }
+        }
+    }
+
+    static async swapCreate<T extends SwapData>(swap: SwapHandlerSwap<T>) {
+        for(let plugin of PluginManager.plugins) {
+            try {
+                if(plugin.onSwapCreate!=null) await plugin.onSwapCreate(swap);
+            } catch (e) {
+                console.error("Plugin onSwapCreate error: ", plugin.name);
+                console.error(e);
+            }
+        }
+    }
+
+    static async swapRemove<T extends SwapData>(swap: SwapHandlerSwap<T>) {
+        for(let plugin of PluginManager.plugins) {
+            try {
+                if(plugin.onSwapRemove!=null) await plugin.onSwapRemove(swap);
+            } catch (e) {
+                console.error("Plugin onSwapRemove error: ", plugin.name);
                 console.error(e);
             }
         }

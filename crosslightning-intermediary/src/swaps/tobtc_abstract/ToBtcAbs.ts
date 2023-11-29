@@ -137,10 +137,16 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             if(payment.state===ToBtcSwapState.SAVED && payment.signatureExpiry!=null) {
                 if(payment.signatureExpiry.lt(timestamp)) {
-                    //Signature expired
-                    await payment.setState(ToBtcSwapState.CANCELED);
-                    // await PluginManager.swapStateChange(payment);
-                    await this.storageManager.removeData(this.getChainHash(payment).toString("hex"));
+                    const isCommitted = await this.swapContract.isCommited(payment.data);
+                    if(!isCommitted) {
+                        //Signature expired
+                        await payment.setState(ToBtcSwapState.CANCELED);
+                        // await PluginManager.swapStateChange(payment);
+                        await this.removeSwapData(this.getChainHash(payment).toString("hex"));
+                    } else {
+                        await payment.setState(ToBtcSwapState.COMMITED);
+                        await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
+                    }
                     continue;
                 }
             }
@@ -150,7 +156,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                     //Expired
                     await payment.setState(ToBtcSwapState.CANCELED);
                     // await PluginManager.swapStateChange(payment);
-                    await this.storageManager.removeData(this.getChainHash(payment).toString("hex"));
+                    await this.removeSwapData(this.getChainHash(payment).toString("hex"));
                     continue;
                 }
             }
@@ -489,7 +495,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
                 await savedInvoice.setState(ToBtcSwapState.CLAIMED);
 
-                await this.storageManager.removeData(paymentHash);
+                await this.removeSwapData(paymentHash);
 
                 continue;
             }
@@ -514,7 +520,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
                 await savedInvoice.setState(ToBtcSwapState.REFUNDED);
 
-                await this.storageManager.removeData(paymentHash);
+                await this.removeSwapData(paymentHash);
 
                 continue;
             }
@@ -801,7 +807,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             const paymentHash = this.getChainHash(createdSwap);
             createdSwap.data = payObject;
 
-            await PluginManager.swapStateChange(createdSwap);
+            await PluginManager.swapCreate(createdSwap);
 
             await this.storageManager.saveData(paymentHash.toString("hex"), createdSwap);
 

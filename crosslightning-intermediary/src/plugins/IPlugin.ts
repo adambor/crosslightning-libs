@@ -20,6 +20,9 @@ export interface IPlugin<T extends SwapData> {
 
     //Called in the library
     onServiceInitialize(service: SwapHandler<any, T>): Promise<void>;
-    onSwapStateChange(swap: SwapHandlerSwap<T>): Promise<void>;
+
+    onSwapStateChange?(swap: SwapHandlerSwap<T>): Promise<void>;
+    onSwapCreate?(swap: SwapHandlerSwap<T>): Promise<void>;
+    onSwapRemove?(swap: SwapHandlerSwap<T>): Promise<void>;
 
 }

@@ -122,7 +122,6 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
      */
     private async checkPastSwaps() {
 
-        const removeSwaps: Buffer[] = [];
         const refundSwaps: FromBtcSwapAbs<T>[] = [];
 
         for(let key in this.storageManager.data) {
@@ -135,7 +134,14 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
             if(swap.state===FromBtcSwapState.CREATED) {
                 const isExpired = swap.authorizationExpiry.lt(currentTime);
                 if(isExpired) {
-                    removeSwaps.push(this.getChainHash(swap));
+                    const isCommited = await this.swapContract.isCommited(swap.data);
+                    if(isCommited) {
+                        await swap.setState(FromBtcSwapState.COMMITED);
+                        await this.storageManager.saveData(this.getChainHash(swap).toString("hex"), swap);
+                        continue;
+                    }
+                    await swap.setState(FromBtcSwapState.CANCELED);
+                    await this.removeSwapData(this.getChainHash(swap).toString("hex"));
                 }
                 continue;
             }
@@ -152,13 +158,10 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                         continue;
                     }
 
-                    removeSwaps.push(this.getChainHash(swap));
+                    await swap.setState(FromBtcSwapState.CANCELED);
+                    await this.removeSwapData(this.getChainHash(swap).toString("hex"));
                 }
             }
-        }
-
-        for(let swapHash of removeSwaps) {
-            await this.storageManager.removeData(swapHash.toString("hex"));
         }
 
         for(let refundSwap of refundSwaps) {
@@ -234,7 +237,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 //await PluginManager.swapStateChange(savedSwap);
 
                 console.log("[From BTC: Solana.ClaimEvent] Swap claimed by claimer: ", paymentHashHex);
-                await this.storageManager.removeData(paymentHash.toString("hex"));
+                await this.removeSwapData(paymentHash.toString("hex"));
 
                 continue;
             }
@@ -250,7 +253,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                     continue;
                 }
 
-                await this.storageManager.removeData(event.paymentHash);
+                await savedSwap.setState(FromBtcSwapState.REFUNDED);
+                await this.removeSwapData(event.paymentHash);
 
                 continue;
             }
@@ -458,7 +462,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
             createdSwap.authorizationExpiry = new BN(sigData.timeout);
 
-            await PluginManager.swapStateChange(createdSwap);
+            await PluginManager.swapCreate(createdSwap);
 
             await this.storageManager.saveData(this.getChainHash(createdSwap).toString("hex"), createdSwap);
 
