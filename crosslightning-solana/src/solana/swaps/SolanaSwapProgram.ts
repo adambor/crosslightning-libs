@@ -24,6 +24,8 @@ import {SolanaBtcStoredHeader} from "../btcrelay/headers/SolanaBtcStoredHeader";
 import {RelaySynchronizer, StorageObject} from "crosslightning-base/dist";
 import Utils from "./Utils";
 import * as bs58 from "bs58";
+import {tryWithRetries} from "../../utils/RetryUtils";
+import {TokenAccountNotFoundError} from "@solana/spl-token";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
@@ -64,6 +66,12 @@ const TX_SLOT_VALIDITY = 151;
 
 const SLOT_CACHE_SLOTS = 4;
 const SLOT_CACHE_TIME = SLOT_CACHE_SLOTS*SLOT_TIME;
+
+export type SolanaRetryPolicy = {
+    maxRetries?: number,
+    delay?: number,
+    exponential?: boolean
+}
 
 export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
@@ -202,7 +210,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         return Keypair.fromSeed(buff);
     };
 
-    constructor(signer: AnchorProvider & {signer?: Signer}, btcRelay: SolanaBtcRelay<any>, storage: IStorageManager<StoredDataAccount>, programAddress?: string) {
+    readonly retryPolicy: SolanaRetryPolicy;
+
+    constructor(signer: AnchorProvider & {signer?: Signer}, btcRelay: SolanaBtcRelay<any>, storage: IStorageManager<StoredDataAccount>, programAddress?: string, retryPolicy?: SolanaRetryPolicy) {
         this.signer = signer;
         this.program = new Program(programIdl as any, programAddress || programIdl.metadata.address, signer);
         this.coder = new BorshCoder(programIdl as any);
@@ -216,6 +226,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             [Buffer.from(AUTHORITY_SEED)],
             this.program.programId
         )[0];
+
+        this.retryPolicy = retryPolicy;
     }
 
     getHashForOnchain(outputScript: Buffer, amount: BN, nonce: BN): Buffer {
@@ -930,7 +942,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         for(let tx of txs) {
             if(tx.tx.recentBlockhash==null) {
-                if(latestBlockData==null) latestBlockData = await this.signer.connection.getLatestBlockhash("confirmed");
+                if(latestBlockData==null) latestBlockData = await tryWithRetries(() => this.signer.connection.getLatestBlockhash("confirmed"), this.retryPolicy);
                 tx.tx.recentBlockhash = latestBlockData.blockhash;
                 tx.tx.lastValidBlockHeight = latestBlockData.lastValidBlockHeight;
             }
@@ -955,7 +967,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                     tx,
                     signers: unsignedTx.signers
                 }));
-                const txResult = await this.signer.connection.sendRawTransaction(tx.serialize(), options);
+                const txResult = await tryWithRetries(() => this.signer.connection.sendRawTransaction(tx.serialize(), options), this.retryPolicy);
                 console.log("Send signed TX: ", txResult);
                 if(waitForConfirmation) {
                     promises.push(this.signer.connection.confirmTransaction({
@@ -985,7 +997,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                     tx,
                     signers: unsignedTx.signers
                 }));
-                const txResult = await this.signer.connection.sendRawTransaction(tx.serialize(), options);
+                const txResult = await tryWithRetries(() => this.signer.connection.sendRawTransaction(tx.serialize(), options), this.retryPolicy);
                 console.log("Send signed TX: ", txResult);
                 await this.signer.connection.confirmTransaction({
                     signature: txResult,
@@ -1001,7 +1013,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                     tx: lastTx,
                     signers: lastUnsignedTx.signers
                 }));
-                const txResult = await this.signer.connection.sendRawTransaction(lastTx.serialize(), options);
+                const txResult = await tryWithRetries(() => this.signer.connection.sendRawTransaction(lastTx.serialize(), options), this.retryPolicy);
                 console.log("Send signed TX: ", txResult);
                 signatures.push(txResult);
             }
@@ -1039,7 +1051,17 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         const tx = new Transaction();
 
         if(swapData.isPayOut()) {
-            const account = await SplToken.getAccount(this.signer.connection, swapData.claimerTokenAccount).catch(e => console.error(e));
+            const account = await tryWithRetries<SplToken.Account>(async () => {
+                try {
+                    return await SplToken.getAccount(this.signer.connection, swapData.claimerTokenAccount);
+                } catch (e) {
+                    if(e instanceof TokenAccountNotFoundError) {
+                        return null;
+                    }
+                    throw e;
+                }
+            }, this.retryPolicy);
+
             if(account==null) {
                 if(!initAta) throw new SwapDataVerificationError("ATA not initialized");
 
@@ -1149,7 +1171,18 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         let ataInitIx: TransactionInstruction;
         if(swapData.isPayOut()) {
-            const account = await SplToken.getAccount(this.signer.connection, swapData.claimerTokenAccount).catch(e => console.error(e));
+
+            const account = await tryWithRetries<SplToken.Account>(async () => {
+                try {
+                    return await SplToken.getAccount(this.signer.connection, swapData.claimerTokenAccount);
+                } catch (e) {
+                    if(e instanceof TokenAccountNotFoundError) {
+                        return null;
+                    }
+                    throw e;
+                }
+            }, this.retryPolicy);
+
             if(account==null) {
                 if(!initAta) throw new SwapDataVerificationError("ATA not initialized");
 
@@ -1161,16 +1194,19 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             }
         }
 
-        const merkleProof = await this.btcRelay.bitcoinRpc.getMerkleProof(tx.txid, tx.blockhash);
+        const merkleProof = await tryWithRetries(() => this.btcRelay.bitcoinRpc.getMerkleProof(tx.txid, tx.blockhash), this.retryPolicy);
 
         const txs: SolTx[] = [];
 
         if(synchronizer==null) {
             if(commitedHeader==null) try {
-                const result = await this.btcRelay.retrieveLogAndBlockheight({
-                    blockhash: tx.blockhash,
-                    height: merkleProof.blockheight
-                }, blockheight+swapData.getConfirmations()-1);
+                const result = await tryWithRetries(
+                    () => this.btcRelay.retrieveLogAndBlockheight({
+                        blockhash: tx.blockhash,
+                        height: merkleProof.blockheight
+                    }, blockheight+swapData.getConfirmations()-1),
+                    this.retryPolicy
+                );
                 commitedHeader = result.header;
             } catch (e) {
                 console.error(e);
@@ -1183,10 +1219,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             if(commitedHeader==null) {
                 const requiredBlockheight = merkleProof.blockheight+swapData.getConfirmations()-1;
 
-                const result = await this.btcRelay.retrieveLogAndBlockheight({
-                    blockhash: tx.blockhash,
-                    height: merkleProof.blockheight
-                }, requiredBlockheight);
+                const result = await tryWithRetries(
+                    () => this.btcRelay.retrieveLogAndBlockheight({
+                        blockhash: tx.blockhash,
+                        height: merkleProof.blockheight
+                    }, requiredBlockheight),
+                    this.retryPolicy
+                );
 
                 if(result==null) {
                     //Need to synchronize
@@ -1224,13 +1263,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         if(storageAccHolder!=null) storageAccHolder.storageAcc = txDataKey.publicKey;
 
-        const fetchedDataAccount: any = await this.signer.connection.getAccountInfo(txDataKey.publicKey);
+        const fetchedDataAccount: any = await tryWithRetries(() => this.signer.connection.getAccountInfo(txDataKey.publicKey), this.retryPolicy);
 
         let pointer = 0;
         if(fetchedDataAccount==null) {
             const dataSize = writeData.length;
             const accountSize = 32+dataSize;
-            const lamports = await this.signer.connection.getMinimumBalanceForRentExemption(accountSize);
+            const lamports = await tryWithRetries(() => this.signer.connection.getMinimumBalanceForRentExemption(accountSize), this.retryPolicy);
 
             const accIx = SystemProgram.createAccount({
                 fromPubkey: this.signer.publicKey,
@@ -1395,7 +1434,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     async txsRefund(swapData: SolanaSwapData, check?: boolean, initAta?: boolean): Promise<SolTx[]> {
 
         if(check) {
-            if(!(await this.isRequestRefundable(swapData))) {
+            if(!(await tryWithRetries(() => this.isRequestRefundable(swapData), this.retryPolicy))) {
                 throw new SwapDataVerificationError("Not refundable yet!");
             }
         }
@@ -1410,7 +1449,16 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
             ata = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
 
-            const ataAccount = await SplToken.getAccount(this.signer.connection, ata).catch(e => console.error(e));
+            const ataAccount = await tryWithRetries<SplToken.Account>(async () => {
+                try {
+                    return await SplToken.getAccount(this.signer.connection, ata);
+                } catch (e) {
+                    if(e instanceof TokenAccountNotFoundError) {
+                        return null;
+                    }
+                    throw e;
+                }
+            }, this.retryPolicy);
 
             if(ataAccount==null) {
                 if(!initAta) throw new SwapDataVerificationError("ATA is not initialized!");
@@ -1491,12 +1539,16 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     async txsRefundWithAuthorization(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, check?: boolean, initAta?: boolean): Promise<SolTx[]> {
         if(check) {
-            if(!(await this.isCommited(swapData))) {
+            if(!(await tryWithRetries(() => this.isCommited(swapData), this.retryPolicy))) {
                 throw new SwapDataVerificationError("Not correctly committed");
             }
         }
 
-        const messageBuffer = await this.isValidRefundAuthorization(swapData, timeout, prefix, signature);
+        const messageBuffer = await tryWithRetries(
+            () => this.isValidRefundAuthorization(swapData, timeout, prefix, signature),
+            this.retryPolicy,
+            (e) => e instanceof SignatureVerificationError
+        );
         const signatureBuffer = Buffer.from(signature, "hex");
 
         const tx = new Transaction();
@@ -1515,7 +1567,16 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
             ata = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
 
-            const ataAccount = await SplToken.getAccount(this.signer.connection, ata).catch(e => console.error(e));
+            const ataAccount = await tryWithRetries<SplToken.Account>(async () => {
+                try {
+                    return await SplToken.getAccount(this.signer.connection, ata);
+                } catch (e) {
+                    if(e instanceof TokenAccountNotFoundError) {
+                        return null;
+                    }
+                    throw e;
+                }
+            }, this.retryPolicy);
 
             if(ataAccount==null) {
                 if(!initAta) throw new SwapDataVerificationError("ATA is not initialized!");
@@ -1608,8 +1669,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     async txsInitPayIn(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<SolTx[]> {
 
         const [_, payStatus] = await Promise.all([
-            this.isValidClaimInitAuthorization(swapData, timeout, prefix, signature, nonce),
-            this.getPaymentHashStatus(swapData.paymentHash)
+            tryWithRetries(
+                () => this.isValidClaimInitAuthorization(swapData, timeout, prefix, signature, nonce),
+                this.retryPolicy,
+                (e) => e instanceof SignatureVerificationError
+            ),
+            tryWithRetries(() => this.getPaymentHashStatus(swapData.paymentHash), this.retryPolicy)
         ]);
 
         //await this.isValidClaimInitAuthorization(swapData, timeout, prefix, signature, nonce);
@@ -1628,7 +1693,17 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             let balance = new BN(0);
             let accountExists = false;
             try {
-                const ataAcc = await SplToken.getAccount(this.signer.connection, ata);
+                const ataAcc = await tryWithRetries<SplToken.Account>(async () => {
+                    try {
+                        return await SplToken.getAccount(this.signer.connection, ata);
+                    } catch (e) {
+                        if(e instanceof TokenAccountNotFoundError) {
+                            return null;
+                        }
+                        throw e;
+                    }
+                }, this.retryPolicy);
+
                 if(ataAcc!=null) {
                     accountExists = true;
                     balance = balance.add(new BN(ataAcc.amount.toString()));
@@ -1661,7 +1736,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const [slotNumber, signatureStr] = signature.split(";");
 
-        const block = await this.getParsedBlock(parseInt(slotNumber));
+        const block = await tryWithRetries(() => this.getParsedBlock(parseInt(slotNumber)), this.retryPolicy);
 
         const tx = new Transaction();
 
@@ -1718,13 +1793,17 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     async txsInit(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer): Promise<SolTx[]> {
 
-        await this.isValidInitAuthorization(swapData, timeout, prefix, signature, nonce);
+        await tryWithRetries(
+            () => this.isValidInitAuthorization(swapData, timeout, prefix, signature, nonce),
+            this.retryPolicy,
+            (e) => e instanceof SignatureVerificationError
+        );
 
         const paymentHash = Buffer.from(swapData.paymentHash, "hex");
 
         const [slotNumber, signatureStr] = signature.split(";");
 
-        const block = await this.getParsedBlock(parseInt(slotNumber));
+        const block = await tryWithRetries(() => this.getParsedBlock(parseInt(slotNumber)), this.retryPolicy);
 
         const claimerAta = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
 
@@ -1797,7 +1876,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const response: any = {};
 
-        for(let i=0;i<3;i++) {
+        for(let i=0;i<data.successVolume.length;i++) {
             response[i] = {
                 successVolume: data.successVolume[i],
                 successCount: data.successCount[i],
@@ -1882,7 +1961,16 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const tx = new Transaction();
 
-        const account = await SplToken.getAccount(this.signer.connection, ata).catch(e => console.error(e));
+        const account = await tryWithRetries<SplToken.Account>(async () => {
+            try {
+                return await SplToken.getAccount(this.signer.connection, ata);
+            } catch (e) {
+                if(e instanceof TokenAccountNotFoundError) {
+                    return null;
+                }
+                throw e;
+            }
+        }, this.retryPolicy);
         if(account==null) {
             tx.add(
                 SplToken.createAssociatedTokenAccountInstruction(this.signer.publicKey, ata, this.signer.publicKey, token)
@@ -1932,7 +2020,16 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             let accountExists: boolean = false;
             let balance: BN = new BN(0);
 
-            const ataAcc = await SplToken.getAccount(this.signer.connection, ata);
+            const ataAcc = await tryWithRetries<SplToken.Account>(async () => {
+                try {
+                    return await SplToken.getAccount(this.signer.connection, ata);
+                } catch (e) {
+                    if(e instanceof TokenAccountNotFoundError) {
+                        return null;
+                    }
+                    throw e;
+                }
+            }, this.retryPolicy);
             if(ataAcc!=null) {
                 accountExists = true;
                 balance = balance.add(new BN(ataAcc.amount.toString()));
@@ -2001,7 +2098,16 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const tx = new Transaction();
 
-        const account = await SplToken.getAccount(this.signer.connection, dstAta).catch(e => console.error(e));
+        const account = await tryWithRetries<SplToken.Account>(async () => {
+            try {
+                return await SplToken.getAccount(this.signer.connection, dstAta);
+            } catch (e) {
+                if(e instanceof TokenAccountNotFoundError) {
+                    return null;
+                }
+                throw e;
+            }
+        }, this.retryPolicy);
         console.log("Account ATA: ", account);
         if(account==null) {
             tx.add(
