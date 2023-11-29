@@ -23,7 +23,7 @@ export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
         }
         if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
         if(i!==retryPolicy.maxRetries-1) {
-            await new Promise(resolve => setTimeout(() => resolve, retryPolicy.exponential ? retryPolicy.delay*Math.pow(2, i) : retryPolicy.delay));
+            await new Promise(resolve => setTimeout(resolve, retryPolicy.exponential ? retryPolicy.delay*Math.pow(2, i) : retryPolicy.delay));
         }
     }
 

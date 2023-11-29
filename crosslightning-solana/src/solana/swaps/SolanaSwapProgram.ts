@@ -294,7 +294,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     async getBalance(token: TokenAddress, inContract: boolean): Promise<BN> {
         if(inContract) {
-            const tokenAccount: any = await this.program.account.userAccount.fetch(this.SwapUserVault(this.signer.publicKey, token));
+            const tokenAccount: any = await this.program.account.userAccount.fetchNullable(this.SwapUserVault(this.signer.publicKey, token));
             return new BN(tokenAccount.amount.toString(10));
         } else {
             const ata: PublicKey = SplToken.getAssociatedTokenAddressSync(token, this.signer.publicKey);
@@ -323,11 +323,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     async getCommitStatus(data: SolanaSwapData): Promise<SwapCommitStatus> {
 
         const escrowStateKey = this.SwapEscrowState(Buffer.from(data.paymentHash, "hex"));
-        try {
-            const escrowState: any = await this.program.account.escrowState.fetch(escrowStateKey);
-
-            if(escrowState==null) throw new Error();
-
+        const escrowState: any = await this.program.account.escrowState.fetchNullable(escrowStateKey);
+        if(escrowState!=null) {
             if(
                 !escrowState.offerer.equals(data.offerer) ||
                 !escrowState.claimer.equals(data.claimer) ||
@@ -351,10 +348,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             }
 
             return SwapCommitStatus.COMMITED;
-        } catch (e) {
+        } else {
             //Check if paid or what
-            if(!e.message.startsWith("Account does not exist or has no data")) throw e;
-
             const signatures = await this.signer.connection.getSignaturesForAddress(escrowStateKey, {
                 limit: 500
             });
@@ -392,13 +387,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             limit: 500
         });
 
-        try {
-            const escrowState = await this.program.account.escrowState.fetch(escrowStateKey);
-            if(escrowState!=null) {
-                return SwapCommitStatus.COMMITED;
-            }
-        } catch (e) {
-            if(!e.message.startsWith("Account does not exist or has no data")) throw e;
+        const escrowState = await this.program.account.escrowState.fetchNullable(escrowStateKey);
+        if(escrowState!=null) {
+            return SwapCommitStatus.COMMITED;
         }
 
         //Check if paid or what
@@ -805,32 +796,28 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     async isCommited(swapData: SolanaSwapData): Promise<boolean> {
         const paymentHash = Buffer.from(swapData.paymentHash, "hex");
 
-        try {
-            const account: any = await this.program.account.escrowState.fetch(this.SwapEscrowState(paymentHash));
-            if(account!=null) {
-                if(
-                    account.kind===swapData.kind &&
-                    account.confirmations===swapData.confirmations &&
-                    swapData.nonce.eq(account.nonce) &&
-                    Buffer.from(account.hash).equals(paymentHash) &&
-                    account.payIn===swapData.payIn &&
-                    account.payOut===swapData.payOut &&
-                    account.offerer.equals(swapData.offerer) &&
-                    account.claimer.equals(swapData.claimer) &&
-                    new BN(account.expiry.toString(10)).eq(swapData.expiry) &&
-                    new BN(account.initializerAmount.toString(10)).eq(swapData.amount) &&
-                    new BN(account.securityDeposit.toString(10)).eq(swapData.securityDeposit) &&
-                    new BN(account.claimerBounty.toString(10)).eq(swapData.claimerBounty) &&
-                    account.mint.equals(swapData.token)
-                ) {
-                    return true;
-                }
+        const account: any = await this.program.account.escrowState.fetchNullable(this.SwapEscrowState(paymentHash));
+        if(account!=null) {
+            if(
+                account.kind===swapData.kind &&
+                account.confirmations===swapData.confirmations &&
+                swapData.nonce.eq(account.nonce) &&
+                Buffer.from(account.hash).equals(paymentHash) &&
+                account.payIn===swapData.payIn &&
+                account.payOut===swapData.payOut &&
+                account.offerer.equals(swapData.offerer) &&
+                account.claimer.equals(swapData.claimer) &&
+                new BN(account.expiry.toString(10)).eq(swapData.expiry) &&
+                new BN(account.initializerAmount.toString(10)).eq(swapData.amount) &&
+                new BN(account.securityDeposit.toString(10)).eq(swapData.securityDeposit) &&
+                new BN(account.claimerBounty.toString(10)).eq(swapData.claimerBounty) &&
+                account.mint.equals(swapData.token)
+            ) {
+                return true;
             }
-        } catch (e) {
-            if(e.message.startsWith("Account does not exist or has no data")) return false;
-            console.error(e);
-            throw e;
         }
+
+        return false;
     }
 
     isExpired(data: SolanaSwapData): boolean {
@@ -861,32 +848,27 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     async getCommitedData(paymentHashHex: string): Promise<SolanaSwapData> {
         const paymentHash = Buffer.from(paymentHashHex, "hex");
 
-        try {
-            const account: any = await this.program.account.escrowState.fetch(this.SwapEscrowState(paymentHash));
-            if(account!=null) {
-                return new SolanaSwapData(
-                    account.offerer,
-                    account.claimer,
-                    account.mint,
-                    account.initializerAmount,
-                    Buffer.from(account.hash).toString("hex"),
-                    account.expiry,
-                    account.nonce,
-                    account.confirmations,
-                    account.payOut,
-                    account.kind,
-                    account.payIn,
-                    account.claimerTokenAccount,
-                    account.securityDeposit,
-                    account.claimerBounty,
-                    null
-                );
-            }
-        } catch (e) {
-            if(e.message.startsWith("Account does not exist or has no data")) return null;
-            console.error(e);
-            throw e;
+        const account: any = await this.program.account.escrowState.fetchNullable(this.SwapEscrowState(paymentHash));
+        if(account!=null) {
+            return new SolanaSwapData(
+                account.offerer,
+                account.claimer,
+                account.mint,
+                account.initializerAmount,
+                Buffer.from(account.hash).toString("hex"),
+                account.expiry,
+                account.nonce,
+                account.confirmations,
+                account.payOut,
+                account.kind,
+                account.payIn,
+                account.claimerTokenAccount,
+                account.securityDeposit,
+                account.claimerBounty,
+                null
+            );
         }
+
         return null;
     }
 
@@ -1194,7 +1176,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             }
         }
 
-        const merkleProof = await tryWithRetries(() => this.btcRelay.bitcoinRpc.getMerkleProof(tx.txid, tx.blockhash), this.retryPolicy);
+        const merkleProof = await this.btcRelay.bitcoinRpc.getMerkleProof(tx.txid, tx.blockhash);
 
         const txs: SolTx[] = [];
 
@@ -1872,7 +1854,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     async getIntermediaryReputation(address: string, token: PublicKey): Promise<IntermediaryReputationType> {
 
-        const data: any = await this.program.account.userAccount.fetch(this.SwapUserVault(new PublicKey(address), token));
+        const data: any = await this.program.account.userAccount.fetchNullable(this.SwapUserVault(new PublicKey(address), token));
 
         const response: any = {};
 
@@ -1892,7 +1874,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     }
 
     async getIntermediaryBalance(address: string, token: PublicKey): Promise<BN> {
-        const data: any = await this.program.account.userAccount.fetch(this.SwapUserVault(new PublicKey(address), token));
+        const data: any = await this.program.account.userAccount.fetchNullable(this.SwapUserVault(new PublicKey(address), token));
 
         return data.amount;
     }
