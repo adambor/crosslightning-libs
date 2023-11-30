@@ -21,7 +21,6 @@ import {SwapNonce} from "../SwapNonce";
 import {AuthenticatedLnd} from "lightning";
 import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
-import {ToBtcSwapState} from "../..";
 
 export type ToBtcLnConfig = {
     authorizationTimeout: number,
