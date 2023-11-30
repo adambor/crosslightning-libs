@@ -26,6 +26,7 @@ import Utils from "./Utils";
 import * as bs58 from "bs58";
 import {tryWithRetries} from "../../utils/RetryUtils";
 import {TokenAccountNotFoundError} from "@solana/spl-token";
+import {ToBTCSwapState} from "../../../../crosslightning-sdk-base/src";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
@@ -920,6 +921,53 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         ));
     }
 
+    confirmTransaction(signature: string, blockhash: string, lastValidBlockHeight: number, abortSignal?: AbortSignal, commitment?: Commitment) {
+        return new Promise<void>((resolve, reject) => {
+            if(abortSignal!=null && abortSignal.aborted) {
+                reject("Aborted");
+                return;
+            }
+
+            const abortController = new AbortController();
+
+            const intervalWatchdog = setInterval(() => {
+                this.signer.connection.getSignatureStatus(signature).then(status => {
+                    if(status!=null && status.value!=null && status.value.confirmationStatus===commitment) {
+                        console.log("SolanaSwapProgram: confirmTransaction(): Confirmed from watchdog!");
+                        resolve();
+                        abortController.abort();
+                    }
+                }).catch(e => console.error(e));
+            }, 5000);
+            abortController.signal.addEventListener("abort", () => clearInterval(intervalWatchdog));
+
+            this.signer.connection.confirmTransaction({
+                signature: signature,
+                blockhash: blockhash,
+                lastValidBlockHeight: lastValidBlockHeight,
+                abortSignal: abortController.signal
+            }, commitment).then(() => {
+                console.log("SolanaSwapProgram: confirmTransaction(): Confirmed from ws!");
+                resolve();
+                abortController.abort();
+            }).catch((err) => {
+                console.log("SolanaSwapProgram: confirmTransaction(): Rejected from ws!");
+                reject(err);
+                abortController.abort();
+            });
+
+            abortController.signal.addEventListener("abort", () => {
+                if(abortSignal!=null) abortSignal.onabort = null;
+            });
+
+            if(abortSignal!=null) abortSignal.addEventListener("abort", () => {
+                abortController.abort();
+                reject("Aborted");
+            });
+        });
+
+    }
+
     async sendAndConfirm(txs: SolTx[], waitForConfirmation?: boolean, abortSignal?: AbortSignal, parallel?: boolean, onBeforePublish?: (txId: string, rawTx: string) => Promise<void>): Promise<string[]> {
         let latestBlockData: {blockhash: string, lastValidBlockHeight: number} = null;
 
@@ -953,12 +1001,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 const txResult = await tryWithRetries(() => this.signer.connection.sendRawTransaction(tx.serialize(), options), this.retryPolicy);
                 console.log("Send signed TX: ", txResult);
                 if(waitForConfirmation) {
-                    promises.push(this.signer.connection.confirmTransaction({
-                        signature: txResult,
-                        blockhash: tx.recentBlockhash,
-                        lastValidBlockHeight: unsignedTx.tx.lastValidBlockHeight || latestBlockData?.lastValidBlockHeight,
-                        abortSignal
-                    }, "confirmed"));
+                    promises.push(this.confirmTransaction(
+                        txResult,
+                        tx.recentBlockhash,
+                        unsignedTx.tx.lastValidBlockHeight || latestBlockData?.lastValidBlockHeight,
+                        abortSignal,
+                        "confirmed"
+                    ));
                 }
                 signatures.push(txResult);
             }
@@ -982,12 +1031,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 }));
                 const txResult = await tryWithRetries(() => this.signer.connection.sendRawTransaction(tx.serialize(), options), this.retryPolicy);
                 console.log("Send signed TX: ", txResult);
-                await this.signer.connection.confirmTransaction({
-                    signature: txResult,
-                    blockhash: tx.recentBlockhash,
-                    lastValidBlockHeight: unsignedTx.tx.lastValidBlockHeight || latestBlockData?.lastValidBlockHeight,
-                    abortSignal
-                }, "confirmed");
+                await this.confirmTransaction(
+                    txResult,
+                    tx.recentBlockhash,
+                    unsignedTx.tx.lastValidBlockHeight || latestBlockData?.lastValidBlockHeight,
+                    abortSignal,
+                    "confirmed"
+                );
                 signatures.push(txResult);
             }
             if(lastTx!=null) {
