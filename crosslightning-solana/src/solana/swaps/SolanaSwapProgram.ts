@@ -3,7 +3,7 @@ import {AnchorProvider, BorshCoder, EventParser, Program} from "@coral-xyz/ancho
 import * as BN from "bn.js";
 import {
     Commitment,
-    ComputeBudgetInstruction, ComputeBudgetProgram,
+    ComputeBudgetProgram,
     Ed25519Program,
     Keypair, ParsedAccountsModeBlockResponse,
     PublicKey,
@@ -26,7 +26,6 @@ import Utils from "./Utils";
 import * as bs58 from "bs58";
 import {tryWithRetries} from "../../utils/RetryUtils";
 import {TokenAccountNotFoundError} from "@solana/spl-token";
-import {ToBTCSwapState} from "../../../../crosslightning-sdk-base/src";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
@@ -304,11 +303,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             let sum: BN = new BN(0);
             try {
                 const account = await SplToken.getAccount(this.signer.connection, ata);
-                if(account!=null) {
-                    ataExists = true;
-                    sum = sum.add(new BN(account.amount.toString()));
+                ataExists = true;
+                sum = sum.add(new BN(account.amount.toString()));
+            } catch (e) {
+                if(!(e instanceof TokenAccountNotFoundError)) {
+                    throw e;
                 }
-            } catch (e) {}
+            }
 
             if(token!=null && token.equals(WSOL_ADDRESS)) {
                 let balanceLamports: BN = new BN(await this.signer.connection.getBalance(this.signer.publicKey));
@@ -952,12 +953,22 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 abortController.abort();
             }).catch((err) => {
                 console.log("SolanaSwapProgram: confirmTransaction(): Rejected from ws!");
-                reject(err);
+                const wasAborted = abortController.signal.aborted;
                 abortController.abort();
-            });
-
-            abortController.signal.addEventListener("abort", () => {
-                if(abortSignal!=null) abortSignal.onabort = null;
+                if(!wasAborted) {
+                    //Check if it really isn't confirmed
+                    console.log("SolanaSwapProgram: confirmTransaction(): Running ultimate check!");
+                    tryWithRetries(() => this.signer.connection.getSignatureStatus(signature)).then(status => {
+                        if(status!=null && status.value!=null && status.value.confirmationStatus===commitment) {
+                            console.log("SolanaSwapProgram: confirmTransaction(): Confirmed on ultimate check!");
+                            resolve();
+                            return;
+                        }
+                        reject(err);
+                    }).catch(e => reject(e));
+                    return;
+                }
+                reject(err);
             });
 
             if(abortSignal!=null) abortSignal.addEventListener("abort", () => {
