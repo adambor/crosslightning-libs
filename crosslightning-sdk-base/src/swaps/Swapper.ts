@@ -45,7 +45,10 @@ export type SwapperOptions = {
         fromBtc?: IWrapperStorage,
         toBtcLn?: IWrapperStorage,
         fromBtcLn?: IWrapperStorage
-    }
+    },
+
+    getRequestTimeout?: number,
+    postRequestTimeout?: number
 };
 
 export class Swapper<
@@ -82,14 +85,14 @@ export class Swapper<
 
         options.bitcoinNetwork = options.bitcoinNetwork==null ? BitcoinNetwork.TESTNET : options.bitcoinNetwork;
 
-        if(options.bitcoinNetwork!=null) switch (options.bitcoinNetwork) {
+        switch (options.bitcoinNetwork) {
             case BitcoinNetwork.MAINNET:
                 this.bitcoinNetwork = bitcoin.networks.bitcoin;
-                ChainUtils.setMempoolUrl("https://mempool.space/api/");
+                ChainUtils.setMempoolUrl("https://mempool.space/api/", this.options.getRequestTimeout);
                 break;
             case BitcoinNetwork.TESTNET:
                 this.bitcoinNetwork = bitcoin.networks.testnet;
-                ChainUtils.setMempoolUrl("https://mempool.space/testnet/api/");
+                ChainUtils.setMempoolUrl("https://mempool.space/testnet/api/", this.options.getRequestTimeout);
                 break;
             case BitcoinNetwork.REGTEST:
                 this.bitcoinNetwork = bitcoin.networks.regtest;
@@ -101,7 +104,9 @@ export class Swapper<
         const synchronizer = new MempoolBtcRelaySynchronizer(btcRelay, bitcoinRpc);
 
         const clientSwapContract = new ClientSwapContract<T>(swapContract, swapDataConstructor, btcRelay, bitcoinRpc, null, options.pricing, {
-            bitcoinNetwork: this.bitcoinNetwork
+            bitcoinNetwork: this.bitcoinNetwork,
+            getRequestTimeout: options.getRequestTimeout,
+            postRequestTimeout: options.postRequestTimeout
         });
 
         this.tobtcln = new ToBTCLNWrapper<T>(options.storage?.toBtcLn || new LocalWrapperStorage(storagePrefix + "Swaps-ToBTCLN"), clientSwapContract, chainEvents, swapDataConstructor);
@@ -113,9 +118,9 @@ export class Swapper<
         this.clientSwapContract = clientSwapContract;
 
         if(options.intermediaryUrl!=null) {
-            this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl, [options.intermediaryUrl]);
+            this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl, [options.intermediaryUrl], this.options.getRequestTimeout);
         } else {
-            this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl);
+            this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl, null, this.options.getRequestTimeout);
         }
 
         this.options = options;

@@ -12,7 +12,7 @@ import {BitcoinRpc, BtcRelay} from "crosslightning-base/dist";
 import {findlnurl, getParams, LNURLPayParams, LNURLPaySuccessAction, LNURLWithdrawParams} from "js-lnurl/lib";
 import {RequestError} from "../errors/RequestError";
 import {AbortError} from "../errors/AbortError";
-import {tryWithRetries} from "../utils/RetryUtils";
+import {timeoutSignal, tryWithRetries} from "../utils/RetryUtils";
 
 export class PaymentAuthError extends Error {
 
@@ -57,6 +57,9 @@ export type ClientSwapContractOptions = {
 
     maxExpectedOnchainSendSafetyFactor?: number,
     maxExpectedOnchainSendGracePeriodBlocks?: number,
+
+    getRequestTimeout?: number,
+    postRequestTimeout?: number
 }
 
 const BITCOIN_BLOCKTIME = 10*60;
@@ -148,7 +151,8 @@ export class ClientSwapContract<T extends SwapData> {
             }
 
             const response: Response = await tryWithRetries(() => fetch(scheme+"://"+domain+"/.well-known/lnurlp/"+username, {
-                method: "GET"
+                method: "GET",
+                signal: timeoutSignal(this.options.getRequestTimeout)
             }));
 
             if(response.status!==200) {
@@ -300,7 +304,8 @@ export class ClientSwapContract<T extends SwapData> {
                 offerer: this.swapContract.getAddress(),
                 exactIn
             }),
-            headers: {'Content-Type': 'application/json'}
+            headers: {'Content-Type': 'application/json'},
+            signal: timeoutSignal(this.options.postRequestTimeout)
         }));
 
         if(response.status!==200) {
@@ -634,6 +639,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         const response: Response = await tryWithRetries(() => fetch(payRequest.callback+queryParams, {
             method: "GET",
+            signal: timeoutSignal(this.options.getRequestTimeout)
         }));
 
         if(response.status!==200) {
@@ -747,42 +753,50 @@ export class ClientSwapContract<T extends SwapData> {
         const expiryTimestamp = (Math.floor(Date.now()/1000)+expirySeconds).toString();
 
         const abortController = new AbortController();
-        const [_, jsonBody] = await Promise.all([
-            (async () => {
-                const payStatus = await tryWithRetries(() => this.swapContract.getPaymentHashStatus(parsedPR.tagsObject.payment_hash));
 
-                if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
-                    throw new UserError("Invoice already being paid for or paid");
-                }
-            })(),
-            (async () => {
-                const response: Response = await tryWithRetries(() => fetch(url+"/payInvoice", {
-                    method: "POST",
-                    body: JSON.stringify({
-                        pr: bolt11PayReq,
-                        maxFee: maxFee.toString(),
-                        expiryTimestamp,
-                        token: requiredToken==null ? null : requiredToken.toString(),
-                        offerer: this.swapContract.getAddress()
-                    }),
-                    headers: {'Content-Type': 'application/json'},
-                    signal: abortController.signal
-                }));
+        let jsonBody;
+        try {
+            const [_, _jsonBody] = await Promise.all([
+                (async () => {
+                    const payStatus = await tryWithRetries(() => this.swapContract.getPaymentHashStatus(parsedPR.tagsObject.payment_hash));
 
-                if(response.status!==200) {
-                    let resp: string;
-                    try {
-                        resp = await response.text();
-                    } catch (e) {
-                        throw new RequestError(response.statusText, response.status);
+                    if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
+                        throw new UserError("Invoice already being paid for or paid");
                     }
-                    throw new RequestError(resp, response.status);
-                }
+                })(),
+                (async () => {
+                    const response: Response = await tryWithRetries(() => fetch(url+"/payInvoice", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            pr: bolt11PayReq,
+                            maxFee: maxFee.toString(),
+                            expiryTimestamp,
+                            token: requiredToken==null ? null : requiredToken.toString(),
+                            offerer: this.swapContract.getAddress()
+                        }),
+                        headers: {'Content-Type': 'application/json'},
+                        signal: timeoutSignal(this.options.postRequestTimeout, abortController.signal)
+                    }), null, null, abortController.signal);
 
-                return await response.json();
-            })()
-        ]);
-        abortController.abort();
+                    if(response.status!==200) {
+                        let resp: string;
+                        try {
+                            resp = await response.text();
+                        } catch (e) {
+                            throw new RequestError(response.statusText, response.status);
+                        }
+                        throw new RequestError(resp, response.status);
+                    }
+
+                    return await response.json();
+                })()
+            ]);
+            jsonBody = _jsonBody;
+        } catch(e) {
+            abortController.abort();
+            throw e;
+        }
+
 
         const routingFeeSats = new BN(jsonBody.data.routingFeeSats);
 
@@ -895,7 +909,8 @@ export class ClientSwapContract<T extends SwapData> {
     }> {
 
         const response: Response = await tryWithRetries(() => fetch(url+"/getRefundAuthorization?paymentHash="+encodeURIComponent(data.getHash()), {
-            method: "GET"
+            method: "GET",
+            signal: timeoutSignal(this.options.getRequestTimeout)
         }));
 
         if(response.status!==200) {
@@ -1066,7 +1081,8 @@ export class ClientSwapContract<T extends SwapData> {
 
                 exactOut
             }),
-            headers: {'Content-Type': 'application/json'}
+            headers: {'Content-Type': 'application/json'},
+            signal: timeoutSignal(this.options.postRequestTimeout)
         }));
 
         if(response.status!==200) {
@@ -1205,6 +1221,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         const response: Response = await tryWithRetries(() => fetch(callbackUrl+queryParams, {
             method: "GET",
+            signal: timeoutSignal(this.options.getRequestTimeout)
         }));
 
         if(response.status!==200) {
@@ -1318,7 +1335,8 @@ export class ClientSwapContract<T extends SwapData> {
                 descriptionHash: descriptionHash==null ? null : descriptionHash.toString("hex"),
                 exactOut
             }),
-            headers: {'Content-Type': 'application/json'}
+            headers: {'Content-Type': 'application/json'},
+            signal: timeoutSignal(this.options.postRequestTimeout)
         }));
 
         if(response.status!==200) {
@@ -1407,8 +1425,9 @@ export class ClientSwapContract<T extends SwapData> {
         const paymentHash = decodedPR.tagsObject.payment_hash;
 
         const response: Response = await tryWithRetries(() => fetch(url+"/getInvoicePaymentAuth?paymentHash="+encodeURIComponent(paymentHash), {
-            method: "GET"
-        }));
+            method: "GET",
+            signal: timeoutSignal(this.options.getRequestTimeout, abortSignal)
+        }), null, null, abortSignal);
 
         if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
 
@@ -1485,6 +1504,8 @@ export class ClientSwapContract<T extends SwapData> {
 
             console.log("[SmartChain.PaymentRequest] Token amount: ", tokenAmount.toString());
 
+            if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
+
             return {
                 is_paid: true,
                 data,
@@ -1492,7 +1513,12 @@ export class ClientSwapContract<T extends SwapData> {
                 timeout: jsonBody.data.timeout,
                 signature: jsonBody.data.signature,
                 nonce: jsonBody.data.nonce,
-                expiry: await tryWithRetries(() => this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce))
+                expiry: await tryWithRetries(
+                    () => this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce),
+                    null,
+                    null,
+                    abortSignal
+                )
             }
         }
 

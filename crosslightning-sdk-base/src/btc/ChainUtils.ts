@@ -2,7 +2,7 @@ import fetch, {Response} from "cross-fetch";
 import * as bitcoin from "bitcoinjs-lib";
 import {createHash} from "crypto-browserify";
 import * as BN from "bn.js";
-import {tryWithRetries} from "../utils/RetryUtils";
+import {timeoutSignal, tryWithRetries} from "../utils/RetryUtils";
 
 let url = "https://mempool.space/testnet/api/";
 
@@ -105,16 +105,20 @@ export type BitcoinBlockHeader = {
     difficulty: number
 };
 
+let timeout: number;
+
 export class ChainUtils {
 
-    static async setMempoolUrl(_url: string) {
+    static async setMempoolUrl(_url: string, _timeout?: number) {
         url = _url;
+        timeout = _timeout;
     }
 
     static async getTransaction(txId: string): Promise<BitcoinTransaction> {
 
         const response: Response = await tryWithRetries(() => fetch(url+"tx/"+txId, {
-            method: "GET"
+            method: "GET",
+            signal: timeoutSignal(timeout)
         }));
 
         if(response.status!==200) {
@@ -136,7 +140,8 @@ export class ChainUtils {
     static async getRawTransaction(txId: string): Promise<Buffer> {
 
         const response: Response = await tryWithRetries(() => fetch(url+"tx/"+txId+"/hex", {
-            method: "GET"
+            method: "GET",
+            signal: timeoutSignal(timeout)
         }));
 
         if(response.status!==200) {
@@ -165,7 +170,8 @@ export class ChainUtils {
     static async getAddressTransactions(address: string): Promise<BitcoinTransaction[]> {
 
         const response: Response = await tryWithRetries(() => fetch(url+"address/"+address+"/txs", {
-            method: "GET"
+            method: "GET",
+            signal: timeoutSignal(timeout)
         }));
 
         if(response.status!==200) {
@@ -280,7 +286,8 @@ export class ChainUtils {
     static async getTipBlockHash(): Promise<string> {
 
         const response: Response = await tryWithRetries(() => fetch(url+"blocks/tip/hash", {
-            method: "GET"
+            method: "GET",
+            signal: timeoutSignal(timeout)
         }));
 
         if(response.status!==200) {
@@ -301,7 +308,8 @@ export class ChainUtils {
     static async getTipBlockHeight() : Promise<number> {
 
         const response: Response = await tryWithRetries(() => fetch(url+"blocks/tip/height", {
-            method: "GET"
+            method: "GET",
+            signal: timeoutSignal(timeout)
         }));
 
         if(response.status!==200) {
@@ -325,7 +333,8 @@ export class ChainUtils {
     static async getBlock(blockhash: string): Promise<BitcoinBlockHeader> {
 
         const response: Response = await tryWithRetries(() => fetch(url+"block/"+blockhash, {
-            method: "GET"
+            method: "GET",
+            signal: timeoutSignal(timeout)
         }));
 
         if(response.status!==200) {
@@ -347,7 +356,8 @@ export class ChainUtils {
     static async getBlockStatus(blockhash: string): Promise<{in_best_chain: boolean, height: number, next_best: string}> {
 
         const response: Response = await tryWithRetries(() => fetch(url+"block/"+blockhash+"/status", {
-            method: "GET"
+            method: "GET",
+            signal: timeoutSignal(timeout)
         }));
 
         if(response.status!==200) {
@@ -373,7 +383,8 @@ export class ChainUtils {
     }> {
 
         const response: Response = await tryWithRetries(() => fetch(url+"tx/"+txId+"/merkle-proof", {
-            method: "GET"
+            method: "GET",
+            signal: timeoutSignal(timeout)
         }));
 
         if(response.status!==200) {
@@ -395,7 +406,8 @@ export class ChainUtils {
     static async getBlockHash(height: number): Promise<string> {
 
         const response: Response = await tryWithRetries(() => fetch(url+"block-height/"+height, {
-            method: "GET"
+            method: "GET",
+            signal: timeoutSignal(timeout)
         }));
 
         if(response.status!==200) {
@@ -417,7 +429,8 @@ export class ChainUtils {
     static async getPast15Blocks(endHeight: number) : Promise<BlockData[]> {
 
         const response: Response = await tryWithRetries(() => fetch(url+"v1/blocks/"+endHeight, {
-            method: "GET"
+            method: "GET",
+            signal: timeoutSignal(timeout)
         }));
 
         if(response.status!==200) {

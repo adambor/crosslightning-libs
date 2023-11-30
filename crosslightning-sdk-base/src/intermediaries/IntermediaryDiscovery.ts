@@ -5,7 +5,8 @@ import {SwapType} from "../swaps/SwapType";
 import * as BN from "bn.js";
 import {SwapData, TokenAddress} from "crosslightning-base";
 import {SwapContract} from "crosslightning-base/dist";
-import {tryWithRetries} from "../utils/RetryUtils";
+import {timeoutSignal, tryWithRetries} from "../utils/RetryUtils";
+import {AbortError} from "../errors/AbortError";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -80,12 +81,15 @@ export class IntermediaryDiscovery<T extends SwapData> {
     swapContract: SwapContract<T, any>;
     registryUrl: string;
 
+    httpRequestTimeout?: number;
+
     private overrideNodeUrls?: string[];
 
-    constructor(swapContract: SwapContract<T, any>, registryUrl?: string, nodeUrls?: string[]) {
+    constructor(swapContract: SwapContract<T, any>, registryUrl?: string, nodeUrls?: string[], httpRequestTimeout?: number) {
         this.swapContract = swapContract;
         this.registryUrl = registryUrl || REGISTRY_URL;
         this.overrideNodeUrls = nodeUrls;
+        this.httpRequestTimeout = httpRequestTimeout;
     }
 
     async getIntermediaryUrls(abortSignal?: AbortSignal): Promise<string[]> {
@@ -94,12 +98,15 @@ export class IntermediaryDiscovery<T extends SwapData> {
             return this.overrideNodeUrls;
         }
 
-        const response: Response = await tryWithRetries(() => fetch(this.registryUrl, {
-            method: "GET",
-            headers: {'Content-Type': 'application/json'}
-        }));
+        const response: Response = await tryWithRetries(() => {
+            return fetch(this.registryUrl, {
+                method: "GET",
+                headers: {'Content-Type': 'application/json'},
+                signal: timeoutSignal(this.httpRequestTimeout, abortSignal)
+            })
+        }, null, null, abortSignal);
 
-        if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
+        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
 
         if(response.status!==200) {
             let resp: string;
@@ -118,44 +125,28 @@ export class IntermediaryDiscovery<T extends SwapData> {
 
         const urls: string[] = JSON.parse(Buffer.from(content, "base64").toString());
 
+        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
+
         return urls;
 
     }
 
-    async getNodeInfo(url: string, abortSignal?: AbortSignal, timeout?: number) : Promise<{address: string, info: InfoHandlerResponseEnvelope}> {
+    async getNodeInfo(url: string, abortSignal?: AbortSignal) : Promise<{address: string, info: InfoHandlerResponseEnvelope}> {
 
         const nonce = randomBytes(32).toString("hex");
 
-        const createdAbortController = new AbortController();
+        const response: Response = await tryWithRetries(() => {
+            return fetch(url+"/info", {
+                method: "POST",
+                body: JSON.stringify({
+                    nonce
+                }),
+                headers: {'Content-Type': 'application/json'},
+                signal: timeoutSignal(this.httpRequestTimeout, abortSignal)
+            })
+        },null, null, abortSignal);
 
-        let timeoutTimer;
-        if(timeout!=null) {
-            timeoutTimer = setTimeout(() => {
-                if(abortSignal!=null) abortSignal.onabort = null;
-                createdAbortController.abort();
-            }, timeout);
-        }
-
-        if(abortSignal!=null) {
-            abortSignal.onabort = () => {
-                if(timeoutTimer!=null) {
-                    clearTimeout(timeoutTimer);
-                    timeoutTimer = null;
-                }
-                createdAbortController.abort();
-            }
-        }
-
-        const response: Response = await tryWithRetries(() => fetch(url+"/info", {
-            method: "POST",
-            body: JSON.stringify({
-                nonce
-            }),
-            headers: {'Content-Type': 'application/json'},
-            signal: createdAbortController.signal
-        }));
-
-        if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
+        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
 
         if(response.status!==200) {
             let resp: string;
@@ -175,6 +166,8 @@ export class IntermediaryDiscovery<T extends SwapData> {
         await this.swapContract.isValidDataSignature(Buffer.from(jsonBody.envelope), jsonBody.signature, jsonBody.address);
 
         console.log("Returned info: ", info);
+
+        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
 
         return {
             address: jsonBody.address,
@@ -231,7 +224,7 @@ export class IntermediaryDiscovery<T extends SwapData> {
 
         let promises = [];
         for(let url of urls) {
-            promises.push(this.getNodeInfo(url).then((resp) => {
+            promises.push(this.getNodeInfo(url, abortSignal).then((resp) => {
                 activeNodes.push({
                     address: resp.address,
                     url,

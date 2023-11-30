@@ -29,3 +29,16 @@ export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
     throw err;
 
 }
+
+export function timeoutSignal(timeout: number, abortSignal?: AbortSignal) {
+    if(timeout==null) return abortSignal;
+    const abortController = new AbortController();
+    const timeoutHandle = setTimeout(abortController.abort, timeout)
+    if(abortSignal!=null) {
+        abortSignal.addEventListener("abort", (reason) => {
+            clearTimeout(timeoutHandle);
+            abortController.abort(reason);
+        });
+    }
+    return abortController.signal;
+}
