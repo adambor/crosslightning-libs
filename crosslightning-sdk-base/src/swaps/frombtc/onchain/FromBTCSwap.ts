@@ -393,8 +393,8 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
             const abortController = new AbortController();
 
             const intervalWatchdog = setInterval(() => {
-                this.wrapper.contract.swapContract.isCommited(this.data).then((status) => {
-                    if(!status) {
+                this.wrapper.contract.swapContract.getCommitStatus(this.data).then((status) => {
+                    if(status===SwapCommitStatus.PAID) {
                         abortController.abort();
                         if(this.state<FromBTCSwapState.CLAIM_CLAIMED) {
                             this.state = FromBTCSwapState.CLAIM_CLAIMED;
