@@ -117,7 +117,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
                         if(blockHashBuffer.equals(Buffer.from(logData.blockHash))) {
                             const commitHash = Buffer.from(logData.commitHash).toString("hex");
                             if(storedCommitments.has(commitHash)) {
-                                storedHeader = new SolanaBtcStoredHeader(log.data.header);
+                                storedHeader = new SolanaBtcStoredHeader(log.data.header as any);
                                 break;
                             }
                         }
@@ -167,8 +167,8 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
 
                 for(let log of events) {
                     if(log.name==="StoreFork" || log.name==="StoreHeader") {
-                        if(Buffer.from(log.data.commitHash).equals(spvCommitmentHash)) {
-                            storedHeader = new SolanaBtcStoredHeader(log.data.header);
+                        if(Buffer.from(log.data.commitHash as any).equals(spvCommitmentHash)) {
+                            storedHeader = new SolanaBtcStoredHeader(log.data.header as any);
                             break;
                         }
                     }
@@ -264,7 +264,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
 
         let spvTipBlockHeader: B;
         try {
-            const blockHashHex = Buffer.from(acc.tipBlockHash).reverse().toString("hex");
+            const blockHashHex = Buffer.from(acc.tipBlockHash as any).reverse().toString("hex");
             console.log("[BtcRelaySynchronizer]: Stored tip hash: ", blockHashHex);
             const isInMainChain = await this.bitcoinRpc.isInMainChain(blockHashHex);
             if(!isInMainChain) throw new Error("Block not in main chain");
@@ -569,7 +569,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
 
         const mainState: any = await this.program.account.mainState.fetch(this.BtcRelayMainState);
 
-        let forkId: BN = mainState.forkCounter.toNumber();
+        let forkId: number = mainState.forkCounter.toNumber();
 
         let tx = new Transaction();
 

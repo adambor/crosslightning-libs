@@ -2069,7 +2069,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 tx: new Transaction().add(SystemProgram.transfer({
                     fromPubkey: this.signer.publicKey,
                     toPubkey: new PublicKey(dstAddress),
-                    lamports: amount
+                    lamports: BigInt(amount.toString(10))
                 })),
                 signers: []
             }];
@@ -2102,7 +2102,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             );
         }
 
-        const ix = SplToken.createTransferInstruction(ata, dstAta, this.signer.publicKey, amount);
+        const ix = SplToken.createTransferInstruction(ata, dstAta, this.signer.publicKey, BigInt(amount.toString(10)));
         tx.add(ix);
 
         return [{
