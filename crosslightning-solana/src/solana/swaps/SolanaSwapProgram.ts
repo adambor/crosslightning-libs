@@ -295,6 +295,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     async getBalance(token: TokenAddress, inContract: boolean): Promise<BN> {
         if(inContract) {
             const tokenAccount: any = await this.program.account.userAccount.fetchNullable(this.SwapUserVault(this.signer.publicKey, token));
+            if(tokenAccount==null) return null;
             return new BN(tokenAccount.amount.toString(10));
         } else {
             const ata: PublicKey = SplToken.getAssociatedTokenAddressSync(token, this.signer.publicKey);
@@ -1856,6 +1857,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const data: any = await this.program.account.userAccount.fetchNullable(this.SwapUserVault(new PublicKey(address), token));
 
+        if(data==null) return null;
+
         const response: any = {};
 
         for(let i=0;i<data.successVolume.length;i++) {
@@ -1875,6 +1878,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     async getIntermediaryBalance(address: string, token: PublicKey): Promise<BN> {
         const data: any = await this.program.account.userAccount.fetchNullable(this.SwapUserVault(new PublicKey(address), token));
+
+        if(data==null) return null;
 
         return data.amount;
     }
