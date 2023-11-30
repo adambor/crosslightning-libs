@@ -203,7 +203,7 @@ export class ClientSwapContract<T extends SwapData> {
 
     async getLNURLType(str: string, shouldRetry?: boolean): Promise<LNURLPay | LNURLWithdraw | null> {
 
-        let res: any = await this.getLNURL(str);
+        let res: any = await this.getLNURL(str, shouldRetry);
 
         if(res.tag==="payRequest") {
             const payRequest: LNURLPayParams = res;
@@ -372,7 +372,7 @@ export class ClientSwapContract<T extends SwapData> {
                 throw new IntermediaryError("Invalid data returned - token");
             }
             if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                const isValidSendAmount = await tryWithRetries(() => this.swapPrice.isValidAmountSend(amount, requiredBaseFee, requiredFeePPM, total.sub(networkFee), data.getToken()));
+                const isValidSendAmount = await this.swapPrice.isValidAmountSend(amount, requiredBaseFee, requiredFeePPM, total.sub(networkFee), data.getToken());
                 if(!isValidSendAmount) {
                     throw new IntermediaryError("Fee too high");
                 }
@@ -868,7 +868,7 @@ export class ClientSwapContract<T extends SwapData> {
                         throw new IntermediaryError("Invalid data returned - token");
                     }
                     if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                        const isValidSendAmount = await tryWithRetries(() => this.swapPrice.isValidAmountSend(sats, requiredBaseFee.add(routingFeeSats), requiredFeePPM, total, data.getToken()));
+                        const isValidSendAmount = await this.swapPrice.isValidAmountSend(sats, requiredBaseFee.add(routingFeeSats), requiredFeePPM, total, data.getToken());
                         if(!isValidSendAmount) {
                             throw new IntermediaryError("Fee too high");
                         }
@@ -1156,7 +1156,7 @@ export class ClientSwapContract<T extends SwapData> {
                 throw new IntermediaryError("Invalid data returned - token");
             }
             if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                const isValidAmount = await tryWithRetries(() => this.swapPrice.isValidAmountReceive(amount, requiredBaseFee, requiredFeePPM, data.getAmount(), data.getToken()));
+                const isValidAmount = await this.swapPrice.isValidAmountReceive(amount, requiredBaseFee, requiredFeePPM, data.getAmount(), data.getToken());
                 if(!isValidAmount) {
                     throw new IntermediaryError("Fee too high");
                 }
@@ -1392,7 +1392,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         if(this.WBTC_ADDRESS==null) {
             if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                const isValidAmount = await tryWithRetries(() => this.swapPrice.isValidAmountReceive(amount, requiredBaseFee, requiredFeePPM, total, requiredToken));
+                const isValidAmount = await this.swapPrice.isValidAmountReceive(amount, requiredBaseFee, requiredFeePPM, total, requiredToken);
                 if(!isValidAmount) {
                     throw new IntermediaryError("Fee too high");
                 }
@@ -1477,7 +1477,7 @@ export class ClientSwapContract<T extends SwapData> {
                 throw new IntermediaryError("Invalid amount received");
             } else {
                 if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                    const isValidAmount = await tryWithRetries(() => this.swapPrice.isValidAmountReceive(new BN(decodedPR.satoshis), requiredBaseFee, requiredFeePPM, data.getAmount(), requiredToken));
+                    const isValidAmount = await this.swapPrice.isValidAmountReceive(new BN(decodedPR.satoshis), requiredBaseFee, requiredFeePPM, data.getAmount(), requiredToken);
                     if(!isValidAmount) {
                         throw new IntermediaryError("Fee too high");
                     }

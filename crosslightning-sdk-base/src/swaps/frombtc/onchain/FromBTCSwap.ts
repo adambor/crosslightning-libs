@@ -252,13 +252,13 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
      * @param abortSignal   AbortSignal
      */
     waitTillCommited(abortSignal?: AbortSignal): Promise<void> {
+        if(this.state===FromBTCSwapState.CLAIM_COMMITED) {
+            return Promise.resolve();
+        }
+
         return new Promise((resolve, reject) => {
             if(abortSignal!=null && abortSignal.aborted) {
                 reject("Aborted");
-                return;
-            }
-            if(this.state===FromBTCSwapState.CLAIM_COMMITED) {
-                resolve();
                 return;
             }
 
@@ -380,13 +380,13 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
      * @param abortSignal   AbortSignal
      */
     waitTillClaimed(abortSignal?: AbortSignal): Promise<void> {
+        if(this.state===FromBTCSwapState.CLAIM_CLAIMED) {
+            return Promise.resolve();
+        }
+
         return new Promise((resolve, reject) => {
             if(abortSignal!=null && abortSignal.aborted) {
                 reject("Aborted");
-                return;
-            }
-            if(this.state===FromBTCSwapState.CLAIM_CLAIMED) {
-                resolve();
                 return;
             }
 

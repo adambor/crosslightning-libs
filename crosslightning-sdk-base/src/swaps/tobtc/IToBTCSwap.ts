@@ -215,13 +215,13 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
      * @param abortSignal   AbortSignal
      */
     waitTillCommited(abortSignal?: AbortSignal): Promise<void> {
+        if(this.state===ToBTCSwapState.COMMITED) {
+            return Promise.resolve();
+        }
+
         return new Promise((resolve, reject) => {
             if(abortSignal!=null && abortSignal.aborted) {
                 reject("Aborted");
-                return;
-            }
-            if(this.state===ToBTCSwapState.COMMITED) {
-                resolve();
                 return;
             }
 
@@ -276,6 +276,10 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
      * @returns {Promise<boolean>}  Was the payment successful? If not we can refund.
      */
     waitForPayment(abortSignal?: AbortSignal, checkIntervalSeconds?: number): Promise<boolean> {
+        if(this.state===ToBTCSwapState.CLAIMED) {
+            return Promise.resolve(true);
+        }
+
         const abortController = new AbortController();
 
         if(abortSignal!=null) abortSignal.onabort = () => {
@@ -393,13 +397,13 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
      * @param abortSignal   AbortSignal
      */
     waitTillRefunded(abortSignal?: AbortSignal): Promise<void> {
+        if(this.state===ToBTCSwapState.REFUNDED) {
+            return Promise.resolve();
+        }
+
         return new Promise((resolve, reject) => {
             if(abortSignal!=null && abortSignal.aborted) {
                 reject("Aborted");
-                return;
-            }
-            if(this.state===ToBTCSwapState.REFUNDED) {
-                resolve();
                 return;
             }
 

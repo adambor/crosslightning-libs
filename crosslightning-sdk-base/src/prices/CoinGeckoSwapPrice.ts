@@ -2,7 +2,7 @@ import {ISwapPrice} from "../swaps/ISwapPrice";
 import * as BN from "bn.js";
 import {Response} from "cross-fetch";
 import {TokenAddress} from "crosslightning-base";
-import {fetchWithTimeout} from "../utils/RetryUtils";
+import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 
 
 export type CoinsMapType = {
@@ -126,10 +126,10 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
             return new BN(Math.floor(amt*1000));
         }
 
-        const response: Response = await fetchWithTimeout(this.url+"/simple/price?ids="+coinId+"&vs_currencies=sats&precision=3", {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(this.url+"/simple/price?ids="+coinId+"&vs_currencies=sats&precision=3", {
             method: "GET",
             timeout: this.httpRequestTimeout
-        });
+        }));
 
         if(response.status!==200) {
             let resp: string;
