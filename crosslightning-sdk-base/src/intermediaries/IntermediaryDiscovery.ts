@@ -1,11 +1,11 @@
 import {Intermediary, ServicesType} from "./Intermediary";
-import fetch, {Response} from "cross-fetch";
+import {Response} from "cross-fetch";
 import {randomBytes} from "crypto-browserify";
 import {SwapType} from "../swaps/SwapType";
 import * as BN from "bn.js";
 import {SwapData, TokenAddress} from "crosslightning-base";
 import {SwapContract} from "crosslightning-base/dist";
-import {timeoutSignal, tryWithRetries} from "../utils/RetryUtils";
+import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 import {AbortError} from "../errors/AbortError";
 
 export enum SwapHandlerType {
@@ -99,10 +99,11 @@ export class IntermediaryDiscovery<T extends SwapData> {
         }
 
         const response: Response = await tryWithRetries(() => {
-            return fetch(this.registryUrl, {
+            return fetchWithTimeout(this.registryUrl, {
                 method: "GET",
                 headers: {'Content-Type': 'application/json'},
-                signal: timeoutSignal(this.httpRequestTimeout, abortSignal)
+                signal: abortSignal,
+                timeout: this.httpRequestTimeout
             })
         }, null, null, abortSignal);
 
@@ -136,13 +137,14 @@ export class IntermediaryDiscovery<T extends SwapData> {
         const nonce = randomBytes(32).toString("hex");
 
         const response: Response = await tryWithRetries(() => {
-            return fetch(url+"/info", {
+            return fetchWithTimeout(url+"/info", {
                 method: "POST",
                 body: JSON.stringify({
                     nonce
                 }),
                 headers: {'Content-Type': 'application/json'},
-                signal: timeoutSignal(this.httpRequestTimeout, abortSignal)
+                signal: abortSignal,
+                timeout: this.httpRequestTimeout
             })
         },null, null, abortSignal);
 

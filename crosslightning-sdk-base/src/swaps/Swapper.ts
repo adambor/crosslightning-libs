@@ -88,11 +88,11 @@ export class Swapper<
         switch (options.bitcoinNetwork) {
             case BitcoinNetwork.MAINNET:
                 this.bitcoinNetwork = bitcoin.networks.bitcoin;
-                ChainUtils.setMempoolUrl("https://mempool.space/api/", this.options.getRequestTimeout);
+                ChainUtils.setMempoolUrl("https://mempool.space/api/", options.getRequestTimeout);
                 break;
             case BitcoinNetwork.TESTNET:
                 this.bitcoinNetwork = bitcoin.networks.testnet;
-                ChainUtils.setMempoolUrl("https://mempool.space/testnet/api/", this.options.getRequestTimeout);
+                ChainUtils.setMempoolUrl("https://mempool.space/testnet/api/", options.getRequestTimeout);
                 break;
             case BitcoinNetwork.REGTEST:
                 this.bitcoinNetwork = bitcoin.networks.regtest;
@@ -118,9 +118,9 @@ export class Swapper<
         this.clientSwapContract = clientSwapContract;
 
         if(options.intermediaryUrl!=null) {
-            this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl, [options.intermediaryUrl], this.options.getRequestTimeout);
+            this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl, [options.intermediaryUrl], options.getRequestTimeout);
         } else {
-            this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl, null, this.options.getRequestTimeout);
+            this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl, null, options.getRequestTimeout);
         }
 
         this.options = options;
@@ -168,8 +168,8 @@ export class Swapper<
      *
      * @param lnpr
      */
-    getLNURLTypeAndData(lnurl: string): Promise<LNURLPay | LNURLWithdraw | null> {
-        return this.clientSwapContract.getLNURLType(lnurl);
+    getLNURLTypeAndData(lnurl: string, shouldRetry?: boolean): Promise<LNURLPay | LNURLWithdraw | null> {
+        return this.clientSwapContract.getLNURLType(lnurl, shouldRetry);
     }
 
     /**

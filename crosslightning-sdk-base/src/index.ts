@@ -8,6 +8,7 @@ export * from "./errors/UserError";
 export * from "./errors/AbortError";
 export * from "./errors/OutOfBoundsError";
 export * from "./errors/RequestError";
+export * from "./errors/NetworkError";
 
 export * from "./intermediaries/Intermediary";
 export * from "./intermediaries/IntermediaryDiscovery";

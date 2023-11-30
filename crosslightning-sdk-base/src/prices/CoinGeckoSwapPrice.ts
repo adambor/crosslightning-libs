@@ -1,8 +1,8 @@
 import {ISwapPrice} from "../swaps/ISwapPrice";
 import * as BN from "bn.js";
-import fetch, {Response} from "cross-fetch";
+import {Response} from "cross-fetch";
 import {TokenAddress} from "crosslightning-base";
-import {timeoutSignal} from "../utils/RetryUtils";
+import {fetchWithTimeout} from "../utils/RetryUtils";
 
 
 export type CoinsMapType = {
@@ -126,9 +126,9 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
             return new BN(Math.floor(amt*1000));
         }
 
-        const response: Response = await fetch(this.url+"/simple/price?ids="+coinId+"&vs_currencies=sats&precision=3", {
+        const response: Response = await fetchWithTimeout(this.url+"/simple/price?ids="+coinId+"&vs_currencies=sats&precision=3", {
             method: "GET",
-            signal: timeoutSignal(this.httpRequestTimeout)
+            timeout: this.httpRequestTimeout
         });
 
         if(response.status!==200) {

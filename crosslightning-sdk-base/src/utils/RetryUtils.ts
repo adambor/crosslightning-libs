@@ -1,3 +1,5 @@
+import fetch from "cross-fetch";
+import {NetworkError} from "../errors/NetworkError";
 
 
 export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
@@ -30,10 +32,38 @@ export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
 
 }
 
+export function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit & {timeout?: number}): Promise<Response> {
+    if(init==null) init = {};
+    if(init.timeout==null) return fetch(input, init);
+
+    let timedOut = false;
+    const abortController = new AbortController();
+    const timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        abortController.abort("Timed out")
+    }, init.timeout);
+    let originalSignal: AbortSignal;
+    if(init.signal!=null) {
+        originalSignal = init.signal;
+        init.signal.addEventListener("abort", (reason) => {
+            clearTimeout(timeoutHandle);
+            abortController.abort(reason);
+        });
+    }
+    init.signal = abortController.signal;
+    return fetch(input, init).catch(e => {
+        if(e.name==="AbortError" && (originalSignal==null || !originalSignal.aborted) && timedOut) {
+            throw new NetworkError("Network request timed out")
+        } else {
+            throw e;
+        }
+    });
+};
+
 export function timeoutSignal(timeout: number, abortSignal?: AbortSignal) {
     if(timeout==null) return abortSignal;
     const abortController = new AbortController();
-    const timeoutHandle = setTimeout(abortController.abort, timeout)
+    const timeoutHandle = setTimeout(() => abortController.abort("Timed out"), timeout)
     if(abortSignal!=null) {
         abortSignal.addEventListener("abort", (reason) => {
             clearTimeout(timeoutHandle);

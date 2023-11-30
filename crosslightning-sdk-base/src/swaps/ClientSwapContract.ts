@@ -1,6 +1,6 @@
 import * as BN from "bn.js";
 import * as bitcoin from "bitcoinjs-lib";
-import fetch, {Response} from "cross-fetch";
+import {Response} from "cross-fetch";
 import {createHash, randomBytes} from "crypto-browserify";
 import * as bolt11 from "bolt11";
 import {ChainUtils, BitcoinTransaction} from "../btc/ChainUtils";
@@ -12,7 +12,7 @@ import {BitcoinRpc, BtcRelay} from "crosslightning-base/dist";
 import {findlnurl, getParams, LNURLPayParams, LNURLPaySuccessAction, LNURLWithdrawParams} from "js-lnurl/lib";
 import {RequestError} from "../errors/RequestError";
 import {AbortError} from "../errors/AbortError";
-import {timeoutSignal, tryWithRetries} from "../utils/RetryUtils";
+import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 
 export class PaymentAuthError extends Error {
 
@@ -137,7 +137,9 @@ export class ClientSwapContract<T extends SwapData> {
         return this.swapContract.start();
     }
 
-    private async getLNURL(str: string) : Promise<LNURLPayParams | LNURLWithdrawParams | null> {
+    private async getLNURL(str: string, shouldRetry?: boolean) : Promise<LNURLPayParams | LNURLWithdrawParams | null> {
+
+        if(shouldRetry==null) shouldRetry = true;
 
         let res: any;
         if(MAIL_REGEX.test(str)) {
@@ -150,10 +152,18 @@ export class ClientSwapContract<T extends SwapData> {
                 scheme = "http";
             }
 
-            const response: Response = await tryWithRetries(() => fetch(scheme+"://"+domain+"/.well-known/lnurlp/"+username, {
-                method: "GET",
-                signal: timeoutSignal(this.options.getRequestTimeout)
-            }));
+            let response: Response;
+            if(shouldRetry) {
+                response = await tryWithRetries(() => fetchWithTimeout(scheme+"://"+domain+"/.well-known/lnurlp/"+username, {
+                    method: "GET",
+                    timeout: this.options.getRequestTimeout
+                }));
+            } else {
+                response = await fetchWithTimeout(scheme+"://"+domain+"/.well-known/lnurlp/"+username, {
+                    method: "GET",
+                    timeout: this.options.getRequestTimeout
+                });
+            }
 
             if(response.status!==200) {
                 let resp: string;
@@ -191,7 +201,7 @@ export class ClientSwapContract<T extends SwapData> {
         return findlnurl(str)!=null || MAIL_REGEX.test(str);
     }
 
-    async getLNURLType(str: string): Promise<LNURLPay | LNURLWithdraw | null> {
+    async getLNURLType(str: string, shouldRetry?: boolean): Promise<LNURLPay | LNURLWithdraw | null> {
 
         let res: any = await this.getLNURL(str);
 
@@ -292,7 +302,7 @@ export class ClientSwapContract<T extends SwapData> {
             }
         }
 
-        const response: Response = await tryWithRetries(() => fetch(url+"/payInvoice", {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/payInvoice", {
             method: "POST",
             body: JSON.stringify({
                 address,
@@ -305,7 +315,7 @@ export class ClientSwapContract<T extends SwapData> {
                 exactIn
             }),
             headers: {'Content-Type': 'application/json'},
-            signal: timeoutSignal(this.options.postRequestTimeout)
+            timeout: this.options.postRequestTimeout
         }));
 
         if(response.status!==200) {
@@ -637,9 +647,9 @@ export class ClientSwapContract<T extends SwapData> {
 
         const queryParams = (payRequest.callback.includes("?") ? "&" : "?")+params.join("&");
 
-        const response: Response = await tryWithRetries(() => fetch(payRequest.callback+queryParams, {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(payRequest.callback+queryParams, {
             method: "GET",
-            signal: timeoutSignal(this.options.getRequestTimeout)
+            timeout: this.options.getRequestTimeout
         }));
 
         if(response.status!==200) {
@@ -765,7 +775,7 @@ export class ClientSwapContract<T extends SwapData> {
                     }
                 })(),
                 (async () => {
-                    const response: Response = await tryWithRetries(() => fetch(url+"/payInvoice", {
+                    const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/payInvoice", {
                         method: "POST",
                         body: JSON.stringify({
                             pr: bolt11PayReq,
@@ -775,7 +785,8 @@ export class ClientSwapContract<T extends SwapData> {
                             offerer: this.swapContract.getAddress()
                         }),
                         headers: {'Content-Type': 'application/json'},
-                        signal: timeoutSignal(this.options.postRequestTimeout, abortController.signal)
+                        signal: abortController.signal,
+                        timeout: this.options.postRequestTimeout
                     }), null, null, abortController.signal);
 
                     if(response.status!==200) {
@@ -908,9 +919,9 @@ export class ClientSwapContract<T extends SwapData> {
         signature?: string
     }> {
 
-        const response: Response = await tryWithRetries(() => fetch(url+"/getRefundAuthorization?paymentHash="+encodeURIComponent(data.getHash()), {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/getRefundAuthorization?paymentHash="+encodeURIComponent(data.getHash()), {
             method: "GET",
-            signal: timeoutSignal(this.options.getRequestTimeout)
+            timeout: this.options.getRequestTimeout
         }));
 
         if(response.status!==200) {
@@ -1064,7 +1075,7 @@ export class ClientSwapContract<T extends SwapData> {
             }
         });
 
-        const response: Response = await tryWithRetries(() => fetch(url+"/getAddress", {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/getAddress", {
             method: "POST",
             body: JSON.stringify({
                 address: this.swapContract.getAddress(),
@@ -1082,7 +1093,7 @@ export class ClientSwapContract<T extends SwapData> {
                 exactOut
             }),
             headers: {'Content-Type': 'application/json'},
-            signal: timeoutSignal(this.options.postRequestTimeout)
+            timeout: this.options.postRequestTimeout
         }));
 
         if(response.status!==200) {
@@ -1219,9 +1230,9 @@ export class ClientSwapContract<T extends SwapData> {
 
         const queryParams = (callbackUrl.includes("?") ? "&" : "?")+params.join("&");
 
-        const response: Response = await tryWithRetries(() => fetch(callbackUrl+queryParams, {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(callbackUrl+queryParams, {
             method: "GET",
-            signal: timeoutSignal(this.options.getRequestTimeout)
+            timeout: this.options.getRequestTimeout
         }));
 
         if(response.status!==200) {
@@ -1325,7 +1336,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         const paymentHash = createHash("sha256").update(secret).digest();
 
-        const response: Response = await tryWithRetries(() => fetch(url+"/createInvoice", {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/createInvoice", {
             method: "POST",
             body: JSON.stringify({
                 paymentHash: paymentHash.toString("hex"),
@@ -1336,7 +1347,7 @@ export class ClientSwapContract<T extends SwapData> {
                 exactOut
             }),
             headers: {'Content-Type': 'application/json'},
-            signal: timeoutSignal(this.options.postRequestTimeout)
+            timeout: this.options.postRequestTimeout
         }));
 
         if(response.status!==200) {
@@ -1424,9 +1435,10 @@ export class ClientSwapContract<T extends SwapData> {
 
         const paymentHash = decodedPR.tagsObject.payment_hash;
 
-        const response: Response = await tryWithRetries(() => fetch(url+"/getInvoicePaymentAuth?paymentHash="+encodeURIComponent(paymentHash), {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/getInvoicePaymentAuth?paymentHash="+encodeURIComponent(paymentHash), {
             method: "GET",
-            signal: timeoutSignal(this.options.getRequestTimeout, abortSignal)
+            signal: abortSignal,
+            timeout: this.options.getRequestTimeout
         }), null, null, abortSignal);
 
         if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
