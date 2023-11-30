@@ -5,6 +5,7 @@ import {SwapType} from "../swaps/SwapType";
 import * as BN from "bn.js";
 import {SwapData, TokenAddress} from "crosslightning-base";
 import {SwapContract} from "crosslightning-base/dist";
+import {tryWithRetries} from "../utils/RetryUtils";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -93,10 +94,10 @@ export class IntermediaryDiscovery<T extends SwapData> {
             return this.overrideNodeUrls;
         }
 
-        const response: Response = await fetch(this.registryUrl, {
+        const response: Response = await tryWithRetries(() => fetch(this.registryUrl, {
             method: "GET",
             headers: {'Content-Type': 'application/json'}
-        });
+        }));
 
         if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
 
@@ -145,14 +146,14 @@ export class IntermediaryDiscovery<T extends SwapData> {
             }
         }
 
-        const response: Response = await fetch(url+"/info", {
+        const response: Response = await tryWithRetries(() => fetch(url+"/info", {
             method: "POST",
             body: JSON.stringify({
                 nonce
             }),
             headers: {'Content-Type': 'application/json'},
             signal: createdAbortController.signal
-        });
+        }));
 
         if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
 
@@ -202,7 +203,7 @@ export class IntermediaryDiscovery<T extends SwapData> {
         const promises = [];
         const reputation = {};
         for(let token of checkReputationTokens) {
-            promises.push(this.swapContract.getIntermediaryReputation(node.address, this.swapContract.toTokenAddress(token)).then(result => {
+            promises.push(tryWithRetries(() => this.swapContract.getIntermediaryReputation(node.address, this.swapContract.toTokenAddress(token))).then(result => {
                 reputation[token] = result;
             }));
         }
