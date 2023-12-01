@@ -26,19 +26,25 @@ export interface SwapContract<T extends SwapData, TX> {
 
     start(): Promise<void>;
 
-    initPayIn(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
-    txsInitPayIn(swapData: T, timeout: string, prefix: string, signature: string, nonce: number): Promise<TX[]>;
-    init(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
-    txsInit(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer): Promise<TX[]>;
+    initPayIn(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal): Promise<string>;
+    txsInitPayIn(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, skipChecks?: boolean): Promise<TX[]>;
+
+    init(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal): Promise<string>;
+    txsInit(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer, skipChecks?: boolean): Promise<TX[]>;
+
     claimWithSecret(swapData: T, secret: string, checkExpiry?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
     txsClaimWithSecret(swapData: T, secret: string, checkExpiry?: boolean, initAta?: boolean): Promise<TX[]>;
+
     claimWithTxData(swapData: T, blockheight: number, tx: {blockhash: string, confirmations: number, txid: string, hex: string}, vout: number, storedHeader?: BtcStoredHeader<any>, synchronizer?: RelaySynchronizer<any, TX, any>, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
     txsClaimWithTxData(swapData: T, blockheight: number, tx: {blockhash: string, confirmations: number, txid: string, hex: string}, vout: number, storedHeader?: BtcStoredHeader<any>, synchronizer?: RelaySynchronizer<any, TX, any>, initAta?: boolean): Promise<TX[]>;
+
     refund(swapData: T, check?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
     txsRefund(swapData: T, check?: boolean, initAta?: boolean): Promise<TX[]>;
+
     refundWithAuthorization(swapData: T, timeout: string, prefix: string, signature: string, check?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
     txsRefundWithAuthorization(swapData: T, timeout: string, prefix: string, signature: string, check?: boolean, initAta?: boolean): Promise<TX[]>;
-    initAndClaimWithSecret(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, secret: string, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string[]>;
+
+    initAndClaimWithSecret(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, secret: string, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal): Promise<string[]>;
 
     isExpired(swapData: T): boolean;
     isClaimable(swapData: T): Promise<boolean>;
