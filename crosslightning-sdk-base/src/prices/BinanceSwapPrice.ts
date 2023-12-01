@@ -3,46 +3,47 @@ import * as BN from "bn.js";
 import {Response} from "cross-fetch";
 import {TokenAddress} from "crosslightning-base";
 import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
+import {CoinAddresses} from "./PricesTypes";
 
-
-export type CoinsMapType = {
+export type BinanceCoinsMapType = {
     [address: string]: {
-        coinId: string,
-        decimals: number
+        pair: string,
+        decimals: number,
+        invert: boolean
     }
 };
 
-export type CoinAddresses = {
-    [token in "USDC" | "USDT" | "WBTC" | "ETH"]?: string;
-};
+export class BinanceSwapPrice extends ISwapPrice {
 
-export class CoinGeckoSwapPrice extends ISwapPrice {
-
-    static createCoinsMap(wbtcAdress?: string, usdcAddress?: string, usdtAddress?: string): CoinsMapType {
+    static createCoinsMap(wbtcAdress?: string, usdcAddress?: string, usdtAddress?: string): BinanceCoinsMapType {
 
         const coinMap = {
             "So11111111111111111111111111111111111111112": {
-                coinId: "solana",
-                decimals: 9
+                pair: "SOLBTC",
+                decimals: 9,
+                invert: false
             }
         };
 
         if(wbtcAdress!=null) {
             coinMap[wbtcAdress] = {
-                coinId: "wrapped-bitcoin",
-                decimals: 8
+                pair: "WBTCBTC",
+                decimals: 8,
+                invert: false
             };
         }
         if(usdcAddress!=null) {
             coinMap[usdcAddress] = {
-                coinId: "usd-coin",
-                decimals: 6
+                pair: "BTCUSDC",
+                decimals: 6,
+                invert: true
             };
         }
         if(usdtAddress!=null) {
             coinMap[usdtAddress] = {
-                coinId: "tether",
-                decimals: 6
+                pair: "BTCUSDT",
+                decimals: 6,
+                invert: true
             };
         }
 
@@ -50,32 +51,36 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
 
     }
 
-    static createCoinsMapFromTokens(tokens: CoinAddresses, nativeTokenCoinGeckoId?: string): CoinsMapType {
+    static createCoinsMapFromTokens(tokens: CoinAddresses, nativeTokenTicker?: string): BinanceCoinsMapType {
 
-        const coinMap = {};
+        const coinMap: BinanceCoinsMapType = {};
 
         if(tokens.WBTC!=null) {
             coinMap[tokens.WBTC] = {
-                coinId: "wrapped-bitcoin",
-                decimals: 8
+                pair: "WBTCBTC",
+                decimals: 8,
+                invert: false
             };
         }
         if(tokens.USDC!=null) {
             coinMap[tokens.USDC] = {
-                coinId: "usd-coin",
-                decimals: 6
+                pair: "BTCUSDC",
+                decimals: 6,
+                invert: true
             };
         }
         if(tokens.USDT!=null) {
             coinMap[tokens.USDT] = {
-                coinId: "tether",
-                decimals: 6
+                pair: "BTCUSDT",
+                decimals: 6,
+                invert: true
             };
         }
-        if(tokens.ETH!=null || nativeTokenCoinGeckoId!=null) {
+        if(tokens.ETH!=null || nativeTokenTicker!=null) {
             coinMap[tokens.ETH] = {
-                coinId: nativeTokenCoinGeckoId,
-                decimals: 18
+                pair: nativeTokenTicker+"BTC",
+                decimals: 18,
+                invert: false
             };
         }
 
@@ -84,30 +89,34 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
     }
 
     url: string;
-    COINS_MAP: CoinsMapType = {
+    COINS_MAP: BinanceCoinsMapType = {
         "6jrUSQHX8MTJbtWpdbx65TAwUv1rLyCF6fVjr9yELS75": {
-            coinId: "usd-coin",
-            decimals: 6
+            pair: "BTCUSDC",
+            decimals: 6,
+            invert: true
         },
         "Ar5yfeSyDNDHyq1GvtcrDKjNcoVTQiv7JaVvuMDbGNDT": {
-            coinId: "tether",
-            decimals: 6
+            pair: "BTCUSDT",
+            decimals: 6,
+            invert: true
         },
         "So11111111111111111111111111111111111111112": {
-            coinId: "solana",
-            decimals: 9
+            pair: "SOLBTC",
+            decimals: 9,
+            invert: false
         },
         "Ag6gw668H9PLQFyP482whvGDoAseBWfgs5AfXCAK3aMj": {
-            coinId: "wrapped-bitcoin",
-            decimals: 8
+            pair: "WBTCBTC",
+            decimals: 8,
+            invert: false
         }
     };
 
     httpRequestTimeout?: number;
 
-    constructor(maxAllowedFeeDiffPPM: BN, coinsMap?: CoinsMapType, url?: string, httpRequestTimeout?: number) {
+    constructor(maxAllowedFeeDiffPPM: BN, coinsMap?: BinanceCoinsMapType, url?: string, httpRequestTimeout?: number) {
         super(maxAllowedFeeDiffPPM);
-        this.url = url || "https://api.coingecko.com/api/v3";
+        this.url = url || "https://api.binance.com/api/v3";
         if(coinsMap!=null) {
             this.COINS_MAP = coinsMap;
         }
@@ -117,19 +126,21 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
     /**
      * Returns coin price in mSat
      *
-     * @param coinId
+     * @param pair
+     * @param invert
      */
-    async getPrice(coinId: string): Promise<BN> {
+    async getPrice(pair: string, invert: boolean, abortSignal?: AbortSignal): Promise<BN> {
 
-        if(coinId.startsWith("$fixed-")) {
-            const amt: number = parseFloat(coinId.substring(7));
+        if(pair.startsWith("$fixed-")) {
+            const amt: number = parseFloat(pair.substring(7));
             return new BN(Math.floor(amt*1000));
         }
 
-        const response: Response = await tryWithRetries(() => fetchWithTimeout(this.url+"/simple/price?ids="+coinId+"&vs_currencies=sats&precision=3", {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(this.url+"/ticker/price?symbol="+pair, {
             method: "GET",
-            timeout: this.httpRequestTimeout
-        }));
+            timeout: this.httpRequestTimeout,
+            signal: abortSignal
+        }), null ,null, abortSignal);
 
         if(response.status!==200) {
             let resp: string;
@@ -143,20 +154,32 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
 
         let jsonBody: any = await response.json();
 
-        const amt: number = jsonBody[coinId].sats;
+        const amt: number = parseFloat(jsonBody.price);
 
-        return new BN(amt*1000);
+        if(invert) {
+            return new BN(Math.floor((1/amt)*100000000000));
+        }
+        return new BN(Math.floor(amt*100000000000));
 
     }
 
-    async getFromBtcSwapAmount(fromAmount: BN, toToken: TokenAddress): Promise<BN> {
+    preFetchPrice(token: TokenAddress, abortSignal?: AbortSignal): Promise<BN> {
+        let tokenAddress: string = token.toString();
+
+        const coin = this.COINS_MAP[tokenAddress];
+
+        if(coin==null) throw new Error("Token not found");
+        return this.getPrice(coin.pair, coin.invert, abortSignal);
+    }
+
+    async getFromBtcSwapAmount(fromAmount: BN, toToken: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<BN> {
         let tokenAddress: string = toToken.toString();
 
         const coin = this.COINS_MAP[tokenAddress];
 
         if(coin==null) throw new Error("Token not found");
 
-        const price = await this.getPrice(coin.coinId);
+        const price = preFetchedPrice || await this.getPrice(coin.pair, coin.invert, abortSignal);
 
         console.log("Swap price: ", price.toString(10));
 
@@ -166,14 +189,14 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
             .div(price)
     }
 
-    async getToBtcSwapAmount(fromAmount: BN, fromToken: TokenAddress): Promise<BN> {
+    async getToBtcSwapAmount(fromAmount: BN, fromToken: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<BN> {
         let tokenAddress: string = fromToken.toString();
 
         const coin = this.COINS_MAP[tokenAddress];
 
         if(coin==null) throw new Error("Token not found");
 
-        const price = await this.getPrice(coin.coinId);
+        const price = preFetchedPrice || await this.getPrice(coin.pair, coin.invert, abortSignal);
 
         return fromAmount
             .mul(price)
@@ -186,7 +209,7 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
 
         if(coin==null) throw new Error("Token not found");
 
-        return coin.coinId==="$ignore";
+        return coin.pair==="$ignore";
     }
 
 }

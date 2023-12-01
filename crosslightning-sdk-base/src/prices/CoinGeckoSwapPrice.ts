@@ -3,22 +3,19 @@ import * as BN from "bn.js";
 import {Response} from "cross-fetch";
 import {TokenAddress} from "crosslightning-base";
 import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
+import {CoinAddresses} from "./PricesTypes";
 
-
-export type CoinsMapType = {
+export type CoinGeckoCoinsMapType = {
     [address: string]: {
         coinId: string,
         decimals: number
     }
 };
 
-export type CoinAddresses = {
-    [token in "USDC" | "USDT" | "WBTC" | "ETH"]?: string;
-};
 
 export class CoinGeckoSwapPrice extends ISwapPrice {
 
-    static createCoinsMap(wbtcAdress?: string, usdcAddress?: string, usdtAddress?: string): CoinsMapType {
+    static createCoinsMap(wbtcAdress?: string, usdcAddress?: string, usdtAddress?: string): CoinGeckoCoinsMapType {
 
         const coinMap = {
             "So11111111111111111111111111111111111111112": {
@@ -50,7 +47,7 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
 
     }
 
-    static createCoinsMapFromTokens(tokens: CoinAddresses, nativeTokenCoinGeckoId?: string): CoinsMapType {
+    static createCoinsMapFromTokens(tokens: CoinAddresses, nativeTokenCoinGeckoId?: string): CoinGeckoCoinsMapType {
 
         const coinMap = {};
 
@@ -84,7 +81,7 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
     }
 
     url: string;
-    COINS_MAP: CoinsMapType = {
+    COINS_MAP: CoinGeckoCoinsMapType = {
         "6jrUSQHX8MTJbtWpdbx65TAwUv1rLyCF6fVjr9yELS75": {
             coinId: "usd-coin",
             decimals: 6
@@ -105,7 +102,7 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
 
     httpRequestTimeout?: number;
 
-    constructor(maxAllowedFeeDiffPPM: BN, coinsMap?: CoinsMapType, url?: string, httpRequestTimeout?: number) {
+    constructor(maxAllowedFeeDiffPPM: BN, coinsMap?: CoinGeckoCoinsMapType, url?: string, httpRequestTimeout?: number) {
         super(maxAllowedFeeDiffPPM);
         this.url = url || "https://api.coingecko.com/api/v3";
         if(coinsMap!=null) {
@@ -119,7 +116,7 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
      *
      * @param coinId
      */
-    async getPrice(coinId: string): Promise<BN> {
+    async getPrice(coinId: string, abortSignal?: AbortSignal): Promise<BN> {
 
         if(coinId.startsWith("$fixed-")) {
             const amt: number = parseFloat(coinId.substring(7));
@@ -128,8 +125,9 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
 
         const response: Response = await tryWithRetries(() => fetchWithTimeout(this.url+"/simple/price?ids="+coinId+"&vs_currencies=sats&precision=3", {
             method: "GET",
-            timeout: this.httpRequestTimeout
-        }));
+            timeout: this.httpRequestTimeout,
+            signal: abortSignal
+        }), null, null, abortSignal);
 
         if(response.status!==200) {
             let resp: string;
@@ -149,14 +147,23 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
 
     }
 
-    async getFromBtcSwapAmount(fromAmount: BN, toToken: TokenAddress): Promise<BN> {
+    preFetchPrice(token: TokenAddress, abortSignal?: AbortSignal): Promise<BN> {
+        let tokenAddress: string = token.toString();
+
+        const coin = this.COINS_MAP[tokenAddress];
+
+        if(coin==null) throw new Error("Token not found");
+        return this.getPrice(coin.coinId, abortSignal);
+    }
+
+    async getFromBtcSwapAmount(fromAmount: BN, toToken: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<BN> {
         let tokenAddress: string = toToken.toString();
 
         const coin = this.COINS_MAP[tokenAddress];
 
         if(coin==null) throw new Error("Token not found");
 
-        const price = await this.getPrice(coin.coinId);
+        const price = preFetchedPrice || await this.getPrice(coin.coinId, abortSignal);
 
         console.log("Swap price: ", price.toString(10));
 
@@ -166,14 +173,14 @@ export class CoinGeckoSwapPrice extends ISwapPrice {
             .div(price)
     }
 
-    async getToBtcSwapAmount(fromAmount: BN, fromToken: TokenAddress): Promise<BN> {
+    async getToBtcSwapAmount(fromAmount: BN, fromToken: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<BN> {
         let tokenAddress: string = fromToken.toString();
 
         const coin = this.COINS_MAP[tokenAddress];
 
         if(coin==null) throw new Error("Token not found");
 
-        const price = await this.getPrice(coin.coinId);
+        const price = preFetchedPrice || await this.getPrice(coin.coinId, abortSignal);
 
         return fromAmount
             .mul(price)

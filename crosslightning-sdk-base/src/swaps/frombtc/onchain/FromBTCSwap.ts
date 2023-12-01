@@ -176,22 +176,15 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
             throw new Error("Send window too low");
         }
 
+        let txResult;
         try {
-            await tryWithRetries(
-                () => this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce),
-                null,
-                (e) => e instanceof SignatureVerificationError,
-                abortSignal
-            );
+            txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.nonce, this.getTxoHash(), !noWaitForConfirmation, false, abortSignal);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 throw new Error("Request timed out!");
-            } else {
-                throw e;
             }
+            throw e;
         }
-
-        const txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.nonce, this.getTxoHash(), !noWaitForConfirmation, abortSignal);
 
         this.commitTxId = txResult;
         await this.save();
@@ -229,12 +222,9 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
             throw new Error("Send window too low");
         }
 
+        let txs: any[];
         try {
-            await tryWithRetries(
-                () => this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce),
-                null,
-                (e) => e instanceof SignatureVerificationError
-            );
+            txs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, this.getTxoHash());
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 throw new Error("Request timed out!");
@@ -243,7 +233,7 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
             }
         }
 
-        return await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, this.getTxoHash());
+        return txs;
     }
 
     /**

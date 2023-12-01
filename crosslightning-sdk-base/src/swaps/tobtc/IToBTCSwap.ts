@@ -141,26 +141,18 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
      *
      * @param noWaitForConfirmation     Do not wait for transaction confirmation
      * @param abortSignal               Abort signal
+     * @param skipChecks                Skip checks like making sure init signature is still valid and swap wasn't commited yet (this is handled on swap creation, if you commit right after quoting, you can skipChecks)
      */
-    async commit(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+    async commit(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
         if(this.state!==ToBTCSwapState.CREATED) {
             throw new Error("Must be in CREATED state!");
         }
 
         console.log(this);
 
-        // try {
-        //     await this.wrapper.contract.swapContract.isValidClaimInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce);
-        // } catch (e) {
-        //     console.error(e);
-        //     this.state = ToBTCSwapState.FAILED;
-        //     await this.save();
-        //     throw new Error("Expired, please retry");
-        // }
-
         let txResult;
         try {
-            txResult = await this.wrapper.contract.swapContract.initPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce, !noWaitForConfirmation, abortSignal);
+            txResult = await this.wrapper.contract.swapContract.initPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce, !noWaitForConfirmation, skipChecks, abortSignal);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 console.error(e);
@@ -184,20 +176,19 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
 
     /**
      * Commits the swap on-chain, locking the tokens in an HTLC
+     *
+     * @param skipChecks                Skip checks like making sure init signature is still valid and swap wasn't commited yet (this is handled on swap creation, if you commit right after quoting, you can skipChecks)
      */
-    async txsCommit(): Promise<any[]> {
+    async txsCommit(skipChecks?: boolean): Promise<any[]> {
         if(this.state!==ToBTCSwapState.CREATED) {
             throw new Error("Must be in CREATED state!");
         }
 
         console.log(this);
 
+        let result: any[];
         try {
-            await tryWithRetries(
-                () => this.wrapper.contract.swapContract.isValidClaimInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce),
-                null,
-                e => e instanceof SignatureVerificationError
-            );
+            result = await this.wrapper.contract.swapContract.txsInitPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce, skipChecks);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 console.error(e);
@@ -206,7 +197,7 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
             throw e;
         }
 
-        return await this.wrapper.contract.swapContract.txsInitPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+        return result;
     }
 
     /**

@@ -13,7 +13,9 @@ export * from "./errors/NetworkError";
 export * from "./intermediaries/Intermediary";
 export * from "./intermediaries/IntermediaryDiscovery";
 
+export * from "./prices/BinanceSwapPrice";
 export * from "./prices/CoinGeckoSwapPrice";
+export * from "./prices/PricesTypes";
 
 export * from "./storage/IWrapperStorage";
 export * from "./storage/LocalStorageManager";

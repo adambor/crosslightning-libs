@@ -185,18 +185,15 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
             throw new Error("Must be in PR_PAID state!");
         }
 
+        let txResult;
         try {
-            await tryWithRetries(
-                () => this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce),
-                null,
-                e => e instanceof SignatureVerificationError,
-                abortSignal
-            );
+            txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, !noWaitForConfirmation, false, abortSignal);
         } catch (e) {
-            throw new Error("Request timed out!")
+            if(e instanceof SignatureVerificationError) {
+                throw new Error("Request timed out!");
+            }
+            throw e;
         }
-
-        const txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, !noWaitForConfirmation, abortSignal);
 
         this.commitTxId = txResult;
         await this.save();
@@ -234,12 +231,9 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
             throw new Error("Must be in PR_PAID state!");
         }
 
+        let txs: any[];
         try {
-            await tryWithRetries(
-                () => this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce),
-                null,
-                e => e instanceof SignatureVerificationError
-            );
+            txs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, null);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 throw new Error("Request timed out!")
@@ -248,7 +242,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
             }
         }
 
-        return await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, null);
+        return txs;
     }
 
     /**
@@ -440,11 +434,17 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
             throw new Error("Must be in PR_PAID state!");
         }
 
+        let txResult;
         try {
-            await tryWithRetries(
-                () => this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce),
-                null,
-                (e) => e instanceof SignatureVerificationError,
+            txResult = await this.wrapper.contract.swapContract.initAndClaimWithSecret(
+                this.data,
+                this.timeout,
+                this.prefix,
+                this.signature,
+                this.nonce,
+                this.secret.toString("hex"),
+                true,
+                false,
                 abortSignal
             );
         } catch (e) {
@@ -455,21 +455,22 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
                 this.timeout = result.timeout;
                 this.signature = result.signature;
                 this.nonce = result.nonce;
+
+                txResult = await this.wrapper.contract.swapContract.initAndClaimWithSecret(
+                    this.data,
+                    this.timeout,
+                    this.prefix,
+                    this.signature,
+                    this.nonce,
+                    this.secret.toString("hex"),
+                    true,
+                    false,
+                    abortSignal
+                );
             } else {
                 throw e;
             }
         }
-
-        const txResult = await this.wrapper.contract.swapContract.initAndClaimWithSecret(
-            this.data,
-            this.timeout,
-            this.prefix,
-            this.signature,
-            this.nonce,
-            this.secret.toString("hex"),
-            true,
-            abortSignal
-        );
 
         this.commitTxId = txResult[0] || this.commitTxId;
         this.claimTxId = txResult[1] || this.claimTxId;
@@ -497,12 +498,9 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
             throw new Error("Must be in PR_PAID state!");
         }
 
+        let initTxs: any[];
         try {
-            await tryWithRetries(
-                () => this.wrapper.contract.swapContract.isValidInitAuthorization(this.data, this.timeout, this.prefix, this.signature, this.nonce),
-                null,
-                (e) => e instanceof SignatureVerificationError
-            );
+            initTxs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 const result = await this.wrapper.contract.getPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM);
@@ -511,12 +509,13 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
                 this.timeout = result.timeout;
                 this.signature = result.signature;
                 this.nonce = result.nonce;
+
+                initTxs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce);
             } else {
                 throw e;
             }
         }
 
-        const initTxs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce);
         const claimTxs = await this.wrapper.contract.swapContract.txsClaimWithSecret(this.data, this.secret.toString("hex"), true, true);
 
         return initTxs.concat(claimTxs);

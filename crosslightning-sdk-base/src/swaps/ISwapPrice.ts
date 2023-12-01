@@ -9,13 +9,13 @@ export abstract class ISwapPrice {
         this.maxAllowedFeeDifferencePPM = maxAllowedFeeDifferencePPM;
     }
 
-    async isValidAmountSend(amountSats: BN,satsBaseFee: BN, feePPM: BN, paidToken: BN, token: TokenAddress): Promise<boolean> {
+    async isValidAmountSend(amountSats: BN,satsBaseFee: BN, feePPM: BN, paidToken: BN, token: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<boolean> {
         if(this.shouldIgnore(token)) return true;
 
         const totalSats = amountSats.mul(new BN(1000000).add(feePPM)).div(new BN(1000000))
             .add(satsBaseFee);
 
-        const calculatedAmtInToken = await this.getFromBtcSwapAmount(totalSats, token);
+        const calculatedAmtInToken = await this.getFromBtcSwapAmount(totalSats, token, abortSignal, preFetchedPrice);
 
         console.log("Calculated amount in token: ", calculatedAmtInToken.toString(10));
 
@@ -30,13 +30,13 @@ export abstract class ISwapPrice {
         return true;
     }
 
-    async isValidAmountReceive(amountSats: BN,satsBaseFee: BN, feePPM: BN, receiveToken: BN, token: TokenAddress): Promise<boolean> {
+    async isValidAmountReceive(amountSats: BN,satsBaseFee: BN, feePPM: BN, receiveToken: BN, token: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<boolean> {
         if(this.shouldIgnore(token)) return true;
 
         const totalSats = amountSats.mul(new BN(1000000).sub(feePPM)).div(new BN(1000000))
             .sub(satsBaseFee);
 
-        const calculatedAmtInToken = await this.getFromBtcSwapAmount(totalSats, token);
+        const calculatedAmtInToken = await this.getFromBtcSwapAmount(totalSats, token, abortSignal, preFetchedPrice);
 
         console.log("Calculated amount in token: ", calculatedAmtInToken.toString(10));
 
@@ -51,13 +51,15 @@ export abstract class ISwapPrice {
         return true;
     }
 
+    preFetchPrice?(token: TokenAddress, abortSignal?: AbortSignal): Promise<BN>;
+
     /**
      * Returns amount of satoshis that are equivalent to {fromAmount} of {fromToken}
      *
      * @param fromAmount        Amount of the token
      * @param fromToken         Token
      */
-    abstract getToBtcSwapAmount(fromAmount:BN, fromToken: TokenAddress): Promise<BN>;
+    abstract getToBtcSwapAmount(fromAmount:BN, fromToken: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<BN>;
 
     /**
      * Returns amount of {toToken} that are equivalent to {fromAmount} satoshis
@@ -65,7 +67,7 @@ export abstract class ISwapPrice {
      * @param fromAmount        Amount of satoshis
      * @param toToken           Token
      */
-    abstract getFromBtcSwapAmount(fromAmount:BN, toToken: TokenAddress): Promise<BN>;
+    abstract getFromBtcSwapAmount(fromAmount:BN, toToken: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<BN>;
 
     abstract shouldIgnore(tokenAddress: TokenAddress): boolean;
 

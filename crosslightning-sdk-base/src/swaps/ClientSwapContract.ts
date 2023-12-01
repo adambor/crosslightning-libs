@@ -764,6 +764,8 @@ export class ClientSwapContract<T extends SwapData> {
 
         const abortController = new AbortController();
 
+        const pricePreFetchPromise = this.swapPrice.preFetchPrice!=null && requiredToken!=null ? this.swapPrice.preFetchPrice(requiredToken, abortController.signal) : null;
+
         let jsonBody;
         try {
             const [_, _jsonBody] = await Promise.all([
@@ -807,7 +809,6 @@ export class ClientSwapContract<T extends SwapData> {
             abortController.abort();
             throw e;
         }
-
 
         const routingFeeSats = new BN(jsonBody.data.routingFeeSats);
 
@@ -868,7 +869,8 @@ export class ClientSwapContract<T extends SwapData> {
                         throw new IntermediaryError("Invalid data returned - token");
                     }
                     if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                        const isValidSendAmount = await this.swapPrice.isValidAmountSend(sats, requiredBaseFee.add(routingFeeSats), requiredFeePPM, total, data.getToken());
+                        const preFetchedPrice: BN = pricePreFetchPromise==null ? null : await pricePreFetchPromise;
+                        const isValidSendAmount = await this.swapPrice.isValidAmountSend(sats, requiredBaseFee.add(routingFeeSats), requiredFeePPM, total, data.getToken(), null, preFetchedPrice);
                         if(!isValidSendAmount) {
                             throw new IntermediaryError("Fee too high");
                         }
