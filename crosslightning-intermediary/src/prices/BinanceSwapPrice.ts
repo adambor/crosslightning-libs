@@ -2,7 +2,6 @@ import * as BN from "bn.js";
 import fetch, {Response} from "cross-fetch";
 import {TokenAddress} from "crosslightning-base";
 import {ISwapPrice} from "../swaps/ISwapPrice";
-import {fetchWithTimeout, tryWithRetries} from "../../../crosslightning-sdk-base/src/utils/RetryUtils";
 
 const CACHE_DURATION = 15000;
 
@@ -127,7 +126,7 @@ export class BinanceSwapPrice implements ISwapPrice {
 
         const cachedValue = this.cache[pair];
         if(cachedValue==null || cachedValue.expiry<Date.now()) {
-            const response: Response = await fetchWithTimeout(this.url+"/ticker/price?symbol="+pair, {
+            const response: Response = await fetch(this.url+"/ticker/price?symbol="+pair, {
                 method: "GET"
             });
 
