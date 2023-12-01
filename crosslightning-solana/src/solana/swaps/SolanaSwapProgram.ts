@@ -67,6 +67,8 @@ const TX_SLOT_VALIDITY = 151;
 const SLOT_CACHE_SLOTS = 4;
 const SLOT_CACHE_TIME = SLOT_CACHE_SLOTS*SLOT_TIME;
 
+const PREFETCHED_DATA_VALIDITY = 5000;
+
 export type SolanaRetryPolicy = {
     maxRetries?: number,
     delay?: number,
@@ -228,6 +230,16 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         )[0];
 
         this.retryPolicy = retryPolicy;
+    }
+
+    async preFetchBlockDataForSignatures(): Promise<{
+        block: ParsedAccountsModeBlockResponse,
+        slot: number,
+        timestamp: number
+    }> {
+        const latestParsedBlock: any = await this.findLatestParsedBlock("finalized");
+        latestParsedBlock.timestamp = Date.now();
+        return latestParsedBlock;
     }
 
     getHashForOnchain(outputScript: Buffer, amount: BN, nonce: BN): Buffer {
@@ -460,15 +472,22 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     }
 
-    async getClaimInitSignature(swapData: SolanaSwapData, nonce: ISwapNonce, authorizationTimeout: number): Promise<{ nonce: number; prefix: string; timeout: string; signature: string }> {
+    async getClaimInitSignature(swapData: SolanaSwapData, nonce: ISwapNonce, authorizationTimeout: number, preFetchedBlockData?: {
+        block: ParsedAccountsModeBlockResponse,
+        slot: number,
+        timestamp: number
+    }): Promise<{ nonce: number; prefix: string; timeout: string; signature: string }> {
         if(this.signer.signer==null) throw new Error("Unsupported");
+
+        if(preFetchedBlockData!=null && Date.now()-preFetchedBlockData.timestamp>PREFETCHED_DATA_VALIDITY) preFetchedBlockData = null;
+
         const authPrefix = "claim_initialize";
         const authTimeout = Math.floor(Date.now()/1000)+authorizationTimeout;
         const useNonce = nonce.getClaimNonce(swapData.token.toBase58())+1;
 
         const txToSign = await this.getClaimInitMessage(swapData, useNonce, authPrefix, authTimeout.toString());
 
-        const {block: latestBlock, slot: latestSlot} = await this.findLatestParsedBlock("finalized");
+        const {block: latestBlock, slot: latestSlot} = preFetchedBlockData || await this.findLatestParsedBlock("finalized");
 
         txToSign.recentBlockhash = latestBlock.blockhash;
         txToSign.sign(this.signer.signer);
@@ -601,15 +620,22 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     }
 
-    async getInitSignature(swapData: SolanaSwapData, nonce: ISwapNonce, authorizationTimeout: number): Promise<{ nonce: number; prefix: string; timeout: string; signature: string }> {
+    async getInitSignature(swapData: SolanaSwapData, nonce: ISwapNonce, authorizationTimeout: number, preFetchedBlockData?: {
+        block: ParsedAccountsModeBlockResponse,
+        slot: number,
+        timestamp: number
+    }): Promise<{ nonce: number; prefix: string; timeout: string; signature: string }> {
         if(this.signer.signer==null) throw new Error("Unsupported");
+
+        if(preFetchedBlockData!=null && Date.now()-preFetchedBlockData.timestamp>PREFETCHED_DATA_VALIDITY) preFetchedBlockData = null;
+
         const authPrefix = "initialize";
         const authTimeout = Math.floor(Date.now()/1000)+authorizationTimeout;
         const useNonce = nonce.getNonce(swapData.token.toBase58())+1;
 
         const txToSign = await this.getInitMessage(swapData, useNonce, authPrefix, authTimeout.toString(10));
 
-        const {block: latestBlock, slot: latestSlot} = await this.findLatestParsedBlock("finalized");
+        const {block: latestBlock, slot: latestSlot} = preFetchedBlockData || await this.findLatestParsedBlock("finalized");
         txToSign.recentBlockhash = latestBlock.blockhash;
         txToSign.sign(this.signer.signer);
 
