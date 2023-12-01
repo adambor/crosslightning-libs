@@ -1,6 +1,7 @@
 export * from "./info/InfoHandler";
 
 export * from "./prices/CoinGeckoSwapPrice";
+export * from "./prices/BinanceSwapPrice";
 
 export * from "./storagemanager/StorageManager";
 

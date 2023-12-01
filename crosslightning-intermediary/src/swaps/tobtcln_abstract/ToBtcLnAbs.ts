@@ -607,6 +607,11 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 }
             }
 
+            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
+            const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken) : null;
+            const anyContract: any = this.swapContract;
+            const signDataPrefetchPromise: Promise<any> = anyContract.preFetchBlockDataForSignatures!=null ? anyContract.preFetchBlockDataForSignatures() : null;
+
             let obj;
             if(!is_snowflake) try {
                 obj = await lncli.probeForRoute(probeReq);
@@ -670,11 +675,11 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             const swapFee = amountBD.mul(this.config.feePPM).div(new BN(1000000)).add(this.config.baseFee);
 
-            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
+            const prefetchedPrice = pricePrefetchPromise!=null ? await pricePrefetchPromise : null;
 
-            const routingFeeInToken = await this.swapPricing.getFromBtcSwapAmount(actualRoutingFee, useToken, true);
-            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true);
-            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(amountBD, useToken, true);
+            const routingFeeInToken = await this.swapPricing.getFromBtcSwapAmount(actualRoutingFee, useToken, true, prefetchedPrice);
+            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, prefetchedPrice);
+            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(amountBD, useToken, true, prefetchedPrice);
 
             const total = amountInToken.add(routingFeeInToken).add(swapFeeInToken);
 
@@ -697,8 +702,13 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             );
 
             metadata.times.swapCreated = Date.now();
-
-            const sigData = await this.swapContract.getClaimInitSignature(payObject, this.nonce, this.config.authorizationTimeout);
+            
+            const sigData = await (this.swapContract as any).getClaimInitSignature(
+                payObject,
+                this.nonce,
+                this.config.authorizationTimeout,
+                signDataPrefetchPromise!=null ? await signDataPrefetchPromise : null
+            );
 
             metadata.times.swapSigned = Date.now();
 

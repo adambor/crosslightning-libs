@@ -2,22 +2,24 @@ import * as BN from "bn.js";
 import fetch, {Response} from "cross-fetch";
 import {TokenAddress} from "crosslightning-base";
 import {ISwapPrice} from "../swaps/ISwapPrice";
+import {fetchWithTimeout, tryWithRetries} from "../../../crosslightning-sdk-base/src/utils/RetryUtils";
 
 const CACHE_DURATION = 15000;
 
-export class CoinGeckoSwapPrice implements ISwapPrice {
+export class BinanceSwapPrice implements ISwapPrice {
 
     COINS_MAP: {
         [address: string]: {
-            coinId: string,
-            decimals: number
+            pair: string,
+            decimals: number,
+            invert: boolean
         }
     };
 
     url: string;
     cache: {
-        [coinId: string]: {
-            price: BN,
+        [pair: string]: {
+            price: number,
             expiry: number
         }
     } = {};
@@ -31,58 +33,68 @@ export class CoinGeckoSwapPrice implements ISwapPrice {
      */
     static generateCoinMap(usdcAddress?: string, usdtAddress?: string, wbtcAddress?: string): {
         [address: string]: {
-            coinId: string,
-            decimals: number
+            pair: string,
+            decimals: number,
+            invert: boolean
         }
     } {
         return {
             [usdcAddress]: {
-                coinId: "usd-coin",
-                decimals: 6
+                pair: "BTCUSDC",
+                decimals: 6,
+                invert: true
             },
             [usdtAddress]: {
-                coinId: "tether",
-                decimals: 6
+                pair: "BTCUSDT",
+                decimals: 6,
+                invert: true
             },
             [wbtcAddress]: {
-                coinId: "wrapped-bitcoin",
-                decimals: 8
+                pair: "WBTCBTC",
+                decimals: 8,
+                invert: false
             }
         };
     }
 
     constructor(url: string, coinmap: {
         [address: string]: {
-            coinId: string,
-            decimals: number
+            pair: string,
+            decimals: number,
+            invert: boolean
         }
     });
     constructor(url: string, usdcAddress?: string, usdtAddress?: string, solAddress?: string, wbtcAddress?: string)
 
     constructor(url: string, usdcAddressOrCoinmap?: string | {
         [address: string]: {
-            coinId: string,
-            decimals: number
+            pair: string,
+            decimals: number,
+            invert: boolean
         }
     }, usdtAddress?: string, solAddress?: string, wbtcAddress?: string) {
-        this.url = url || "https://api.coingecko.com/api/v3";
+        this.url = url || "https://api.binance.com/api/v3";
         if(usdcAddressOrCoinmap==null || typeof(usdcAddressOrCoinmap)==="string") {
             this.COINS_MAP = {
                 [usdcAddressOrCoinmap as string]: {
-                    coinId: "usd-coin",
-                    decimals: 6
+                    pair: "BTCUSDC",
+                    decimals: 6,
+                    invert: true
                 },
                 [usdtAddress]: {
-                    coinId: "tether",
-                    decimals: 6
+                    pair: "BTCUSDT",
+                    decimals: 6,
+                    invert: true
                 },
                 [solAddress]: {
-                    coinId: "solana",
-                    decimals: 9
+                    pair: "SOLBTC",
+                    decimals: 9,
+                    invert: false
                 },
                 [wbtcAddress]: {
-                    coinId: "wrapped-bitcoin",
-                    decimals: 8
+                    pair: "WBTCBTC",
+                    decimals: 8,
+                    invert: false
                 }
             };
         } else {
@@ -97,51 +109,54 @@ export class CoinGeckoSwapPrice implements ISwapPrice {
 
         if(coin==null) throw new Error("Token not found");
 
-        return this.getPrice(coin.coinId);
+        return this.getPrice(coin.pair, coin.invert);
     }
 
     /**
      * Returns coin price in mSat
      *
-     * @param coinId
+     * @param pair
+     * @param invert
      */
-    async getPrice(coinId: string): Promise<BN> {
+    async getPrice(pair: string, invert: boolean): Promise<BN> {
 
-        if(coinId.startsWith("$fixed-")) {
-            const amt: number = parseFloat(coinId.substring(7));
+        if(pair.startsWith("$fixed-")) {
+            const amt: number = parseFloat(pair.substring(7));
             return new BN(Math.floor(amt*1000));
         }
 
-        const cachedValue = this.cache[coinId];
-        if(cachedValue!=null && cachedValue.expiry>Date.now()) {
-            return cachedValue.price;
-        }
+        const cachedValue = this.cache[pair];
+        if(cachedValue==null || cachedValue.expiry<Date.now()) {
+            const response: Response = await fetchWithTimeout(this.url+"/ticker/price?symbol="+pair, {
+                method: "GET"
+            });
 
-        const response: Response = await fetch(this.url+"/simple/price?ids="+coinId+"&vs_currencies=sats&precision=3", {
-            method: "GET",
-            headers: {'Content-Type': 'application/json'}
-        });
-
-        if(response.status!==200) {
-            let resp: string;
-            try {
-                resp = await response.text();
-            } catch (e) {
-                throw new Error(response.statusText);
+            if(response.status!==200) {
+                let resp: string;
+                try {
+                    resp = await response.text();
+                } catch (e) {
+                    throw new Error(response.statusText);
+                }
+                throw new Error(resp);
             }
-            throw new Error(resp);
+
+            let jsonBody: any = await response.json();
+
+            const price: number = parseFloat(jsonBody.price);
+
+            this.cache[pair] = {
+                price,
+                expiry: Date.now()+CACHE_DURATION
+            };
         }
 
-        let jsonBody: any = await response.json();
-
-        const amt: number = jsonBody[coinId].sats;
-
-        const result = new BN(amt*1000);
-
-        this.cache[coinId] = {
-            price: result,
-            expiry: Date.now()+CACHE_DURATION
-        };
+        let result: BN;
+        if(invert) {
+            result = new BN(Math.floor((1/this.cache[pair].price)*100000000000));
+        } else {
+            result = new BN(Math.floor(this.cache[pair].price*100000000000));
+        }
 
         return result;
     }
@@ -153,7 +168,7 @@ export class CoinGeckoSwapPrice implements ISwapPrice {
 
         if(coin==null) throw new Error("Token not found");
 
-        const price = preFetchedPrice || await this.getPrice(coin.coinId);
+        const price = preFetchedPrice || await this.getPrice(coin.pair, coin.invert);
 
         return fromAmount
             .mul(new BN(10).pow(new BN(coin.decimals)))
@@ -169,7 +184,7 @@ export class CoinGeckoSwapPrice implements ISwapPrice {
 
         if(coin==null) throw new Error("Token not found");
 
-        const price = preFetchedPrice || await this.getPrice(coin.coinId);
+        const price = preFetchedPrice || await this.getPrice(coin.pair, coin.invert);
 
         return fromAmount
             .mul(price)
