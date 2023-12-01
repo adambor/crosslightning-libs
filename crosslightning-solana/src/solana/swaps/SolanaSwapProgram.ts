@@ -1702,30 +1702,29 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     }
 
-    async initPayIn(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        let result = await this.txsInitPayIn(swapData,timeout,prefix,signature,nonce);
+    async initPayIn(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        let result = await this.txsInitPayIn(swapData,timeout,prefix,signature,nonce,skipChecks);
 
         const signatures = await this.sendAndConfirm(result, waitForConfirmation, abortSignal);
 
         return signatures[signatures.length-1];
     }
 
-    async txsInitPayIn(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<SolTx[]> {
+    async txsInitPayIn(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, skipChecks?: boolean): Promise<SolTx[]> {
 
-        const [_, payStatus] = await Promise.all([
-            tryWithRetries(
-                () => this.isValidClaimInitAuthorization(swapData, timeout, prefix, signature, nonce),
-                this.retryPolicy,
-                (e) => e instanceof SignatureVerificationError
-            ),
-            tryWithRetries(() => this.getPaymentHashStatus(swapData.paymentHash), this.retryPolicy)
-        ]);
+        if(!skipChecks) {
+            const [_, payStatus] = await Promise.all([
+                tryWithRetries(
+                    () => this.isValidClaimInitAuthorization(swapData, timeout, prefix, signature, nonce),
+                    this.retryPolicy,
+                    (e) => e instanceof SignatureVerificationError
+                ),
+                tryWithRetries(() => this.getPaymentHashStatus(swapData.paymentHash), this.retryPolicy)
+            ]);
 
-        //await this.isValidClaimInitAuthorization(swapData, timeout, prefix, signature, nonce);
-        //const payStatus = await this.getPaymentHashStatus(swapData.paymentHash);
-
-        if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
-            throw new SwapDataVerificationError("Invoice already being paid for or paid");
+            if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
+                throw new SwapDataVerificationError("Invoice already being paid for or paid");
+            }
         }
 
         const ata = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
@@ -1827,21 +1826,23 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     }
 
-    async init(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        let result = await this.txsInit(swapData,timeout,prefix,signature,nonce,txoHash);
+    async init(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        let result = await this.txsInit(swapData,timeout,prefix,signature,nonce,txoHash,skipChecks);
 
         const [txSignature] = await this.sendAndConfirm(result, waitForConfirmation, abortSignal);
 
         return txSignature;
     }
 
-    async txsInit(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer): Promise<SolTx[]> {
+    async txsInit(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer, skipChecks?: boolean): Promise<SolTx[]> {
 
-        await tryWithRetries(
-            () => this.isValidInitAuthorization(swapData, timeout, prefix, signature, nonce),
-            this.retryPolicy,
-            (e) => e instanceof SignatureVerificationError
-        );
+        if(!skipChecks) {
+            await tryWithRetries(
+                () => this.isValidInitAuthorization(swapData, timeout, prefix, signature, nonce),
+                this.retryPolicy,
+                (e) => e instanceof SignatureVerificationError
+            );
+        }
 
         const paymentHash = Buffer.from(swapData.paymentHash, "hex");
 
@@ -1893,9 +1894,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     }
 
-    async initAndClaimWithSecret(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, secret: string, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string[]> {
+    async initAndClaimWithSecret(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, secret: string, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal): Promise<string[]> {
 
-        const [txCommit] = await this.txsInit(swapData, timeout, prefix, signature, nonce);
+        const [txCommit] = await this.txsInit(swapData, timeout, prefix, signature, nonce, null, skipChecks);
         const [txClaim] = await this.txsClaimWithSecret(swapData, secret, true, true);
 
         return await this.sendAndConfirm([txCommit, txClaim], waitForConfirmation, abortSignal);
