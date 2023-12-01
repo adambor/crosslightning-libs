@@ -612,6 +612,9 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const anyContract: any = this.swapContract;
             const signDataPrefetchPromise: Promise<any> = anyContract.preFetchBlockDataForSignatures!=null ? anyContract.preFetchBlockDataForSignatures() : null;
 
+            if(pricePrefetchPromise!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetching swap price!");
+            if(signDataPrefetchPromise!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetching signature data!");
+
             let obj;
             if(!is_snowflake) try {
                 obj = await lncli.probeForRoute(probeReq);
@@ -676,6 +679,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const swapFee = amountBD.mul(this.config.feePPM).div(new BN(1000000)).add(this.config.baseFee);
 
             const prefetchedPrice = pricePrefetchPromise!=null ? await pricePrefetchPromise : null;
+            if(prefetchedPrice!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetched price: ", prefetchedPrice.toString(10));
 
             const routingFeeInToken = await this.swapPricing.getFromBtcSwapAmount(actualRoutingFee, useToken, true, prefetchedPrice);
             const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, prefetchedPrice);
@@ -702,12 +706,16 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             );
 
             metadata.times.swapCreated = Date.now();
-            
+
+            const prefetchedSignData = signDataPrefetchPromise!=null ? await signDataPrefetchPromise : null;
+
+            if(prefetchedSignData!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetched signature data: ", prefetchedSignData);
+
             const sigData = await (this.swapContract as any).getClaimInitSignature(
                 payObject,
                 this.nonce,
                 this.config.authorizationTimeout,
-                signDataPrefetchPromise!=null ? await signDataPrefetchPromise : null
+                prefetchedSignData
             );
 
             metadata.times.swapSigned = Date.now();
