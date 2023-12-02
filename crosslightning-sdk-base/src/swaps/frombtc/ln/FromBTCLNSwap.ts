@@ -179,15 +179,16 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
      *
      * @param noWaitForConfirmation     Do not wait for transaction confirmation (careful! be sure that transaction confirms before calling claim())
      * @param abortSignal               Abort signal
+     * @param skipChecks                Skip checks like making sure init signature is still valid and swap wasn't commited yet (this is handled on swap creation, if you commit right after quoting, you can skipChecks)
      */
-    async commit(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+    async commit(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
         if(this.state!==FromBTCLNSwapState.PR_PAID) {
             throw new Error("Must be in PR_PAID state!");
         }
 
         let txResult;
         try {
-            txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, !noWaitForConfirmation, false, abortSignal);
+            txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, !noWaitForConfirmation, skipChecks, abortSignal);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 throw new Error("Request timed out!");
@@ -226,14 +227,14 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
      * Commits the swap on-chain, locking the tokens from the intermediary in an HTLC
      * Important: Make sure this transaction is confirmed and only after it is call claim()
      */
-    async txsCommit(): Promise<any[]> {
+    async txsCommit(skipChecks?: boolean): Promise<any[]> {
         if(this.state!==FromBTCLNSwapState.PR_PAID) {
             throw new Error("Must be in PR_PAID state!");
         }
 
         let txs: any[];
         try {
-            txs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, null);
+            txs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, skipChecks);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 throw new Error("Request timed out!")
@@ -420,8 +421,9 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
      * If swap is already commited, it just signs and executes the claim transaction
      *
      * @param abortSignal       Abort signal
+     * @param skipChecks                Skip checks like making sure init signature is still valid and swap wasn't commited yet (this is handled on swap creation, if you commit right after quoting, you can skipChecks)
      */
-    async commitAndClaim(abortSignal?: AbortSignal): Promise<string[]> {
+    async commitAndClaim(abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string[]> {
 
         if(this.state===FromBTCLNSwapState.CLAIM_COMMITED) {
             return [
@@ -444,7 +446,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
                 this.nonce,
                 this.secret.toString("hex"),
                 true,
-                false,
+                skipChecks,
                 abortSignal
             );
         } catch (e) {
@@ -464,7 +466,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
                     this.nonce,
                     this.secret.toString("hex"),
                     true,
-                    false,
+                    skipChecks,
                     abortSignal
                 );
             } else {
@@ -488,7 +490,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
      * Signs both, commit and claim transaction at once using signAllTransactions methods, wait for commit to confirm TX and then sends claim TX
      * If swap is already commited, it just signs and executes the claim transaction
      */
-    async txsCommitAndClaim(): Promise<any[]> {
+    async txsCommitAndClaim(skipChecks?: boolean): Promise<any[]> {
 
         if(this.state===FromBTCLNSwapState.CLAIM_COMMITED) {
             return await this.txsClaim();
@@ -500,7 +502,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
 
         let initTxs: any[];
         try {
-            initTxs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+            initTxs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, skipChecks);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 const result = await this.wrapper.contract.getPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM);
@@ -510,7 +512,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
                 this.signature = result.signature;
                 this.nonce = result.nonce;
 
-                initTxs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce);
+                initTxs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, skipChecks);
             } else {
                 throw e;
             }
