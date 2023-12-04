@@ -54,11 +54,15 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
     private readonly directory: string;
     private readonly signer: AnchorProvider;
     private readonly solanaSwapProgram: SolanaSwapProgram;
+    private readonly logFetchInterval: number;
+    private readonly logFetchLimit: number;
 
-    constructor(directory: string, signer: AnchorProvider, solanaSwapProgram: SolanaSwapProgram) {
+    constructor(directory: string, signer: AnchorProvider, solanaSwapProgram: SolanaSwapProgram, logFetchInterval?: number, logFetchLimit?: number) {
         this.directory = directory;
         this.signer = signer;
         this.solanaSwapProgram = solanaSwapProgram;
+        this.logFetchInterval = logFetchInterval || LOG_FETCH_INTERVAL;
+        this.logFetchLimit = logFetchLimit || LOG_FETCH_LIMIT;
     }
 
     private async getLastSignature() {
@@ -226,17 +230,17 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
         }
 
         let fetched = null;
-        while(fetched==null || fetched.length===LOG_FETCH_LIMIT) {
+        while(fetched==null || fetched.length===this.logFetchLimit) {
             if(signatures==null) {
                 fetched = await this.signer.connection.getSignaturesForAddress(this.solanaSwapProgram.program.programId, {
                     until: lastSignature,
-                    limit: LOG_FETCH_LIMIT
+                    limit: this.logFetchLimit
                 }, "confirmed");
             } else {
                 fetched = await this.signer.connection.getSignaturesForAddress(this.solanaSwapProgram.program.programId, {
                     before: signatures[signatures.length-1].signature,
                     until: lastSignature,
-                    limit: LOG_FETCH_LIMIT
+                    limit: this.logFetchLimit
                 }, "confirmed");
             }
             if(signatures==null) {
@@ -323,7 +327,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                 console.error("Failed to fetch Sol log");
                 console.error(e);
             });
-            setTimeout(func, LOG_FETCH_INTERVAL);
+            setTimeout(func, this.logFetchInterval);
         };
         await func();
 
