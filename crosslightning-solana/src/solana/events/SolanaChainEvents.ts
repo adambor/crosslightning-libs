@@ -13,6 +13,8 @@ const BLOCKHEIGHT_FILENAME = "/blockheight.txt";
 const LOG_FETCH_INTERVAL = 5*1000;
 const LOG_FETCH_LIMIT = 500;
 
+const WS_TX_FETCH_RETRY_TIMEOUT = 500;
+
 const nameMappedInstructions = {};
 for(let ix of programIdl.instructions) {
     nameMappedInstructions[ix.name] = ix;
@@ -56,13 +58,22 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
     private readonly solanaSwapProgram: SolanaSwapProgram;
     private readonly logFetchInterval: number;
     private readonly logFetchLimit: number;
+    private readonly wsTxFetchRetryTimeout: number;
 
-    constructor(directory: string, signer: AnchorProvider, solanaSwapProgram: SolanaSwapProgram, logFetchInterval?: number, logFetchLimit?: number) {
+    constructor(
+        directory: string,
+        signer: AnchorProvider,
+        solanaSwapProgram: SolanaSwapProgram,
+        logFetchInterval?: number,
+        logFetchLimit?: number,
+        wsTxFetchRetryTimeout?: number
+    ) {
         this.directory = directory;
         this.signer = signer;
         this.solanaSwapProgram = solanaSwapProgram;
         this.logFetchInterval = logFetchInterval || LOG_FETCH_INTERVAL;
         this.logFetchLimit = logFetchLimit || LOG_FETCH_LIMIT;
+        this.wsTxFetchRetryTimeout = wsTxFetchRetryTimeout || WS_TX_FETCH_RETRY_TIMEOUT;
     }
 
     private async getLastSignature() {
@@ -131,13 +142,13 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                     ix.accounts.claimer, //32 bytes
                     ix.accounts.mint,    //32 bytes
                     ix.data.initializerAmount, //8 bytes
-                    paymentHash.toString("hex"),
+                    paymentHash.toString("hex"), //32 bytes
                     ix.data.expiry, //8 bytes
                     ix.data.escrowNonce, //8 bytes
                     ix.data.confirmations, //2 bytes
                     ix.data.payOut, //1 byte
                     ix.data.kind, //1 byte
-                    payIn,
+                    payIn, //1 byte
                     ix.accounts.claimerTokenAccount, //32 bytes
                     securityDeposit,
                     claimerBounty,
@@ -162,8 +173,47 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
 
     private eventListeners: number[] = [];
     private signaturesProcessing: {
-        [signature: string]: Promise<boolean>
+        [signature: string]: {
+            promise: Promise<boolean>,
+            timeout: NodeJS.Timeout
+        }
     } = {};
+
+    private async fetchTxAndProcessEvent(signature: string): Promise<boolean> {
+        try {
+            // const result = await this.signer.connection.confirmTransaction(signature);
+            // if(result.value.err!=null) {
+            //     return true;
+            // }
+            const transaction = await this.signer.connection.getTransaction(signature, {
+                commitment: "confirmed"
+            });
+            if(transaction==null) return false;
+            if(transaction.meta.err==null) {
+                //console.log("Process tx: ", transaction.transaction);
+                //console.log("Decoded ix: ", decodeInstructions(transaction.transaction.message));
+                const instructions = this.decodeInstructions(transaction.transaction.message);
+                const parsedEvents = this.solanaSwapProgram.eventParser.parseLogs(transaction.meta.logMessages);
+
+                const events = [];
+                for(let event of parsedEvents) {
+                    events.push(event);
+                }
+
+                console.log("Instructions: ", instructions);
+                console.log("Events: ", events);
+
+                await this.processEvent({
+                    events,
+                    instructions
+                });
+            }
+        } catch (e) {
+            console.error(e);
+            return false;
+        }
+        return true;
+    }
 
     private setupWebsocket() {
         const eventCallback = (event, slotNumber, signature) => {
@@ -171,41 +221,28 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
 
             console.log("[Solana Events WebSocket] Process signature: ", signature);
 
-            this.signaturesProcessing[signature] = (async () => {
-                try {
-                    // const result = await this.signer.connection.confirmTransaction(signature);
-                    // if(result.value.err!=null) {
-                    //     return true;
-                    // }
-                    const transaction = await this.signer.connection.getTransaction(signature, {
-                        commitment: "confirmed"
-                    });
-                    if(transaction==null) return false;
-                    if(transaction.meta.err==null) {
-                        //console.log("Process tx: ", transaction.transaction);
-                        //console.log("Decoded ix: ", decodeInstructions(transaction.transaction.message));
-                        const instructions = this.decodeInstructions(transaction.transaction.message);
-                        const parsedEvents = this.solanaSwapProgram.eventParser.parseLogs(transaction.meta.logMessages);
+            const obj: {
+                promise: Promise<boolean>,
+                timeout: NodeJS.Timeout
+            } = {
+                promise: null,
+                timeout: null
+            };
 
-                        const events = [];
-                        for(let event of parsedEvents) {
-                            events.push(event);
-                        }
-
-                        console.log("Instructions: ", instructions);
-                        console.log("Events: ", events);
-
-                        await this.processEvent({
-                            events,
-                            instructions
-                        });
-                    }
-                } catch (e) {
-                    console.error(e);
-                    return false;
+            obj.promise = this.fetchTxAndProcessEvent(signature).then(result => {
+                if(!result && this.wsTxFetchRetryTimeout!==0) {
+                    obj.promise = null;
+                    obj.timeout = setTimeout(() => {
+                        console.log("[Solana Events WebSocket] Tx not found, retry in "+this.wsTxFetchRetryTimeout+"ms: ", signature);
+                        obj.timeout = null;
+                        obj.promise = this.fetchTxAndProcessEvent(signature);
+                    }, this.wsTxFetchRetryTimeout);
                 }
-                return true;
-            })();
+                return result;
+            });
+
+            this.signaturesProcessing[signature] = obj;
+
         };
 
         this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("InitializeEvent", eventCallback));
@@ -256,55 +293,31 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
             for(let i=signatures.length-1;i>=0;i--) {
                 const txSignature = signatures[i].signature;
 
-                const signatureHandlerPromise: Promise<boolean> = this.signaturesProcessing[txSignature];
-                if(signatureHandlerPromise!=null) {
-                    if(await signatureHandlerPromise) {
-                        lastSuccessfulSignature = txSignature;
-                        continue;
+                const signatureHandlerObj: {
+                    promise: Promise<boolean>,
+                    timeout: NodeJS.Timeout
+                } = this.signaturesProcessing[txSignature];
+                if(signatureHandlerObj!=null) {
+                    if(signatureHandlerObj.promise!=null) {
+                        if(await signatureHandlerObj.promise) {
+                            lastSuccessfulSignature = txSignature;
+                            delete this.signaturesProcessing[txSignature];
+                            continue;
+                        }
+                    }
+                    if(signatureHandlerObj.timeout!=null) {
+                        clearTimeout(signatureHandlerObj.timeout);
                     }
                     delete this.signaturesProcessing[txSignature];
                 }
 
                 console.log("[Solana Events POLL] Process signature: ", txSignature);
 
-                const processPromise: Promise<boolean> = (async () => {
-                    try {
-                        // const result = await this.signer.connection.confirmTransaction(signatures[i].signature);
-                        // if(result.value.err!=null) {
-                        //     return true;
-                        // }
-                        const transaction = await this.signer.connection.getTransaction(signatures[i].signature, {
-                            commitment: "confirmed"
-                        });
-                        if(transaction==null) return false;
-                        if(transaction.meta.err==null) {
-                            //console.log("Process tx: ", transaction.transaction);
-                            //console.log("Decoded ix: ", decodeInstructions(transaction.transaction.message));
-                            const instructions = this.decodeInstructions(transaction.transaction.message);
-                            const parsedEvents = this.solanaSwapProgram.eventParser.parseLogs(transaction.meta.logMessages);
-
-                            const events = [];
-                            for(let event of parsedEvents) {
-                                events.push(event);
-                            }
-
-                            console.log("Instructions: ", instructions);
-                            // console.log("Events: ", events);
-
-                            await this.processEvent({
-                                events,
-                                instructions
-                            });
-                        }
-
-                        lastSuccessfulSignature = txSignature;
-                    } catch (e) {
-                        console.error(e);
-                        return false;
-                    }
-                    return true;
-                })();
-                this.signaturesProcessing[txSignature] = processPromise;
+                const processPromise: Promise<boolean> = this.fetchTxAndProcessEvent(signatures[i].signature);
+                this.signaturesProcessing[txSignature] = {
+                    promise: processPromise,
+                    timeout: null
+                };
                 await processPromise;
             }
         } catch (e) {
