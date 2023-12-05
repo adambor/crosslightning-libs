@@ -60,7 +60,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
         const result = await this.contract.receiveOnchain(amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, null, null, exactOut);
 
-        const swap = new FromBTCSwap(this, result.address, result.amount, url, result.data, result.swapFee, result.prefix, result.timeout, result.signature, result.nonce, result.expiry);
+        const swap = new FromBTCSwap(this, result.address, result.amount, url, result.data, result.swapFee, result.prefix, result.timeout, result.signature, result.nonce, result.expiry, result.pricingInfo);
 
         await swap.save();
         this.swapData[result.data.getHash()] = swap;

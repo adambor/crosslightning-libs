@@ -13,6 +13,7 @@ import {findlnurl, getParams, LNURLPayParams, LNURLPaySuccessAction, LNURLWithdr
 import {RequestError} from "../errors/RequestError";
 import {AbortError} from "../errors/AbortError";
 import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
+import {PriceInfoType} from "./ISwap";
 
 export class PaymentAuthError extends Error {
 
@@ -268,7 +269,8 @@ export class ClientSwapContract<T extends SwapData> {
         timeout: string,
         signature: string,
         nonce: number,
-        expiry: number
+        expiry: number,
+        pricingInfo: PriceInfoType
     }> {
         const firstPart = new BN(Math.floor((Date.now()/1000)) - 700000000);
 
@@ -360,6 +362,8 @@ export class ClientSwapContract<T extends SwapData> {
         const data: T = new this.swapDataDeserializer(jsonBody.data.data);
         this.swapContract.setUsAsOfferer(data);
 
+        let pricingInfo: PriceInfoType;
+
         if(this.WBTC_ADDRESS!=null) {
             if(!total.eq(amount.add(totalFee))){
                 throw new IntermediaryError("Invalid total returned");
@@ -373,9 +377,10 @@ export class ClientSwapContract<T extends SwapData> {
             }
             if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
                 const isValidSendAmount = await this.swapPrice.isValidAmountSend(amount, requiredBaseFee, requiredFeePPM, total.sub(networkFee), data.getToken());
-                if(!isValidSendAmount) {
+                if(!isValidSendAmount.isValid) {
                     throw new IntermediaryError("Fee too high");
                 }
+                pricingInfo = isValidSendAmount;
             }
         }
 
@@ -427,7 +432,9 @@ export class ClientSwapContract<T extends SwapData> {
             signature: jsonBody.data.signature,
             nonce: jsonBody.data.nonce,
 
-            expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce))
+            expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)),
+
+            pricingInfo
         };
     }
 
@@ -609,7 +616,9 @@ export class ClientSwapContract<T extends SwapData> {
         invoice: string,
         successAction: LNURLPaySuccessAction,
 
-        expiry: number
+        expiry: number,
+
+        pricingInfo: PriceInfoType
     }> {
         let res: any = await this.getLNURL(lnurl);
         if(res==null) {
@@ -751,7 +760,9 @@ export class ClientSwapContract<T extends SwapData> {
         signature: string,
         nonce: number,
 
-        expiry: number
+        expiry: number,
+
+        pricingInfo: PriceInfoType
     }> {
         const parsedPR = bolt11.decode(bolt11PayReq);
 
@@ -855,7 +866,7 @@ export class ClientSwapContract<T extends SwapData> {
             if(data.getClaimer()!==requiredClaimerKey) throw new IntermediaryError("Invalid data returned");
         }
 
-        await Promise.all([
+        const [pricingInfo, _] = await Promise.all([
             (async() => {
                 if(this.WBTC_ADDRESS!=null) {
                     if(!total.eq(sats.add(totalFee))){
@@ -871,9 +882,10 @@ export class ClientSwapContract<T extends SwapData> {
                     if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
                         const preFetchedPrice: BN = pricePreFetchPromise==null ? null : await pricePreFetchPromise;
                         const isValidSendAmount = await this.swapPrice.isValidAmountSend(sats, requiredBaseFee.add(routingFeeSats), requiredFeePPM, total, data.getToken(), null, preFetchedPrice);
-                        if(!isValidSendAmount) {
+                        if(!isValidSendAmount.isValid) {
                             throw new IntermediaryError("Fee too high");
                         }
+                        return isValidSendAmount;
                     }
                 }
             })(),
@@ -908,7 +920,9 @@ export class ClientSwapContract<T extends SwapData> {
             signature: jsonBody.data.signature,
             nonce: jsonBody.data.nonce,
 
-            expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce))
+            expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)),
+
+            pricingInfo
         }
     }
 
@@ -1056,7 +1070,8 @@ export class ClientSwapContract<T extends SwapData> {
         timeout: string,
         signature: string,
         nonce: number,
-        expiry: number
+        expiry: number,
+        pricingInfo: PriceInfoType
     }> {
 
         const feePerBlock: BN = await tryWithRetries(() => this.btcRelay.getFeePerBlock().then(val => val.mul(feeSafetyFactor || new BN(2))));
@@ -1145,6 +1160,8 @@ export class ClientSwapContract<T extends SwapData> {
 
         const swapFee = new BN(jsonBody.data.swapFee);
 
+        let pricingInfo: PriceInfoType;
+
         if(this.WBTC_ADDRESS!=null) {
             const total = amount.sub(swapFee);
             if(!data.getAmount().eq(total)) {
@@ -1159,9 +1176,10 @@ export class ClientSwapContract<T extends SwapData> {
             }
             if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
                 const isValidAmount = await this.swapPrice.isValidAmountReceive(amount, requiredBaseFee, requiredFeePPM, data.getAmount(), data.getToken());
-                if(!isValidAmount) {
+                if(!isValidAmount.isValid) {
                     throw new IntermediaryError("Fee too high");
                 }
+                pricingInfo = isValidAmount;
             }
         }
 
@@ -1219,7 +1237,8 @@ export class ClientSwapContract<T extends SwapData> {
             timeout: jsonBody.data.timeout,
             signature: jsonBody.data.signature,
             nonce: jsonBody.data.nonce,
-            expiry: await tryWithRetries(() => this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce))
+            expiry: await tryWithRetries(() => this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)),
+            pricingInfo
         };
 
     }
@@ -1272,7 +1291,9 @@ export class ClientSwapContract<T extends SwapData> {
         securityDeposit: BN,
         withdrawRequest: LNURLWithdrawParams,
 
-        lnurlCallbackResult?: Promise<void>
+        lnurlCallbackResult?: Promise<void>,
+
+        pricingInfo: PriceInfoType
     }> {
         let res: any = await this.getLNURL(lnurl);
         if(res==null) {
@@ -1326,7 +1347,8 @@ export class ClientSwapContract<T extends SwapData> {
         swapFee: BN,
         total: BN,
         intermediaryKey: string,
-        securityDeposit: BN
+        securityDeposit: BN,
+        pricingInfo: PriceInfoType
     }> {
         if(descriptionHash!=null) {
             if(descriptionHash.length!==32) {
@@ -1392,12 +1414,14 @@ export class ClientSwapContract<T extends SwapData> {
             throw new IntermediaryError("Intermediary doesn't have enough liquidity");
         }
 
+        let pricingInfo: PriceInfoType;
         if(this.WBTC_ADDRESS==null) {
             if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
                 const isValidAmount = await this.swapPrice.isValidAmountReceive(amount, requiredBaseFee, requiredFeePPM, total, requiredToken);
-                if(!isValidAmount) {
+                if(!isValidAmount.isValid) {
                     throw new IntermediaryError("Fee too high");
                 }
+                pricingInfo = isValidAmount;
             }
         }
 
@@ -1407,7 +1431,8 @@ export class ClientSwapContract<T extends SwapData> {
             swapFee: new BN(jsonBody.data.swapFee),
             total: new BN(jsonBody.data.total),
             intermediaryKey: jsonBody.data.intermediaryKey,
-            securityDeposit: new BN(jsonBody.data.securityDeposit)
+            securityDeposit: new BN(jsonBody.data.securityDeposit),
+            pricingInfo
         };
     }
 
@@ -1430,7 +1455,9 @@ export class ClientSwapContract<T extends SwapData> {
         signature?: string,
         nonce?: number,
 
-        expiry?: number
+        expiry?: number,
+
+        pricingInfo?: PriceInfoType
     }> {
 
         const decodedPR = bolt11.decode(bolt11PaymentReq);
@@ -1475,14 +1502,17 @@ export class ClientSwapContract<T extends SwapData> {
                 }
             }
 
+            let pricingInfo: PriceInfoType;
+
             if(minOut!=null && data.getAmount().lt(minOut)) {
                 throw new IntermediaryError("Invalid amount received");
             } else {
                 if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
                     const isValidAmount = await this.swapPrice.isValidAmountReceive(new BN(decodedPR.satoshis), requiredBaseFee, requiredFeePPM, data.getAmount(), requiredToken);
-                    if(!isValidAmount) {
+                    if(!isValidAmount.isValid) {
                         throw new IntermediaryError("Fee too high");
                     }
+                    pricingInfo = isValidAmount;
                 }
             }
 
@@ -1532,7 +1562,8 @@ export class ClientSwapContract<T extends SwapData> {
                     null,
                     null,
                     abortSignal
-                )
+                ),
+                pricingInfo
             }
         }
 
@@ -1563,7 +1594,8 @@ export class ClientSwapContract<T extends SwapData> {
         timeout: string,
         signature: string,
         nonce: number,
-        expiry: number
+        expiry: number,
+        pricingInfo: PriceInfoType
     }> {
         if(abortSignal!=null && abortSignal.aborted) {
             throw new AbortError();

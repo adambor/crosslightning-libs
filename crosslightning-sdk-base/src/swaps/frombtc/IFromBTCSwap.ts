@@ -1,13 +1,13 @@
 
 import {IFromBTCWrapper} from "./IFromBTCWrapper";
-import {ISwap} from "../ISwap";
+import {ISwap, PriceInfoType} from "../ISwap";
 import * as BN from "bn.js";
 import * as EventEmitter from "events";
 import {SwapType} from "../SwapType";
 import {SwapData, TokenAddress} from "crosslightning-base";
 
 
-export abstract class IFromBTCSwap<T extends SwapData> implements ISwap {
+export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
 
     readonly url: string;
     expiry: number;
@@ -42,11 +42,11 @@ export abstract class IFromBTCSwap<T extends SwapData> implements ISwap {
         timeout?: string,
         signature?: string,
         nonce?: number,
-        expiry?: number
+        expiry?: number,
+        pricing?: PriceInfoType
     ) {
-        this.wrapper = wrapper;
-        this.events = new EventEmitter();
         if(typeof(urlOrObject)==="string") {
+            super(pricing);
             this.url = urlOrObject;
 
             this.data = data;
@@ -57,6 +57,7 @@ export abstract class IFromBTCSwap<T extends SwapData> implements ISwap {
             this.nonce = nonce;
             this.expiry = expiry;
         } else {
+            super(urlOrObject);
             this.url = urlOrObject.url;
 
             this.data = urlOrObject.data !=null ? new wrapper.swapDataDeserializer(urlOrObject.data) : null;
@@ -69,6 +70,8 @@ export abstract class IFromBTCSwap<T extends SwapData> implements ISwap {
             this.claimTxId = urlOrObject.claimTxId;
             this.expiry = urlOrObject.expiry;
         }
+        this.wrapper = wrapper;
+        this.events = new EventEmitter();
     }
 
     /**
@@ -202,7 +205,10 @@ export abstract class IFromBTCSwap<T extends SwapData> implements ISwap {
     }
 
     serialize(): any{
+        const obj = super.serialize();
         return {
+            ...obj,
+
             url: this.url,
 
             data: this.data!=null ? this.data.serialize() : null,
@@ -235,6 +241,18 @@ export abstract class IFromBTCSwap<T extends SwapData> implements ISwap {
 
     getExpiry(): number {
         return this.expiry;
+    }
+
+    async refetchPriceData(): Promise<PriceInfoType> {
+
+        if(this.pricingInfo==null) return null;
+
+        const priceData = await this.wrapper.contract.swapPrice.isValidAmountReceive(this.getInAmount(), this.pricingInfo.satsBaseFee, this.pricingInfo.feePPM, this.data.getAmount(), this.data.getToken());
+
+        this.pricingInfo = priceData;
+
+        return priceData;
+
     }
 
 }

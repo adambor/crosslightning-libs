@@ -519,18 +519,23 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const [transactionSlot, signatureString] = signature.split(";");
 
+        const [latestSlot, transactionBlock] = await Promise.all([
+            this.getCachedSlot("processed"),
+            this.getParsedBlock(parseInt(transactionSlot))
+        ]);
+
         const lastValidTransactionSlot = parseInt(transactionSlot)+TX_SLOT_VALIDITY;
-        const latestSlot = await this.getCachedSlot("processed");
+        // const latestSlot = await this.getCachedSlot("processed");
         const slotsLeft = lastValidTransactionSlot-latestSlot-SLOT_BUFFER;
         if(slotsLeft<0) {
             throw new SignatureVerificationError("Authorization expired!");
         }
 
-        const latestBlock = await this.getParsedBlock(parseInt(transactionSlot));
+        // const latestBlock = await this.getParsedBlock(parseInt(transactionSlot));
 
         const txToSign = await this.getClaimInitMessage(data, nonce, prefix, timeout);
 
-        txToSign.recentBlockhash = latestBlock.blockhash;
+        txToSign.recentBlockhash = transactionBlock.blockhash;
         txToSign.addSignature(data.claimer, Buffer.from(signatureString, "hex"));
 
         const valid = txToSign.verifySignatures(false);
@@ -539,7 +544,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             throw new SignatureVerificationError("Invalid signature!");
         }
 
-        return Buffer.from(latestBlock.blockhash);
+        return Buffer.from(transactionBlock.blockhash);
 
     }
 
@@ -672,20 +677,25 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const [transactionSlot, signatureString] = signature.split(";");
 
+        const [latestSlot, transactionBlock] = await Promise.all([
+            this.getCachedSlot("processed"),
+            this.getParsedBlock(parseInt(transactionSlot))
+        ]);
+
         const lastValidTransactionSlot = parseInt(transactionSlot)+TX_SLOT_VALIDITY;
-        const latestSlot = await this.getCachedSlot("processed");
+        // const latestSlot = await this.getCachedSlot("processed");
         const slotsLeft = lastValidTransactionSlot-latestSlot-SLOT_BUFFER;
         if(slotsLeft<0) {
             throw new SignatureVerificationError("Authorization expired!");
         }
 
-        const latestBlock = await this.getParsedBlock(parseInt(transactionSlot));
+        // const latestBlock = await this.getParsedBlock(parseInt(transactionSlot));
 
         const txToSign = await this.getInitMessage(data, nonce, prefix, timeout);
 
         //Check validity of recentBlockhash
 
-        txToSign.recentBlockhash = latestBlock.blockhash;
+        txToSign.recentBlockhash = transactionBlock.blockhash;
         txToSign.addSignature(data.offerer, Buffer.from(signatureString, "hex"));
 
         const valid = txToSign.verifySignatures(false);
@@ -694,7 +704,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             throw new SignatureVerificationError("Invalid signature!");
         }
 
-        return Buffer.from(latestBlock.blockhash);
+        return Buffer.from(transactionBlock.blockhash);
 
     }
 

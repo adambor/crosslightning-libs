@@ -1,6 +1,6 @@
 
 import {IToBTCWrapper} from "./IToBTCWrapper";
-import {ISwap} from "../ISwap";
+import {ISwap, PriceInfoType} from "../ISwap";
 import * as BN from "bn.js";
 import * as EventEmitter from "events";
 import {SwapType} from "../SwapType";
@@ -8,7 +8,7 @@ import {SignatureVerificationError, SwapCommitStatus, SwapData} from "crosslight
 import {TokenAddress} from "crosslightning-base";
 import {tryWithRetries} from "../../utils/RetryUtils";
 
-export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
+export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
 
     state: ToBTCSwapState;
 
@@ -49,11 +49,11 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
         signature?: string,
         nonce?: number,
         url?: string,
-        expiry?: number
+        expiry?: number,
+        pricing?: PriceInfoType
     ) {
-        this.wrapper = wrapper;
-        this.events = new EventEmitter();
         if(prefix!=null || timeout!=null || signature!=null || nonce!=null || url!=null) {
+            super(pricing);
             this.state = ToBTCSwapState.CREATED;
 
             this.url = url;
@@ -68,6 +68,7 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
             this.nonce = nonce;
             this.expiry = expiry;
         } else {
+            super(prOrObject);
             this.state = prOrObject.state;
 
             this.url = prOrObject.url;
@@ -86,6 +87,8 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
             this.refundTxId = prOrObject.refundTxId;
             this.expiry = prOrObject.expiry;
         }
+        this.wrapper = wrapper;
+        this.events = new EventEmitter();
     }
 
     /**
@@ -448,8 +451,10 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
         this.events.emit("swapState", this);
     }
 
-    serialize(): any{
+    serialize(): any {
+        const obj = super.serialize();
         return {
+            ...obj,
             state: this.state,
             url: this.url,
             secret: this.secret,
@@ -512,6 +517,19 @@ export abstract class IToBTCSwap<T extends SwapData> implements ISwap {
     getExpiry(): number {
         return this.expiry;
     }
+
+    async refetchPriceData(): Promise<PriceInfoType> {
+
+        if(this.pricingInfo==null) return null;
+
+        const priceData = await this.wrapper.contract.swapPrice.isValidAmountSend(this.getOutAmount(), this.pricingInfo.satsBaseFee, this.pricingInfo.feePPM, this.data.getAmount(), this.data.getToken());
+
+        this.pricingInfo = priceData;
+
+        return priceData;
+
+    }
+
 }
 
 export enum ToBTCSwapState {

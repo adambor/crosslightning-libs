@@ -3,6 +3,7 @@ import {IToBTCSwap, ToBTCSwapState} from "../IToBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
+import {PriceInfoType} from "../../ISwap";
 
 export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
 
@@ -29,7 +30,8 @@ export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
         signature: string,
         nonce: number,
         url: string,
-        expiry: number
+        expiry: number,
+        pricing: PriceInfoType
     );
     constructor(wrapper: ToBTCWrapper<T>, obj: any);
 
@@ -47,10 +49,11 @@ export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
         signature?: string,
         nonce?: number,
         url?: string,
-        expiry?: number
+        expiry?: number,
+        pricing?: PriceInfoType
     ) {
         if(typeof(addressOrObject)==="string") {
-            super(wrapper, data, networkFee, swapFee, prefix, timeout, signature, nonce, url, expiry);
+            super(wrapper, data, networkFee, swapFee, prefix, timeout, signature, nonce, url, expiry, pricing);
 
             this.address = addressOrObject;
             this.amount = amount;

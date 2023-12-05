@@ -9,8 +9,18 @@ export abstract class ISwapPrice {
         this.maxAllowedFeeDifferencePPM = maxAllowedFeeDifferencePPM;
     }
 
-    async isValidAmountSend(amountSats: BN,satsBaseFee: BN, feePPM: BN, paidToken: BN, token: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<boolean> {
-        if(this.shouldIgnore(token)) return true;
+    async isValidAmountSend(amountSats: BN,satsBaseFee: BN, feePPM: BN, paidToken: BN, token: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<{
+        isValid: boolean,
+        differencePPM: BN,
+        satsBaseFee: BN,
+        feePPM: BN
+    }> {
+        if(this.shouldIgnore(token)) return {
+            isValid: true,
+            differencePPM: new BN(0),
+            satsBaseFee,
+            feePPM
+        };
 
         const totalSats = amountSats.mul(new BN(1000000).add(feePPM)).div(new BN(1000000))
             .add(satsBaseFee);
@@ -24,14 +34,34 @@ export abstract class ISwapPrice {
         const differencePPM = difference.mul(new BN(1000000)).div(calculatedAmtInToken);
 
         if(differencePPM.gt(this.maxAllowedFeeDifferencePPM)) {
-            return false;
+            return {
+                isValid: false,
+                differencePPM,
+                satsBaseFee,
+                feePPM
+            };
         }
 
-        return true;
+        return {
+            isValid: true,
+            differencePPM,
+            satsBaseFee,
+            feePPM
+        };
     }
 
-    async isValidAmountReceive(amountSats: BN,satsBaseFee: BN, feePPM: BN, receiveToken: BN, token: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<boolean> {
-        if(this.shouldIgnore(token)) return true;
+    async isValidAmountReceive(amountSats: BN,satsBaseFee: BN, feePPM: BN, receiveToken: BN, token: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<{
+        isValid: boolean,
+        differencePPM: BN,
+        satsBaseFee: BN,
+        feePPM: BN
+    }> {
+        if(this.shouldIgnore(token)) return {
+            isValid: true,
+            differencePPM: new BN(0),
+            satsBaseFee,
+            feePPM
+        };
 
         const totalSats = amountSats.mul(new BN(1000000).sub(feePPM)).div(new BN(1000000))
             .sub(satsBaseFee);
@@ -45,10 +75,20 @@ export abstract class ISwapPrice {
         const differencePPM = difference.mul(new BN(1000000)).div(calculatedAmtInToken);
 
         if(differencePPM.gt(this.maxAllowedFeeDifferencePPM)) {
-            return false;
+            return {
+                isValid: false,
+                differencePPM,
+                satsBaseFee,
+                feePPM
+            };
         }
 
-        return true;
+        return {
+            isValid: true,
+            differencePPM,
+            satsBaseFee,
+            feePPM
+        };
     }
 
     preFetchPrice?(token: TokenAddress, abortSignal?: AbortSignal): Promise<BN>;

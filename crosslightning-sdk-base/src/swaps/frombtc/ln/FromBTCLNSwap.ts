@@ -6,6 +6,7 @@ import * as BN from "bn.js";
 import {SwapCommitStatus, SwapData} from "crosslightning-base";
 import {tryWithRetries} from "../../../utils/RetryUtils";
 import {SignatureVerificationError} from "crosslightning-base";
+import {PriceInfoType} from "../../ISwap";
 
 export enum FromBTCLNSwapState {
     EXPIRED = -2,
@@ -33,12 +34,44 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
     callbackPromise: Promise<void>;
 
 
-    constructor(wrapper: FromBTCLNWrapper<T>, pr: string, secret: Buffer, url: string, data: T, swapFee: BN, requiredBaseFee: BN, requiredFeePPM: BN, expectedOut: BN, lnurl: string, callbackPromise: Promise<void>, lnurlK1: string, lnurlCallback: string, prPosted: boolean);
+    constructor(
+        wrapper: FromBTCLNWrapper<T>,
+        pr: string,
+        secret: Buffer,
+        url: string,
+        data: T,
+        swapFee: BN,
+        requiredBaseFee: BN,
+        requiredFeePPM: BN,
+        expectedOut: BN,
+        pricing: PriceInfoType,
+        lnurl: string,
+        callbackPromise: Promise<void>,
+        lnurlK1: string,
+        lnurlCallback: string,
+        prPosted: boolean
+    );
     constructor(wrapper: FromBTCLNWrapper<T>, obj: any);
 
-    constructor(wrapper: FromBTCLNWrapper<T>, prOrObject: string | any, secret?: Buffer, url?: string, data?: T, swapFee?: BN, requiredBaseFee?: BN, requiredFeePPM?: BN, expectedOut?: BN, lnurl?: string, callbackPromise?: Promise<void>, lnurlK1?: string, lnurlCallback?: string, prPosted?: boolean) {
+    constructor(
+        wrapper: FromBTCLNWrapper<T>,
+        prOrObject: string | any,
+        secret?: Buffer,
+        url?: string,
+        data?: T,
+        swapFee?: BN,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN,
+        expectedOut?: BN,
+        pricing?: PriceInfoType,
+        lnurl?: string,
+        callbackPromise?: Promise<void>,
+        lnurlK1?: string,
+        lnurlCallback?: string,
+        prPosted?: boolean
+    ) {
         if(typeof(prOrObject)==="string") {
-            super(wrapper, url, data, swapFee, null, null, null, null, null);
+            super(wrapper, url, data, swapFee, null, null, null, null, null, pricing);
             this.state = FromBTCLNSwapState.PR_CREATED;
 
             this.pr = prOrObject;
@@ -160,6 +193,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
         this.signature = result.signature;
         this.nonce = result.nonce;
         this.expiry = result.expiry;
+        if(result.pricingInfo!=null) this.pricingInfo = result.pricingInfo;
 
         await this.save();
 

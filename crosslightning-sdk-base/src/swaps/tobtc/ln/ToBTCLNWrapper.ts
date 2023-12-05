@@ -79,7 +79,8 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
             url,
             result.confidence,
             result.routingFeeSats,
-            result.expiry
+            result.expiry,
+            result.pricingInfo
         );
 
         await swap.save();
@@ -139,6 +140,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
             result.confidence,
             result.routingFeeSats,
             result.expiry,
+            result.pricingInfo,
             lnurlPay,
             result.successAction
         );

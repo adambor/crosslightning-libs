@@ -88,7 +88,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
             }
         }
 
-        const swap = new FromBTCLNSwap<T>(this, result.pr, result.secret, url, swapData, result.swapFee, requiredBaseFee, requiredFeePPM, total, null, null, null, null, null);
+        const swap = new FromBTCLNSwap<T>(this, result.pr, result.secret, url, swapData, result.swapFee, requiredBaseFee, requiredFeePPM, total, result.pricingInfo, null, null, null, null, null);
 
         await swap.save();
         this.swapData[swap.getPaymentHash().toString("hex")] = swap;
@@ -134,7 +134,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
         const total = result.total;
 
-        const swap = new FromBTCLNSwap<T>(this, result.pr, result.secret, url, swapData, result.swapFee, requiredBaseFee, requiredFeePPM, total, lnurl, result.lnurlCallbackResult, result.withdrawRequest.k1, result.withdrawRequest.callback, !noInstantReceive);
+        const swap = new FromBTCLNSwap<T>(this, result.pr, result.secret, url, swapData, result.swapFee, requiredBaseFee, requiredFeePPM, total, result.pricingInfo, lnurl, result.lnurlCallbackResult, result.withdrawRequest.k1, result.withdrawRequest.callback, !noInstantReceive);
 
         await swap.save();
         this.swapData[swap.getPaymentHash().toString("hex")] = swap;

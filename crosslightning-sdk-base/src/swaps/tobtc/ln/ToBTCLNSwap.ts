@@ -5,6 +5,7 @@ import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
 import {decipherAES, LNURLPaySuccessAction} from "js-lnurl/lib";
+import {PriceInfoType} from "../../ISwap";
 
 export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
 
@@ -31,6 +32,7 @@ export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
         confidence: string,
         routingFeeSats: BN,
         expiry: number,
+        pricing: PriceInfoType,
         lnurl?: string,
         successAction?: LNURLPaySuccessAction
     );
@@ -50,11 +52,12 @@ export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
         confidence?: string,
         routingFeeSats?: BN,
         expiry?: number,
+        pricing?: PriceInfoType,
         lnurl?: string,
         successAction?: LNURLPaySuccessAction
     ) {
         if(typeof(prOrObject)==="string") {
-            super(wrapper, data, networkFee, swapFee, prefix, timeout, signature, nonce, url, expiry);
+            super(wrapper, data, networkFee, swapFee, prefix, timeout, signature, nonce, url, expiry, pricing);
             this.confidence = parseFloat(confidence);
             this.pr = prOrObject;
             this.routingFeeSats = routingFeeSats;

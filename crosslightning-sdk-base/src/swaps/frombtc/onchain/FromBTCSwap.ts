@@ -8,6 +8,7 @@ import * as BN from "bn.js";
 import {SwapCommitStatus, SwapData} from "crosslightning-base";
 import {tryWithRetries} from "../../../utils/RetryUtils";
 import {SignatureVerificationError} from "crosslightning-base";
+import {PriceInfoType} from "../../ISwap";
 
 export enum FromBTCSwapState {
     FAILED = -2,
@@ -42,7 +43,8 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
         timeout: string,
         signature: string,
         nonce: number,
-        expiry: number
+        expiry: number,
+        pricing: PriceInfoType
     );
     constructor(wrapper: FromBTCWrapper<T>, obj: any);
 
@@ -57,10 +59,11 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
         timeout?: string,
         signature?: string,
         nonce?: number,
-        expiry?: number
+        expiry?: number,
+        pricing?: PriceInfoType
     ) {
         if(typeof(addressOrObject)==="string") {
-            super(wrapper, url, data, swapFee, prefix, timeout, signature, nonce, expiry);
+            super(wrapper, url, data, swapFee, prefix, timeout, signature, nonce, expiry, pricing);
             this.state = FromBTCSwapState.PR_CREATED;
 
             this.address = addressOrObject;

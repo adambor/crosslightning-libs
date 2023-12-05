@@ -52,7 +52,8 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T> {
             result.signature,
             result.nonce,
             url,
-            result.expiry
+            result.expiry,
+            result.pricingInfo
         );
 
         await swap.save();
