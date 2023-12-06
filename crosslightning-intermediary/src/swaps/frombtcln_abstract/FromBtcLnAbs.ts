@@ -357,8 +357,21 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
         //
         // const sendAmount: BN = invoiceAmountInToken.sub(feeInToken);
 
-        const sendAmount: BN = await invoiceData.data.getAmount();
-        const balance: BN = await this.swapContract.getBalance(useToken, true);
+        const sendAmount: BN = invoiceData.data.getAmount();
+
+        const balancePrefetch: Promise<BN> = this.swapContract.getBalance(useToken, true).catch(e => {
+            console.error("From BTC-LN: HTLC-Received.balancePrefetch", e);
+            throw e;
+        });
+        const blockheightPrefetch = lncli.getHeight({lnd: this.LND}).catch(e => {
+            console.error("From BTC-LN: HTLC-Received.blockheightPrefetch", e);
+            throw e;
+        });
+        const anyContract: any = this.swapContract;
+        const signDataPrefetchPromise: Promise<any> = anyContract.preFetchBlockDataForSignatures!=null ? anyContract.preFetchBlockDataForSignatures().catch(e => {
+            console.error("From BTC-LN: HTLC-Received.signDataPrefetch", e);
+            throw e;
+        }) : null;
 
         const cancelAndRemove = async () => {
             if(invoiceData.state!==FromBtcLnSwapState.CREATED) return;
@@ -370,6 +383,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             });
             await this.removeSwapData(invoice.id);
         };
+
+        const balance: BN = await balancePrefetch;
 
         const hasEnoughBalance = balance.gte(sendAmount);
         if (!hasEnoughBalance) {
@@ -387,7 +402,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
         invoice.payments.forEach((curr) => {
             if (timeout == null || timeout > curr.timeout) timeout = curr.timeout;
         });
-        const {current_block_height} = await lncli.getHeight({lnd: this.LND});
+        const {current_block_height} = await blockheightPrefetch;
 
         const blockDelta = new BN(timeout - current_block_height);
 
@@ -427,7 +442,12 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
         if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcSwapCreated = Date.now();
 
-        const sigData = await this.swapContract.getInitSignature(payInvoiceObject, this.nonce, this.config.authorizationTimeout);
+        const sigData = await (this.swapContract as any).getInitSignature(
+            payInvoiceObject,
+            this.nonce,
+            this.config.authorizationTimeout,
+            signDataPrefetchPromise==null ? null : await signDataPrefetchPromise
+        );
 
         if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcSwapSigned = Date.now();
 
