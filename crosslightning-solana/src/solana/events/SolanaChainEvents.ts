@@ -318,7 +318,8 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                     promise: processPromise,
                     timeout: null
                 };
-                await processPromise;
+                const result = await processPromise;
+                if(!result) throw new Error("Failed to process signature: "+txSignature);
             }
         } catch (e) {
             console.error(e);
