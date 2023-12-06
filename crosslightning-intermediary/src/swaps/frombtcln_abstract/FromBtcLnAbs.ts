@@ -500,19 +500,34 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             metadata.times.requestChecked = Date.now();
 
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
-            const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken) : null;
+            const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken).catch(e => {
+                console.error("From BTC-LN: REST.pricePrefetch", e);
+                throw e;
+            }) : null;
             const securityDepositPricePrefetchPromise: Promise<BN> = parsedBody.token===this.swapContract.getNativeCurrencyAddress().toString() ?
                 pricePrefetchPromise :
-                (this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(this.swapContract.getNativeCurrencyAddress()) : null);
+                (this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(this.swapContract.getNativeCurrencyAddress()).catch(e => {
+                    console.error("From BTC-LN: REST.securityDepositPrefetch", e);
+                    throw e;
+                }) : null);
 
-            const balancePrefetch = this.swapContract.getBalance(useToken, true);
+            const balancePrefetch = this.swapContract.getBalance(useToken, true).catch(e => {
+                console.error("From BTC-LN: REST.balancePrefetch", e);
+                throw e;
+            });
 
             let baseSDPromise: Promise<BN>;
             //Solana workaround
             if((this.swapContract as any).getRawRefundFee!=null) {
-                baseSDPromise = (this.swapContract as any).getRawRefundFee();
+                baseSDPromise = (this.swapContract as any).getRawRefundFee().catch(e => {
+                    console.error("From BTC-LN: REST.baseSDPrefetch", e);
+                    throw e;
+                });
             } else {
-                baseSDPromise = this.swapContract.getRefundFee().then(result => result.mul(new BN(2)));
+                baseSDPromise = this.swapContract.getRefundFee().then(result => result.mul(new BN(2))).catch(e => {
+                    console.error("From BTC-LN: REST.baseSDPrefetch", e);
+                    throw e;
+                });
             }
 
             if(pricePrefetchPromise!=null) console.log("[From BTC-LN: REST.payInvoice] Pre-fetching swap price!");

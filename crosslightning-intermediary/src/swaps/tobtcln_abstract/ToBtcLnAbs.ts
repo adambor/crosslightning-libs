@@ -608,9 +608,15 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             }
 
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
-            const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken) : null;
+            const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken).catch(e => {
+                console.error("To BTC-LN: REST.pricePrefetch", e);
+                throw e;
+            }) : null;
             const anyContract: any = this.swapContract;
-            const signDataPrefetchPromise: Promise<any> = anyContract.preFetchBlockDataForSignatures!=null ? anyContract.preFetchBlockDataForSignatures() : null;
+            const signDataPrefetchPromise: Promise<any> = anyContract.preFetchBlockDataForSignatures!=null ? anyContract.preFetchBlockDataForSignatures().catch(e => {
+                console.error("To BTC-LN: REST.signDataPrefetch", e);
+                throw e;
+            }) : null;
 
             if(pricePrefetchPromise!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetching swap price!");
             if(signDataPrefetchPromise!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetching signature data!");

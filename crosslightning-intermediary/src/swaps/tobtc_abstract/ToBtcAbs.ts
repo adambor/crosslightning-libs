@@ -665,9 +665,15 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             metadata.times.requestChecked = Date.now();
 
-            const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken) : null;
+            const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken).catch(e => {
+                console.error("To BTC: REST.pricePrefetch", e);
+                throw e;
+            }) : null;
             const anyContract: any = this.swapContract;
-            const signDataPrefetchPromise: Promise<any> = anyContract.preFetchBlockDataForSignatures!=null ? anyContract.preFetchBlockDataForSignatures() : null;
+            const signDataPrefetchPromise: Promise<any> = anyContract.preFetchBlockDataForSignatures!=null ? anyContract.preFetchBlockDataForSignatures().catch(e => {
+                console.error("To BTC: REST.signDataPrefetch", e);
+                throw e;
+            }) : null;
 
             if(pricePrefetchPromise!=null) console.log("[To BTC: REST.payInvoice] Pre-fetching swap price!");
             if(signDataPrefetchPromise!=null) console.log("[To BTC: REST.payInvoice] Pre-fetching signature data!");
