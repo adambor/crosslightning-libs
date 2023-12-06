@@ -500,10 +500,26 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             metadata.times.requestChecked = Date.now();
 
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
+            const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken) : null;
+            const securityDepositPricePrefetchPromise: Promise<BN> = parsedBody.token===this.swapContract.getNativeCurrencyAddress().toString() ?
+                pricePrefetchPromise :
+                (this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(this.swapContract.getNativeCurrencyAddress()) : null);
+
+            const balancePrefetch = this.swapContract.getBalance(useToken, true);
+
+            let baseSDPromise: Promise<BN>;
+            //Solana workaround
+            if((this.swapContract as any).getRawRefundFee!=null) {
+                baseSDPromise = (this.swapContract as any).getRawRefundFee();
+            } else {
+                baseSDPromise = this.swapContract.getRefundFee().then(result => result.mul(new BN(2)));
+            }
+
+            if(pricePrefetchPromise!=null) console.log("[From BTC-LN: REST.payInvoice] Pre-fetching swap price!");
 
             let amountBD: BN;
             if(req.body.exactOut) {
-                amountBD = await this.swapPricing.getToBtcSwapAmount(parsedBody.amount, useToken, true);
+                amountBD = await this.swapPricing.getToBtcSwapAmount(parsedBody.amount, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
 
                 // amt = (amt+base_fee)/(1-fee)
                 amountBD = amountBD.add(this.config.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(this.config.feePPM));
@@ -511,8 +527,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 if(amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)))) {
                     let adjustedMin = this.config.min.mul(new BN(1000000).sub(this.config.feePPM)).div(new BN(1000000)).sub(this.config.baseFee);
                     let adjustedMax = this.config.max.mul(new BN(1000000).sub(this.config.feePPM)).div(new BN(1000000)).sub(this.config.baseFee);
-                    const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken);
-                    const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken);
+                    const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+                    const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     res.status(400).json({
                         code: 20003,
                         msg: "Amount too low!",
@@ -527,8 +543,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 if(amountBD.gt(this.config.max.mul(new BN(105)).div(new BN(100)))) {
                     let adjustedMin = this.config.min.mul(new BN(1000000).sub(this.config.feePPM)).div(new BN(1000000)).sub(this.config.baseFee);
                     let adjustedMax = this.config.max.mul(new BN(1000000).sub(this.config.feePPM)).div(new BN(1000000)).sub(this.config.baseFee);
-                    const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken);
-                    const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken);
+                    const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+                    const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     res.status(400).json({
                         code: 20004,
                         msg: "Amount too high!",
@@ -576,7 +592,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             //     return;
             // }
             const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
-            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true);
+            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
 
             let amountInToken: BN;
             let total: BN;
@@ -584,13 +600,13 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 amountInToken = parsedBody.amount.add(swapFeeInToken);
                 total = parsedBody.amount;
             } else {
-                amountInToken = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount, useToken);
+                amountInToken = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                 total = amountInToken.sub(swapFeeInToken);
             }
 
             metadata.times.priceCalculated = Date.now();
 
-            const balance = await this.swapContract.getBalance(useToken, true);
+            const balance = await balancePrefetch;
 
             const hasEnoughBalance = balance.gte(total);
             if(!hasEnoughBalance) {
@@ -629,17 +645,16 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             //Pre-compute the security deposit
             const expiryTimeout = this.config.minCltv.mul(this.config.bitcoinBlocktime.div(this.config.safetyFactor)).sub(this.config.gracePeriod);
 
-            let baseSD: BN;
-            //Solana workaround
-            if((this.swapContract as any).getRawRefundFee!=null) {
-                baseSD = await (this.swapContract as any).getRawRefundFee();
-            } else {
-                baseSD = (await this.swapContract.getRefundFee()).mul(new BN(2));
-            }
+            let baseSD: BN = await baseSDPromise;
 
             metadata.times.refundFeeFetched = Date.now();
 
-            const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(amountBD.sub(swapFee), this.swapContract.getNativeCurrencyAddress(), true);
+            const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(
+                amountBD.sub(swapFee),
+                this.swapContract.getNativeCurrencyAddress(),
+                true,
+                securityDepositPricePrefetchPromise==null ? null : await securityDepositPricePrefetchPromise
+            );
             const apyPPM = new BN(Math.floor(this.config.securityDepositAPY*1000000));
             const variableSD = swapValueInNativeCurrency.mul(apyPPM).mul(expiryTimeout).div(new BN(1000000)).div(secondsInYear);
 
