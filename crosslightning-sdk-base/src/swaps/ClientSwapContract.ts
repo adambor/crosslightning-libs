@@ -1172,9 +1172,8 @@ export class ClientSwapContract<T extends SwapData> {
 
         const queryParams = (callbackUrl.includes("?") ? "&" : "?")+params.join("&");
 
-        const response: Response = await tryWithRetries(() => fetchWithTimeout(callbackUrl+queryParams, {
-            method: "GET",
-            timeout: this.options.getRequestTimeout
+        const response: Response = await tryWithRetries(() => fetch(callbackUrl+queryParams, {
+            method: "GET"
         }));
 
         if(response.status!==200) {
