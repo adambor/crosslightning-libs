@@ -1466,8 +1466,8 @@ export class ClientSwapContract<T extends SwapData> {
 
             const [pricingInfo, _] = await Promise.all([
                 (async () => {
-                    if(minOut!=null && data.getAmount().lt(minOut)) {
-                        throw new IntermediaryError("Invalid amount received");
+                    if(minOut!=null) {
+                        if(data.getAmount().lt(minOut)) throw new IntermediaryError("Invalid amount received");
                     } else {
                         if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
                             const isValidAmount = await this.swapPrice.isValidAmountReceive(new BN(decodedPR.satoshis), requiredBaseFee, requiredFeePPM, data.getAmount(), requiredToken);
