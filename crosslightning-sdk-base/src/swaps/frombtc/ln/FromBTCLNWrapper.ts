@@ -81,12 +81,13 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
         const total = result.total;
 
-        if(requiredKey!=null) {
-            const liquidity = await this.contract.swapContract.getIntermediaryBalance(requiredKey, requiredToken);
-            if(liquidity.lt(total)) {
-                throw new IntermediaryError("Intermediary doesn't have enough liquidity");
-            }
-        }
+        //Already checked by ClientSwapContract implementation
+        // if(requiredKey!=null) {
+        //     const liquidity = await this.contract.swapContract.getIntermediaryBalance(requiredKey, requiredToken);
+        //     if(liquidity.lt(total)) {
+        //         throw new IntermediaryError("Intermediary doesn't have enough liquidity");
+        //     }
+        // }
 
         const swap = new FromBTCLNSwap<T>(this, result.pr, result.secret, url, swapData, result.swapFee, requiredBaseFee, requiredFeePPM, total, result.pricingInfo, null, null, null, null, null);
 
