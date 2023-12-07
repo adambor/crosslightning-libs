@@ -56,7 +56,9 @@ export interface SwapContract<T extends SwapData, TX> {
 
     isRequestRefundable(swapData: T): Promise<boolean>;
 
-    getClaimInitSignature(swapData: T, nonce: ISwapNonce, authorizationTimeout: number): Promise<{
+    preFetchBlockDataForSignatures?(): Promise<any>;
+
+    getClaimInitSignature(swapData: T, nonce: ISwapNonce, authorizationTimeout: number, preFetchedBlockData?: any): Promise<{
         nonce: number,
         prefix: string,
         timeout: string,
@@ -66,7 +68,7 @@ export interface SwapContract<T extends SwapData, TX> {
     getClaimInitAuthorizationExpiry(swapData: T, timeout: string, prefix: string, signature: string, nonce: number): Promise<number>;
     isClaimInitAuthorizationExpired(swapData: T, timeout: string, prefix: string, signature: string, nonce: number): Promise<boolean>;
 
-    getInitSignature(swapData: T, nonce: ISwapNonce, authorizationTimeout: number): Promise<{
+    getInitSignature(swapData: T, nonce: ISwapNonce, authorizationTimeout: number, preFetchedBlockData?: any): Promise<{
         nonce: number,
         prefix: string,
         timeout: string,

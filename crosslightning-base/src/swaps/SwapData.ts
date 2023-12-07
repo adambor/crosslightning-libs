@@ -53,5 +53,7 @@ export abstract class SwapData implements StorageObject {
 
     abstract getTotalDeposit(): BN;
 
+    abstract equals(other: SwapData): boolean;
+
 }
 
