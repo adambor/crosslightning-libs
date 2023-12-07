@@ -208,6 +208,44 @@ export class SolanaSwapData extends SwapData {
         return this.claimerBounty.lt(this.securityDeposit) ? this.securityDeposit : this.claimerBounty;
     }
 
+    correctPDA(account: any): boolean {
+        return account.kind===this.kind &&
+            account.confirmations===this.confirmations &&
+            this.nonce.eq(account.nonce) &&
+            Buffer.from(account.hash).toString("hex")===this.paymentHash &&
+            account.payIn===this.payIn &&
+            account.payOut===this.payOut &&
+            account.offerer.equals(this.offerer) &&
+            account.claimer.equals(this.claimer) &&
+            new BN(account.expiry.toString(10)).eq(this.expiry) &&
+            new BN(account.initializerAmount.toString(10)).eq(this.amount) &&
+            new BN(account.securityDeposit.toString(10)).eq(this.securityDeposit) &&
+            new BN(account.claimerBounty.toString(10)).eq(this.claimerBounty) &&
+            account.mint.equals(this.token) &&
+            (this.claimerTokenAccount==null || account.claimerTokenAccount.equals(this.claimerTokenAccount));
+    }
+
+    equals(other: SolanaSwapData): boolean {
+        if(this.claimerTokenAccount==null && other.claimerTokenAccount!=null) return false;
+        if(this.claimerTokenAccount!=null && other.claimerTokenAccount==null) return false;
+        if(this.claimerTokenAccount!=null && other.claimerTokenAccount!=null) {
+            if(!this.claimerTokenAccount.equals(other.claimerTokenAccount)) return false;
+        }
+        return other.kind===this.kind &&
+            other.confirmations===this.confirmations &&
+            this.nonce.eq(other.nonce) &&
+            other.paymentHash===this.paymentHash &&
+            other.payIn===this.payIn &&
+            other.payOut===this.payOut &&
+            other.offerer.equals(this.offerer) &&
+            other.claimer.equals(this.claimer) &&
+            other.expiry.eq(this.expiry) &&
+            other.amount.eq(this.amount) &&
+            other.securityDeposit.eq(this.securityDeposit) &&
+            other.claimerBounty.eq(this.claimerBounty) &&
+            other.token.equals(this.token)
+    }
+
 }
 
 SwapData.deserializers["sol"] = SolanaSwapData;

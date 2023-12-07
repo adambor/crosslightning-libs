@@ -340,13 +340,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         const escrowStateKey = this.SwapEscrowState(Buffer.from(data.paymentHash, "hex"));
         const escrowState: any = await this.program.account.escrowState.fetchNullable(escrowStateKey);
         if(escrowState!=null) {
-            if(
-                !escrowState.offerer.equals(data.offerer) ||
-                !escrowState.claimer.equals(data.claimer) ||
-                !escrowState.mint.equals(data.token) ||
-                !escrowState.initializerAmount.eq(data.amount) ||
-                !escrowState.expiry.eq(data.expiry)
-            ) {
+            if(!data.correctPDA(escrowState)) {
                 if(this.areWeOfferer(data)) {
                     if(this.isExpired(data)) {
                         return SwapCommitStatus.EXPIRED;
@@ -837,23 +831,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const account: any = await this.program.account.escrowState.fetchNullable(this.SwapEscrowState(paymentHash));
         if(account!=null) {
-            if(
-                account.kind===swapData.kind &&
-                account.confirmations===swapData.confirmations &&
-                swapData.nonce.eq(account.nonce) &&
-                Buffer.from(account.hash).equals(paymentHash) &&
-                account.payIn===swapData.payIn &&
-                account.payOut===swapData.payOut &&
-                account.offerer.equals(swapData.offerer) &&
-                account.claimer.equals(swapData.claimer) &&
-                new BN(account.expiry.toString(10)).eq(swapData.expiry) &&
-                new BN(account.initializerAmount.toString(10)).eq(swapData.amount) &&
-                new BN(account.securityDeposit.toString(10)).eq(swapData.securityDeposit) &&
-                new BN(account.claimerBounty.toString(10)).eq(swapData.claimerBounty) &&
-                account.mint.equals(swapData.token)
-            ) {
-                return true;
-            }
+            return swapData.correctPDA(account);
         }
 
         return false;
@@ -971,7 +949,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 this.signer.connection.getSignatureStatus(signature).then(status => {
                     if(status!=null && status.value!=null && status.value.confirmationStatus===commitment) {
                         console.log("SolanaSwapProgram: confirmTransaction(): Confirmed from watchdog!");
-                        resolve();
+                        if(status.value.err!=null) {
+                            reject(new Error("Transaction reverted!"));
+                        } else {
+                            resolve();
+                        }
                         abortController.abort();
                     }
                 }).catch(e => console.error(e));
@@ -983,9 +965,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 blockhash: blockhash,
                 lastValidBlockHeight: lastValidBlockHeight,
                 abortSignal: abortController.signal
-            }, commitment).then(() => {
+            }, commitment).then((result) => {
                 console.log("SolanaSwapProgram: confirmTransaction(): Confirmed from ws!");
-                resolve();
+                if(result.value.err!=null) {
+                    reject(new Error("Transaction reverted!"));
+                } else {
+                    resolve();
+                }
                 abortController.abort();
             }).catch((err) => {
                 console.log("SolanaSwapProgram: confirmTransaction(): Rejected from ws!");
@@ -997,7 +983,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                     tryWithRetries(() => this.signer.connection.getSignatureStatus(signature)).then(status => {
                         if(status!=null && status.value!=null && status.value.confirmationStatus===commitment) {
                             console.log("SolanaSwapProgram: confirmTransaction(): Confirmed on ultimate check!");
-                            resolve();
+                            if(status.value.err!=null) {
+                                reject(new Error("Transaction reverted!"));
+                            } else {
+                                resolve();
+                            }
                             return;
                         }
                         reject(err);
