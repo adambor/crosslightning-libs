@@ -1441,6 +1441,8 @@ export class ClientSwapContract<T extends SwapData> {
 
         let jsonBody: any = await response.json();
 
+        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
+
         if(jsonBody.code===10000) {
             //Authorization returned
             const data: T = new this.swapDataDeserializer(jsonBody.data.data);
@@ -1463,7 +1465,7 @@ export class ClientSwapContract<T extends SwapData> {
                 throw new IntermediaryError("Invalid security deposit!");
             }
 
-            const [pricingInfo, _] = await Promise.all([
+            const [pricingInfo] = await Promise.all([
                 (async () => {
                     if(minOut!=null) {
                         if(data.getAmount().lt(minOut)) throw new IntermediaryError("Invalid amount received");
@@ -1482,9 +1484,15 @@ export class ClientSwapContract<T extends SwapData> {
                     () => this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce),
                     null,
                     (e) => e instanceof SignatureVerificationError
+                ),
+                tryWithRetries(
+                    () => this.swapContract.getPaymentHashStatus(data.getHash()).then(status => {
+                        if(status!==SwapCommitStatus.NOT_COMMITED) throw new Error("Swap already committed on-chain!");
+                    })
                 )
             ]);
 
+            if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
 
             const paymentHashInTx = data.getHash().toLowerCase();
 
@@ -1497,8 +1505,6 @@ export class ClientSwapContract<T extends SwapData> {
             const tokenAmount = data.getAmount();
 
             console.log("[SmartChain.PaymentRequest] Token amount: ", tokenAmount.toString());
-
-            if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
 
             return {
                 is_paid: true,

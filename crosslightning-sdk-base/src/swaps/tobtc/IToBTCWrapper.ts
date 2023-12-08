@@ -81,6 +81,14 @@ export abstract class IToBTCWrapper<T extends SwapData> {
 
                 if(event instanceof InitializeEvent) {
                     if(swap.state===ToBTCSwapState.CREATED) {
+                        if(swap.data!=null) {
+                            try {
+                                if(!swap.data.equals(event.swapData)) throw new Error("Unexpected data in event, skipping!");
+                            } catch (e) {
+                                console.error(e);
+                                continue;
+                            }
+                        }
                         swap.state = ToBTCSwapState.COMMITED;
                         swap.data = event.swapData;
                         swapChanged = true;

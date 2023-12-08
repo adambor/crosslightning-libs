@@ -176,20 +176,28 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
                 let swapChanged = false;
 
                 if(event instanceof InitializeEvent) {
-                    if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.PR_CREATED) {
+                    if(swap.state===FromBTCLNSwapState.PR_PAID) {
+                        if(swap.data!=null) {
+                            try {
+                                if(!swap.data.equals(event.swapData)) throw new Error("Unexpected data in event, skipping!");
+                            } catch (e) {
+                                console.error(e);
+                                continue;
+                            }
+                        }
                         swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
                         swap.data = event.swapData;
                         swapChanged = true;
                     }
                 }
                 if(event instanceof ClaimEvent) {
-                    if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.PR_CREATED || swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
+                    if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
                         swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
                         swapChanged = true;
                     }
                 }
                 if(event instanceof RefundEvent) {
-                    if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.PR_CREATED || swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
+                    if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
                         swap.state = FromBTCLNSwapState.FAILED;
                         swapChanged = true;
                     }
