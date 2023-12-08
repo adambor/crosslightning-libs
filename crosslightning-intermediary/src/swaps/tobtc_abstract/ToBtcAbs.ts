@@ -669,8 +669,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 console.error("To BTC: REST.pricePrefetch", e);
                 throw e;
             }) : null;
-            const anyContract: any = this.swapContract;
-            const signDataPrefetchPromise: Promise<any> = anyContract.preFetchBlockDataForSignatures!=null ? anyContract.preFetchBlockDataForSignatures().catch(e => {
+            const signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
                 console.error("To BTC: REST.signDataPrefetch", e);
                 throw e;
             }) : null;
@@ -846,7 +845,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             metadata.times.swapCreated = Date.now();
 
-            const sigData = await (this.swapContract as any).getClaimInitSignature(
+            const sigData = await this.swapContract.getClaimInitSignature(
                 payObject,
                 this.nonce,
                 this.config.authorizationTimeout,

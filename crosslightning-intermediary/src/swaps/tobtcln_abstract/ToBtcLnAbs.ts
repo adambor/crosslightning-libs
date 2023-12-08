@@ -12,6 +12,7 @@ import {
     InitializeEvent,
     IStorageManager,
     RefundEvent,
+    SwapCommitStatus,
     SwapContract,
     SwapData,
     SwapEvent,
@@ -147,7 +148,15 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const isCommited = await this.swapContract.isCommited(invoiceData.data);
 
             if(!isCommited) {
-                console.error("[To BTC-LN: BTCLN.PaymentResult] Tried to claim but escrow doesn't exist anymore: ", decodedPR.tagsObject.payment_hash);
+                const status = await this.swapContract.getCommitStatus(invoiceData.data);
+                if(status===SwapCommitStatus.PAID) {
+                    await invoiceData.setState(ToBtcLnSwapState.CLAIMED);
+                    // await PluginManager.swapStateChange(invoiceData);
+                } else if(status===SwapCommitStatus.EXPIRED || status===SwapCommitStatus.NOT_COMMITED) {
+                    await invoiceData.setState(ToBtcLnSwapState.REFUNDED);
+                }
+                console.error("[To BTC-LN: BTCLN.PaymentResult] Tried to claim but escrow doesn't exist anymore, commit status="+status+" : ", decodedPR.tagsObject.payment_hash);
+                await this.removeSwapData(decodedPR.tagsObject.payment_hash);
                 return;
             }
 
@@ -612,8 +621,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 console.error("To BTC-LN: REST.pricePrefetch", e);
                 throw e;
             }) : null;
-            const anyContract: any = this.swapContract;
-            const signDataPrefetchPromise: Promise<any> = anyContract.preFetchBlockDataForSignatures!=null ? anyContract.preFetchBlockDataForSignatures().catch(e => {
+            const signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
                 console.error("To BTC-LN: REST.signDataPrefetch", e);
                 throw e;
             }) : null;
@@ -717,7 +725,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             if(prefetchedSignData!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetched signature data: ", prefetchedSignData);
 
-            const sigData = await (this.swapContract as any).getClaimInitSignature(
+            const sigData = await this.swapContract.getClaimInitSignature(
                 payObject,
                 this.nonce,
                 this.config.authorizationTimeout,

@@ -367,8 +367,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             console.error("From BTC-LN: HTLC-Received.blockheightPrefetch", e);
             throw e;
         });
-        const anyContract: any = this.swapContract;
-        const signDataPrefetchPromise: Promise<any> = anyContract.preFetchBlockDataForSignatures!=null ? anyContract.preFetchBlockDataForSignatures().catch(e => {
+        const signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
             console.error("From BTC-LN: HTLC-Received.signDataPrefetch", e);
             throw e;
         }) : null;
@@ -442,7 +441,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
         if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcSwapCreated = Date.now();
 
-        const sigData = await (this.swapContract as any).getInitSignature(
+        const sigData = await this.swapContract.getInitSignature(
             payInvoiceObject,
             this.nonce,
             this.config.authorizationTimeout,
