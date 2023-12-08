@@ -1485,11 +1485,11 @@ export class ClientSwapContract<T extends SwapData> {
                     null,
                     (e) => e instanceof SignatureVerificationError
                 ),
-                tryWithRetries(
-                    () => this.swapContract.getPaymentHashStatus(data.getHash()).then(status => {
-                        if(status!==SwapCommitStatus.NOT_COMMITED) throw new Error("Swap already committed on-chain!");
-                    })
-                )
+                tryWithRetries<SwapCommitStatus>(
+                    () => this.swapContract.getPaymentHashStatus(data.getHash())
+                ).then(status => {
+                    if(status!==SwapCommitStatus.NOT_COMMITED) throw new Error("Swap already committed on-chain!");
+                })
             ]);
 
             if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
