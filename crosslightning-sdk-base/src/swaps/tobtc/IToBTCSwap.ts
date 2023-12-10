@@ -167,12 +167,14 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
         }
 
         this.commitTxId = txResult;
+        this.state = ToBTCSwapState.COMMITED;
         await this.save();
+        this.emitEvent();
 
-        if(!noWaitForConfirmation) {
-            await this.waitTillCommited(abortSignal);
-            return txResult;
-        }
+        // if(!noWaitForConfirmation) {
+        //     await this.waitTillCommited(abortSignal);
+        //     return txResult;
+        // }
 
         return txResult;
     }
@@ -356,12 +358,14 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
         }
 
         this.refundTxId = txResult;
+        this.state = ToBTCSwapState.REFUNDED;
         await this.save();
+        this.emitEvent();
 
-        if(!noWaitForConfirmation) {
-            await this.waitTillRefunded(abortSignal);
-            return txResult;
-        }
+        // if(!noWaitForConfirmation) {
+        //     await this.waitTillRefunded(abortSignal);
+        //     return txResult;
+        // }
 
         return txResult;
     }

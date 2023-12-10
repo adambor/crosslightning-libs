@@ -358,12 +358,14 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
         const txResult = await this.wrapper.contract.swapContract.claimWithSecret(this.data, this.secret.toString("hex"), true, true, !noWaitForConfirmation, abortSignal);
 
         this.claimTxId = txResult;
+        this.state = FromBTCLNSwapState.CLAIM_CLAIMED;
         await this.save();
+        this.emitEvent();
 
-        if(!noWaitForConfirmation) {
-            await this.waitTillClaimed(abortSignal);
-            return txResult;
-        }
+        // if(!noWaitForConfirmation) {
+        //     await this.waitTillClaimed(abortSignal);
+        //     return txResult;
+        // }
 
         /*if(!noWaitForConfirmation) {
             const receipt = await txResult.wait(1);
@@ -510,9 +512,11 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
 
         this.commitTxId = txResult[0] || this.commitTxId;
         this.claimTxId = txResult[1] || this.claimTxId;
+        this.state = FromBTCLNSwapState.CLAIM_CLAIMED;
         await this.save();
+        this.emitEvent();
 
-        await this.waitTillClaimed(abortSignal);
+        // await this.waitTillClaimed(abortSignal);
 
         console.log("Claim tx confirmed!");
 

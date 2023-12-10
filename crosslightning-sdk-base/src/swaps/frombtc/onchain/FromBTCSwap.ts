@@ -190,14 +190,16 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
         }
 
         this.commitTxId = txResult;
+        this.state = FromBTCSwapState.CLAIM_COMMITED;
         await this.save();
+        this.emitEvent();
 
         //Maybe don't wait for TX but instead subscribe to logs, this would improve the experience when user speeds up the transaction by replacing it.
 
-        if(!noWaitForConfirmation) {
-            await this.waitTillCommited(abortSignal);
-            return txResult;
-        }
+        // if(!noWaitForConfirmation) {
+        //     await this.waitTillCommited(abortSignal);
+        //     return txResult;
+        // }
 
         // this.state = BTCtoSolNewSwapState.CLAIM_COMMITED;
         //
@@ -326,19 +328,11 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
 
         this.claimTxId = txResult;
 
-        if(!noWaitForConfirmation) {
-            await this.save();
-            await this.waitTillClaimed(abortSignal);
-            return txResult;
-        }
-
-        /*if(!noWaitForConfirmation) {
-            const receipt = await txResult.wait(1);
-
-            if(!receipt.status) throw new Error("Transaction execution failed");
-
-            return receipt;
-        }*/
+        // if(!noWaitForConfirmation) {
+        //     await this.save();
+        //     await this.waitTillClaimed(abortSignal);
+        //     return txResult;
+        // }
 
         this.state = FromBTCSwapState.CLAIM_CLAIMED;
         await this.save();
