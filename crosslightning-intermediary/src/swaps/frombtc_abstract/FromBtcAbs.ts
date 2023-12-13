@@ -22,6 +22,8 @@ import * as bitcoin from "bitcoinjs-lib";
 import {createHash} from "crypto";
 import {expressHandlerWrapper, FieldTypeEnum, verifySchema} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
+import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
+import {FromBtcLnSwapState} from "../..";
 
 export type FromBtcConfig = {
     authorizationTimeout: number,
@@ -54,7 +56,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
     readonly config: FromBtcConfig & {swapTsCsvDelta: BN};
 
     constructor(
-        storageDirectory: IStorageManager<FromBtcSwapAbs<T>>,
+        storageDirectory: IIntermediaryStorage<FromBtcSwapAbs<T>>,
         path: string,
         swapContract: SwapContract<T, any>,
         chainEvents: ChainEvents<T>,
@@ -122,11 +124,14 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
      */
     private async checkPastSwaps() {
 
+        const queriedData = await this.storageManager.query([
+            {key: "state", value: FromBtcSwapState.CREATED},
+            {key: "state", value: FromBtcSwapState.COMMITED}
+        ]);
+
         const refundSwaps: FromBtcSwapAbs<T>[] = [];
 
-        for(let key in this.storageManager.data) {
-            const swap = this.storageManager.data[key];
-
+        for(let swap of queriedData) {
             //Current time, minus maximum chain time skew
             const currentTime = new BN(Math.floor(Date.now()/1000)-this.config.maxSkew);
 
@@ -200,7 +205,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
                 const paymentHash = event.paymentHash;
                 const paymentHashBuffer = Buffer.from(paymentHash, "hex");
-                const savedSwap = this.storageManager.data[paymentHash];
+                const savedSwap = await this.storageManager.getData(paymentHash);
 
                 const isSwapFound = savedSwap != null;
                 if (isSwapFound) {
@@ -227,7 +232,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 const paymentHashHex = event.paymentHash;
                 const paymentHash: Buffer = Buffer.from(paymentHashHex, "hex");
 
-                const savedSwap = this.storageManager.data[paymentHashHex];
+                const savedSwap = await this.storageManager.getData(paymentHashHex);
 
                 const isSwapNotFound = savedSwap == null;
                 if (isSwapNotFound) {
@@ -249,7 +254,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                     continue;
                 }
 
-                const savedSwap = this.storageManager.data[event.paymentHash];
+                const savedSwap = await this.storageManager.getData(event.paymentHash);
 
                 const isSwapNotFound = savedSwap == null;
                 if (isSwapNotFound) {

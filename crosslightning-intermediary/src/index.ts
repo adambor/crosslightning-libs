@@ -3,6 +3,8 @@ export * from "./info/InfoHandler";
 export * from "./prices/CoinGeckoSwapPrice";
 export * from "./prices/BinanceSwapPrice";
 
+export * from "./storage/IIntermediaryStorage";
+
 export * from "./storagemanager/StorageManager";
 
 export * from "./swaps/frombtc_abstract/FromBtcAbs";

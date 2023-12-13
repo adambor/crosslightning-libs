@@ -22,6 +22,7 @@ import {SwapNonce} from "../SwapNonce";
 import {AuthenticatedLnd} from "lightning";
 import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
+import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
 
 export type ToBtcLnConfig = {
     authorizationTimeout: number,
@@ -62,7 +63,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
     readonly config: ToBtcLnConfig & {minTsSendCltv: BN};
 
     constructor(
-        storageDirectory: IStorageManager<ToBtcLnSwapAbs<T>>,
+        storageDirectory: IIntermediaryStorage<ToBtcLnSwapAbs<T>>,
         path: string,
         swapContract: SwapContract<T, any>,
         chainEvents: ChainEvents<T>,
@@ -85,8 +86,13 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
      */
     private async checkPastInvoices() {
 
-        for(let key in this.storageManager.data) {
-            const invoiceData: ToBtcLnSwapAbs<T> = this.storageManager.data[key];
+        const queriedData = await this.storageManager.query([
+            {key: "state", value: ToBtcLnSwapState.SAVED},
+            {key: "state", value: ToBtcLnSwapState.COMMITED},
+            {key: "state", value: ToBtcLnSwapState.PAID},
+        ]);
+
+        for(let invoiceData of queriedData) {
             const decodedPR = bolt11.decode(invoiceData.pr);
 
             if (invoiceData.state === ToBtcLnSwapState.SAVED) {
@@ -391,7 +397,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
                 const paymentHash = event.paymentHash;
 
-                const savedInvoice = this.storageManager.data[paymentHash];
+                const savedInvoice = await this.storageManager.getData(paymentHash);
 
                 if(savedInvoice==null) {
                     console.error("[To BTC-LN: Solana.Initialize] No invoice submitted: ", paymentHash);
@@ -410,7 +416,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 const paymentHash = event.paymentHash;
                 const paymentHashBuffer = Buffer.from(event.paymentHash, "hex");
 
-                const savedInvoice = this.storageManager.data[paymentHash];
+                const savedInvoice = await this.storageManager.getData(paymentHash);
 
                 if(savedInvoice==null) {
                     console.error("[To BTC-LN: Solana.ClaimEvent] No invoice submitted: ", paymentHash);
@@ -427,7 +433,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             if(event instanceof RefundEvent) {
                 const paymentHash = event.paymentHash;
 
-                const savedInvoice = this.storageManager.data[paymentHash];
+                const savedInvoice = await this.storageManager.getData(paymentHash);
 
                 if(savedInvoice==null) {
                     console.error("[To BTC-LN: Solana.RefundEvent] No invoice submitted");
@@ -782,7 +788,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 return;
             }
 
-            const data = this.storageManager.data[parsedBody.paymentHash];
+            const data = await this.storageManager.getData(parsedBody.paymentHash);
 
             const isSwapFound = data!=null;
             if(isSwapFound) {

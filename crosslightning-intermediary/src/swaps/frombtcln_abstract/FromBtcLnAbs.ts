@@ -22,6 +22,8 @@ import {
 import {AuthenticatedLnd} from "lightning";
 import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
+import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
+import {ToBtcSwapState} from "../..";
 
 export type FromBtcLnConfig = {
     authorizationTimeout: number,
@@ -54,7 +56,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
     readonly config: FromBtcLnConfig;
 
     constructor(
-        storageDirectory: IStorageManager<FromBtcLnSwapAbs<T>>,
+        storageDirectory: IIntermediaryStorage<FromBtcLnSwapAbs<T>>,
         path: string,
         swapContract: SwapContract<T, any>,
         chainEvents: ChainEvents<T>,
@@ -78,9 +80,15 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
         const cancelInvoices: string[] = [];
         const refundSwaps: FromBtcLnSwapAbs<T>[] = [];
 
-        for(let key in this.storageManager.data) {
-            const swap = this.storageManager.data[key];
+        const queriedData = await this.storageManager.query([
+            {key: "state", value: FromBtcLnSwapState.CREATED},
+            {key: "state", value: FromBtcLnSwapState.RECEIVED},
+            {key: "state", value: FromBtcLnSwapState.COMMITED},
+            {key: "state", value: FromBtcLnSwapState.CLAIMED},
+            {key: "state", value: FromBtcLnSwapState.CANCELED},
+        ]);
 
+        for(let swap of queriedData) {
             if(swap.state===FromBtcLnSwapState.CREATED) {
                 //Check if already paid
                 const parsedPR = bolt11.decode(swap.pr);
@@ -238,7 +246,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 const paymentHash = event.paymentHash;
                 const paymentHashBuffer = Buffer.from(paymentHash, "hex");
 
-                const savedSwap = this.storageManager.data[paymentHash];
+                const savedSwap = await this.storageManager.getData(paymentHash);
 
                 const isSwapFound = savedSwap != null;
                 if (isSwapFound) {
@@ -269,7 +277,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 const secretHex = secret.toString("hex");
                 const paymentHashHex = paymentHash.toString("hex");
 
-                const savedSwap = this.storageManager.data[paymentHashHex];
+                const savedSwap = await this.storageManager.getData(paymentHashHex);
 
                 const isSwapFound = savedSwap != null;
                 if (!isSwapFound) {
@@ -308,7 +316,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
                 const paymentHashBuffer: Buffer = Buffer.from(event.paymentHash, "hex");
 
-                const savedSwap = this.storageManager.data[event.paymentHash];
+                const savedSwap = await this.storageManager.getData(event.paymentHash);
 
                 const isSwapFound = savedSwap != null;
                 if (!isSwapFound) {
@@ -849,7 +857,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 return;
             }
 
-            const invoiceData: FromBtcLnSwapAbs<T> = this.storageManager.data[parsedBody.paymentHash];
+            const invoiceData: FromBtcLnSwapAbs<T> = await this.storageManager.getData(parsedBody.paymentHash);
 
             const isSwapFound = invoiceData != null;
             if (!isSwapFound) {

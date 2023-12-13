@@ -6,6 +6,7 @@ import {ChainEvents, StorageObject, SwapContract, SwapData, TokenAddress, IStora
 import {AuthenticatedLnd} from "lightning";
 import {SwapHandlerSwap} from "./SwapHandlerSwap";
 import {PluginManager} from "../plugins/PluginManager";
+import {IIntermediaryStorage} from "../storage/IIntermediaryStorage";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -30,7 +31,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
 
     abstract readonly type: SwapHandlerType;
 
-    readonly storageManager: IStorageManager<V>;
+    readonly storageManager: IIntermediaryStorage<V>;
     readonly path: string;
 
     readonly swapContract: SwapContract<T, any>;
@@ -40,7 +41,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
     readonly swapPricing: ISwapPrice;
     readonly LND: AuthenticatedLnd;
 
-    protected constructor(storageDirectory: IStorageManager<V>, path: string, swapContract: SwapContract<T, any>, chainEvents: ChainEvents<T>, swapNonce: SwapNonce, allowedTokens: TokenAddress[], lnd: AuthenticatedLnd, swapPricing: ISwapPrice) {
+    protected constructor(storageDirectory: IIntermediaryStorage<V>, path: string, swapContract: SwapContract<T, any>, chainEvents: ChainEvents<T>, swapNonce: SwapNonce, allowedTokens: TokenAddress[], lnd: AuthenticatedLnd, swapPricing: ISwapPrice) {
         this.storageManager = storageDirectory;
         this.swapContract = swapContract;
         this.chainEvents = chainEvents;
@@ -74,7 +75,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
     abstract getInfo(): SwapHandlerInfoType;
 
     async removeSwapData(hash: string) {
-        const swap = this.storageManager.data[hash];
+        const swap = await this.storageManager.getData(hash);
         if(swap!=null) await PluginManager.swapRemove<T>(swap);
         await this.storageManager.removeData(hash);
     }
