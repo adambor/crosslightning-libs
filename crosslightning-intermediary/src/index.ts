@@ -6,6 +6,7 @@ export * from "./prices/BinanceSwapPrice";
 export * from "./storage/IIntermediaryStorage";
 
 export * from "./storagemanager/StorageManager";
+export * from "./storagemanager/IntermediaryStorageManager";
 
 export * from "./swaps/frombtc_abstract/FromBtcAbs";
 export * from "./swaps/frombtc_abstract/FromBtcSwapAbs";

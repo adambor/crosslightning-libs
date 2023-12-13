@@ -1,10 +1,12 @@
-import {StorageObject, IStorageManager} from "crosslightning-base";
+import {StorageObject} from "crosslightning-base";
 import * as fs from "fs/promises";
+import {IIntermediaryStorage, StorageQueryParam} from "../storage/IIntermediaryStorage";
 
-export class StorageManager<T extends StorageObject> implements IStorageManager<T> {
+export class IntermediaryStorageManager<T extends StorageObject> implements IIntermediaryStorage<T> {
 
     private readonly directory: string;
-    data: {
+    private type: new(data: any) => T;
+    private data: {
         [key: string]: T
     } = {};
 
@@ -16,6 +18,24 @@ export class StorageManager<T extends StorageObject> implements IStorageManager<
         try {
             await fs.mkdir(this.directory)
         } catch (e) {}
+    }
+
+    query(params: StorageQueryParam[]): Promise<T[]> {
+        return Promise.resolve(Object.keys(this.data).map((val) => this.data[val]).filter((val) => {
+            for(let param of params) {
+                if(typeof param.value === "object") {
+                    if(param.value.eq!=null && !param.value.eq(val[param.key])) return false;
+                    if(param.value.equals!=null && !param.value.equals(val[param.key])) return false;
+                } else {
+                    if(param.value!==val[param.key]) return false;
+                }
+            }
+            return true;
+        }));
+    }
+
+    getData(paymentHash: string): Promise<T> {
+        return Promise.resolve(this.data[paymentHash]);
     }
 
     async saveData(hash: string, object: T): Promise<void> {
@@ -42,27 +62,19 @@ export class StorageManager<T extends StorageObject> implements IStorageManager<
         }
     }
 
-    async loadData(type: new(data: any) => T): Promise<T[]> {
+    async loadData(type: new(data: any) => T): Promise<void> {
+        this.type = type;
         let files;
-        try {
-            files = await fs.readdir(this.directory);
-        } catch (e) {
-            console.error(e);
-            return [];
-        }
 
-        const arr = [];
+        files = await fs.readdir(this.directory);
 
         for(let file of files) {
             const paymentHash = file.split(".")[0];
             const result = await fs.readFile(this.directory+"/"+file);
             const obj = JSON.parse(result.toString());
             const parsed = new type(obj);
-            arr.push(parsed);
             this.data[paymentHash] = parsed;
         }
-
-        return arr;
     }
 
 }
