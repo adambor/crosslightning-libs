@@ -81,11 +81,16 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
         const refundSwaps: FromBtcLnSwapAbs<T>[] = [];
 
         const queriedData = await this.storageManager.query([
-            {key: "state", value: FromBtcLnSwapState.CREATED},
-            {key: "state", value: FromBtcLnSwapState.RECEIVED},
-            {key: "state", value: FromBtcLnSwapState.COMMITED},
-            {key: "state", value: FromBtcLnSwapState.CLAIMED},
-            {key: "state", value: FromBtcLnSwapState.CANCELED},
+            {
+                key: "state",
+                value: [
+                    FromBtcLnSwapState.CREATED,
+                    FromBtcLnSwapState.RECEIVED,
+                    FromBtcLnSwapState.COMMITED,
+                    FromBtcLnSwapState.CLAIMED,
+                    FromBtcLnSwapState.CANCELED,
+                ]
+            }
         ]);
 
         for(let swap of queriedData) {

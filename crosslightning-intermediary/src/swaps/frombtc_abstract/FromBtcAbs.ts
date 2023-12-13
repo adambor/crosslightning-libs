@@ -125,8 +125,13 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
     private async checkPastSwaps() {
 
         const queriedData = await this.storageManager.query([
-            {key: "state", value: FromBtcSwapState.CREATED},
-            {key: "state", value: FromBtcSwapState.COMMITED}
+            {
+                key: "state",
+                value: [
+                    FromBtcSwapState.CREATED,
+                    FromBtcSwapState.COMMITED
+                ]
+            }
         ]);
 
         const refundSwaps: FromBtcSwapAbs<T>[] = [];

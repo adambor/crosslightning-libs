@@ -87,9 +87,14 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
     private async checkPastInvoices() {
 
         const queriedData = await this.storageManager.query([
-            {key: "state", value: ToBtcLnSwapState.SAVED},
-            {key: "state", value: ToBtcLnSwapState.COMMITED},
-            {key: "state", value: ToBtcLnSwapState.PAID},
+            {
+                key: "state",
+                value: [
+                    ToBtcLnSwapState.SAVED,
+                    ToBtcLnSwapState.COMMITED,
+                    ToBtcLnSwapState.PAID
+                ]
+            }
         ]);
 
         for(let invoiceData of queriedData) {

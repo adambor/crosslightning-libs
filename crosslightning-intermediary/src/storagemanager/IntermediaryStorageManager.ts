@@ -1,6 +1,7 @@
 import {StorageObject} from "crosslightning-base";
 import * as fs from "fs/promises";
 import {IIntermediaryStorage, StorageQueryParam} from "../storage/IIntermediaryStorage";
+import has = Reflect.has;
 
 export class IntermediaryStorageManager<T extends StorageObject> implements IIntermediaryStorage<T> {
 
@@ -23,11 +24,24 @@ export class IntermediaryStorageManager<T extends StorageObject> implements IInt
     query(params: StorageQueryParam[]): Promise<T[]> {
         return Promise.resolve(Object.keys(this.data).map((val) => this.data[val]).filter((val) => {
             for(let param of params) {
-                if(typeof param.value === "object") {
-                    if(param.value.eq!=null && !param.value.eq(val[param.key])) return false;
-                    if(param.value.equals!=null && !param.value.equals(val[param.key])) return false;
-                } else {
-                    if(param.value!==val[param.key]) return false;
+                if(param.value!=null) {
+                    if(typeof param.value === "object") {
+                        if(param.value.eq!=null && !param.value.eq(val[param.key])) return false;
+                        if(param.value.equals!=null && !param.value.equals(val[param.key])) return false;
+                    } else {
+                        if(param.value!==val[param.key]) return false;
+                    }
+                } else if(param.values!=null) {
+                    let hasSome = false;
+                    for(let expectedValue of param.values) {
+                        if(typeof expectedValue === "object") {
+                            if(expectedValue.eq!=null && !expectedValue.eq(val[param.key])) hasSome = true;
+                            if(expectedValue.equals!=null && !expectedValue.equals(val[param.key])) hasSome = true;
+                        } else {
+                            if(expectedValue===val[param.key]) hasSome = true;
+                        }
+                    }
+                    if(!hasSome) return false;
                 }
             }
             return true;

@@ -2,7 +2,8 @@ import {StorageObject} from "crosslightning-base";
 
 export type StorageQueryParam = {
     key: string,
-    value: any
+    value?: any,
+    values?: any[]
 }
 
 export interface IIntermediaryStorage<T extends StorageObject> {
