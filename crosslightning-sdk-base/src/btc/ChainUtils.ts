@@ -167,6 +167,39 @@ export class ChainUtils {
 
     }
 
+    static async getAddressBalances(address: string): Promise<{
+        confirmedBalance: BN,
+        unconfirmedBalance: BN
+    }> {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"address/"+address, {
+            method: "GET",
+            timeout
+        }));
+
+        if(response.status!==200) {
+            let resp: string;
+            try {
+                resp = await response.text();
+            } catch (e) {
+                throw new Error(response.statusText);
+            }
+            throw new Error(resp);
+        }
+
+        let jsonBody: any = await response.json();
+
+        const confirmedInput = new BN(jsonBody.chain_stats.funded_txo_sum);
+        const confirmedOutput = new BN(jsonBody.chain_stats.spent_txo_sum);
+        const unconfirmedInput = new BN(jsonBody.mempool_stats.funded_txo_sum);
+        const unconfirmedOutput = new BN(jsonBody.mempool_stats.spent_txo_sum);
+
+        return {
+            confirmedBalance: confirmedInput.sub(confirmedOutput),
+            unconfirmedBalance: unconfirmedInput.sub(unconfirmedOutput)
+        }
+
+    }
+
     static async getAddressTransactions(address: string): Promise<BitcoinTransaction[]> {
 
         const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"address/"+address+"/txs", {
