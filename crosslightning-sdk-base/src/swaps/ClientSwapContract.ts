@@ -270,7 +270,8 @@ export class ClientSwapContract<T extends SwapData> {
         signature: string,
         nonce: number,
         expiry: number,
-        pricingInfo: PriceInfoType
+        pricingInfo: PriceInfoType,
+        feeRate?: any
     }> {
         const firstPart = new BN(Math.floor((Date.now()/1000)) - 700000000);
 
@@ -310,6 +311,14 @@ export class ClientSwapContract<T extends SwapData> {
 
         const pricePreFetchPromise = this.swapPrice.preFetchPrice==null || requiredToken==null ? null : this.swapPrice.preFetchPrice(requiredToken, abortController.signal);
 
+        const feeRate: any = await tryWithRetries(() => this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
+            ? Promise.resolve(null)
+            : this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, hash)
+        ).catch(e => {
+            abortController.abort();
+            throw e;
+        });
+
         const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/payInvoice", {
             method: "POST",
             body: JSON.stringify({
@@ -320,7 +329,8 @@ export class ClientSwapContract<T extends SwapData> {
                 nonce: nonce.toString(10),
                 token: requiredToken==null ? null : requiredToken.toString(),
                 offerer: this.swapContract.getAddress(),
-                exactIn
+                exactIn,
+                feeRate: feeRate==null ? null : feeRate.toString()
             }),
             headers: {'Content-Type': 'application/json'},
             timeout: this.options.postRequestTimeout
@@ -430,7 +440,7 @@ export class ClientSwapContract<T extends SwapData> {
                 }
             })(),
             tryWithRetries(
-                () => this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce),
+                () => this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce, feeRate),
                 null,
                 e => e instanceof SignatureVerificationError,
                 abortController.signal
@@ -453,7 +463,9 @@ export class ClientSwapContract<T extends SwapData> {
 
             expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)),
 
-            pricingInfo
+            pricingInfo,
+
+            feeRate
         };
     }
 
@@ -487,7 +499,8 @@ export class ClientSwapContract<T extends SwapData> {
 
         expiry: number,
 
-        pricingInfo: PriceInfoType
+        pricingInfo: PriceInfoType,
+        feeRate?: any
     }> {
         let res: any = await this.getLNURL(lnurl);
         if(res==null) {
@@ -631,7 +644,8 @@ export class ClientSwapContract<T extends SwapData> {
 
         expiry: number,
 
-        pricingInfo: PriceInfoType
+        pricingInfo: PriceInfoType,
+        feeRate?: any
     }> {
         const parsedPR = bolt11.decode(bolt11PayReq);
 
@@ -646,6 +660,8 @@ export class ClientSwapContract<T extends SwapData> {
 
         const pricePreFetchPromise = this.swapPrice.preFetchPrice==null || requiredToken==null ? null : this.swapPrice.preFetchPrice(requiredToken, abortController.signal);
 
+        let feeRate: any;
+
         const [_, jsonBody] = await Promise.all([
             (async () => {
                 const payStatus = await tryWithRetries(() => this.swapContract.getPaymentHashStatus(parsedPR.tagsObject.payment_hash), null, null, abortController.signal);
@@ -655,6 +671,11 @@ export class ClientSwapContract<T extends SwapData> {
                 }
             })(),
             (async () => {
+                feeRate = await tryWithRetries(() => this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
+                    ? Promise.resolve(null)
+                    : this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, parsedPR.tagsObject.payment_hash)
+                , null, null, abortController.signal);
+
                 const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/payInvoice", {
                     method: "POST",
                     body: JSON.stringify({
@@ -662,7 +683,8 @@ export class ClientSwapContract<T extends SwapData> {
                         maxFee: maxFee.toString(),
                         expiryTimestamp,
                         token: requiredToken==null ? null : requiredToken.toString(),
-                        offerer: this.swapContract.getAddress()
+                        offerer: this.swapContract.getAddress(),
+                        feeRate: feeRate==null ? null : feeRate.toString()
                     }),
                     headers: {'Content-Type': 'application/json'},
                     signal: abortController.signal,
@@ -764,7 +786,7 @@ export class ClientSwapContract<T extends SwapData> {
                 }
             })(),
             tryWithRetries(
-                () => this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce),
+                () => this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce, feeRate),
                 null,
                 e => e instanceof SignatureVerificationError,
                 abortController.signal
@@ -790,7 +812,8 @@ export class ClientSwapContract<T extends SwapData> {
 
             expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)),
 
-            pricingInfo
+            pricingInfo,
+            feeRate
         }
     }
 
@@ -939,7 +962,8 @@ export class ClientSwapContract<T extends SwapData> {
         signature: string,
         nonce: number,
         expiry: number,
-        pricingInfo: PriceInfoType
+        pricingInfo: PriceInfoType,
+        feeRate?: any
     }> {
 
         const abortController = new AbortController();
@@ -954,7 +978,8 @@ export class ClientSwapContract<T extends SwapData> {
             feePerBlock,
             btcRelayData,
             currentBtcBlock,
-            addFee
+            addFee,
+            feeRate
         ] = await Promise.all([
             tryWithRetries<BN>(() => this.btcRelay.getFeePerBlock().then(val => val.mul(feeSafetyFactor || new BN(2))), null, null, abortController.signal),
 
@@ -973,7 +998,12 @@ export class ClientSwapContract<T extends SwapData> {
                 } else {
                     return this.swapContract.getClaimFee().then(value => value.mul(feeSafetyFactor || new BN(2)));
                 }
-            }, null, null, abortController.signal)
+            }, null, null, abortController.signal),
+
+            tryWithRetries<any>(() => this.swapContract.getInitFeeRate==null || requiredOffererKey==null || requiredToken==null
+                    ? Promise.resolve(null)
+                    : this.swapContract.getInitFeeRate(requiredOffererKey, this.swapContract.getAddress(), requiredToken)
+            , null, null, abortController.signal)
         ]).catch(e => {
             abortController.abort();
             throw e;
@@ -1011,7 +1041,8 @@ export class ClientSwapContract<T extends SwapData> {
                     addFee: addFee.toString(10)
                 },
 
-                exactOut
+                exactOut,
+                feeRate: feeRate==null ? null : feeRate.toString()
             }),
             headers: {'Content-Type': 'application/json'},
             timeout: this.options.postRequestTimeout,
@@ -1139,7 +1170,7 @@ export class ClientSwapContract<T extends SwapData> {
             })(),
             //Verify authorization
             tryWithRetries(
-                () => this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce),
+                () => this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce, feeRate),
                 null,
                 e => e instanceof SignatureVerificationError,
                 abortController.signal
@@ -1159,7 +1190,8 @@ export class ClientSwapContract<T extends SwapData> {
             signature: jsonBody.data.signature,
             nonce: jsonBody.data.nonce,
             expiry: await tryWithRetries(() => this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)),
-            pricingInfo
+            pricingInfo,
+            feeRate
         };
 
     }
@@ -1402,6 +1434,7 @@ export class ClientSwapContract<T extends SwapData> {
         requiredFeePPM?: BN,
         maxSecurityDeposit?: BN,
         minOut?: BN,
+        feeRate?: any,
         abortSignal?: AbortSignal
     ): Promise<{
         is_paid: boolean,
@@ -1414,14 +1447,15 @@ export class ClientSwapContract<T extends SwapData> {
 
         expiry?: number,
 
-        pricingInfo?: PriceInfoType
+        pricingInfo?: PriceInfoType,
+        feeRate?: any
     }> {
 
         const decodedPR = bolt11.decode(bolt11PaymentReq);
 
         const paymentHash = decodedPR.tagsObject.payment_hash;
 
-        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/getInvoicePaymentAuth?paymentHash="+encodeURIComponent(paymentHash), {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/getInvoicePaymentAuth?paymentHash="+encodeURIComponent(paymentHash)+(feeRate==null ? "" : "&feeRate="+encodeURIComponent(feeRate)), {
             method: "GET",
             signal: abortSignal,
             timeout: this.options.getRequestTimeout
@@ -1481,7 +1515,7 @@ export class ClientSwapContract<T extends SwapData> {
                     return null;
                 })(),
                 tryWithRetries(
-                    () => this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce),
+                    () => this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce, feeRate),
                     null,
                     (e) => e instanceof SignatureVerificationError
                 ),
@@ -1519,7 +1553,8 @@ export class ClientSwapContract<T extends SwapData> {
                     null,
                     abortSignal
                 ),
-                pricingInfo
+                pricingInfo,
+                feeRate
             }
         }
 
@@ -1551,11 +1586,16 @@ export class ClientSwapContract<T extends SwapData> {
         signature: string,
         nonce: number,
         expiry: number,
-        pricingInfo: PriceInfoType
+        pricingInfo: PriceInfoType,
+        feeRate?: any
     }> {
         if(abortSignal!=null && abortSignal.aborted) {
             throw new AbortError();
         }
+
+        const feeRate: any = await tryWithRetries<any>(() => this.swapContract.getInitFeeRate==null || requiredOffererKey==null || requiredToken==null
+            ? Promise.resolve(null)
+            : this.swapContract.getInitFeeRate(requiredOffererKey, this.swapContract.getAddress(), requiredToken), null, null, abortSignal);
 
         while(abortSignal==null || !abortSignal.aborted) {
             const result = await this.getPaymentAuthorization(
@@ -1567,6 +1607,7 @@ export class ClientSwapContract<T extends SwapData> {
                 requiredFeePPM,
                 minSecurityDeposit,
                 minOut,
+                feeRate,
                 abortSignal
             );
             if(result.is_paid) return result as any;
