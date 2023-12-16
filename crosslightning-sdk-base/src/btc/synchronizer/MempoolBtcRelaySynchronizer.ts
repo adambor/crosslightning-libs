@@ -20,7 +20,8 @@ export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> imp
         computedHeaderMap: {[blockheight: number]: B},
         blockHeaderMap: {[blockheight: number]: MempoolBitcoinBlock},
         btcRelayTipBlockHash: string,
-        latestBlockHeader: MempoolBitcoinBlock
+        latestBlockHeader: MempoolBitcoinBlock,
+        startForkId: number
     }> {
 
         const tipData = await this.btcRelay.getTipData();
@@ -37,6 +38,7 @@ export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> imp
             computedCommitedHeaders: null
         };
 
+        let startForkId = null;
 
         const {resultStoredHeader, resultBitcoinHeader} = await this.btcRelay.retrieveLatestKnownBlockLog();
         cacheData.lastStoredHeader = resultStoredHeader;
@@ -61,12 +63,13 @@ export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> imp
         const saveHeaders = async (headerCache: MempoolBitcoinBlock[]) => {
             console.log("Header cache: ", headerCache);
             if(cacheData.forkId===-1) {
-                cacheData = await this.btcRelay.saveNewForkHeaders(headerCache, cacheData.lastStoredHeader, tipData.chainWork)
+                cacheData = await this.btcRelay.saveNewForkHeaders(headerCache, cacheData.lastStoredHeader, tipData.chainWork);
             } else if(cacheData.forkId===0) {
                 cacheData = await this.btcRelay.saveMainHeaders(headerCache, cacheData.lastStoredHeader);
             } else {
                 cacheData = await this.btcRelay.saveForkHeaders(headerCache, cacheData.lastStoredHeader, cacheData.forkId, tipData.chainWork)
             }
+            if(cacheData.forkId!==-1 && cacheData.forkId!==0) startForkId = cacheData.forkId;
             txsList.push(cacheData.tx);
             for(let storedHeader of cacheData.computedCommitedHeaders) {
                 computedHeaderMap[storedHeader.getBlockheight()] = storedHeader;
@@ -115,7 +118,8 @@ export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> imp
             computedHeaderMap,
 
             btcRelayTipBlockHash: btcRelayTipBlockHash,
-            latestBlockHeader: spvTipBlockHeader
+            latestBlockHeader: spvTipBlockHeader,
+            startForkId
         };
 
     }
