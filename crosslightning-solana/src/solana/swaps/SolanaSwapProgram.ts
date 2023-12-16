@@ -1333,9 +1333,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                         //Retrieve computed header
                         commitedHeader = resp.computedHeaderMap[merkleProof.blockheight];
                     }
+
+                    const useFeeRate = resp.startForkId==null ? await this.btcRelay.getMainFeeRate() : await this.btcRelay.getForkFeeRate(resp.startForkId);
+
                     resp.txs.forEach(tx => {
                         tx.tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                            microLamports: computedFeeRate
+                            microLamports: parseInt(useFeeRate)
                         }));
                         txs.push(tx)
                     });
