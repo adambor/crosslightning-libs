@@ -149,6 +149,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                     ix.data.payOut, //1 byte
                     ix.data.kind, //1 byte
                     payIn, //1 byte
+                    ix.accounts.initializerDepositTokenAccount, //32 bytes
                     ix.accounts.claimerTokenAccount, //32 bytes
                     securityDeposit,
                     claimerBounty,

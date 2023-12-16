@@ -895,6 +895,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 account.payOut,
                 account.kind,
                 account.payIn,
+                account.initializerDepositTokenAccount,
                 account.claimerTokenAccount,
                 account.securityDeposit,
                 account.claimerBounty,
@@ -933,10 +934,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         securityDeposit: BN,
         claimerBounty: BN
     ): Promise<SolanaSwapData> {
+        const tokenAddr: PublicKey = typeof(token)==="string" ? new PublicKey(token) : token;
+        const offererKey = offerer==null ? null : new PublicKey(offerer);
+        const claimerKey = claimer==null ? null : new PublicKey(claimer);
         return Promise.resolve(new SolanaSwapData(
-            offerer==null ? null : new PublicKey(offerer),
-            claimer==null ? null : new PublicKey(claimer),
-            token,
+            offererKey,
+            claimerKey,
+            tokenAddr,
             amount,
             paymentHash,
             expiry,
@@ -945,7 +949,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             payOut,
             type==null ? null : SolanaSwapProgram.typeToKind(type),
             payIn,
-            null,
+            offererKey==null ? null : payIn ? SplToken.getAssociatedTokenAddressSync(token, offererKey) : PublicKey.default,
+            claimerKey==null ? null : SplToken.getAssociatedTokenAddressSync(token, claimerKey),
             securityDeposit,
             claimerBounty,
             null
@@ -2101,56 +2106,67 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     async getRefundFeeRate(swapData: SolanaSwapData): Promise<string> {
 
-        const escrowState = this.SwapEscrowState(Buffer.from(swapData.paymentHash, "hex"));
-
+        let accounts: PublicKey[] = [];
         if(swapData.payIn) {
             const vault = this.SwapVault(swapData.token);
 
-            return await this.getFeeRate([
+            accounts = [
                 swapData.offerer,
                 swapData.claimer,
-                escrowState,
-                vault,
-                swapData.claimerTokenAccount
-            ]);
+                vault
+            ];
+
+            if(swapData.initializerTokenAccount!=null) {
+                accounts.push(swapData.initializerTokenAccount);
+            }
         } else {
             const userData = this.SwapUserVault(swapData.offerer, swapData.token);
 
-            return await this.getFeeRate([
+            accounts = [
                 swapData.offerer,
                 swapData.claimer,
-                escrowState,
                 userData
-            ]);
+            ];
         }
+
+        if(swapData.paymentHash!=null) {
+            accounts.push(this.SwapEscrowState(Buffer.from(swapData.paymentHash, "hex")));
+        }
+
+        return await this.getFeeRate(accounts);
 
     }
 
     async getClaimFeeRate(swapData: SolanaSwapData): Promise<string> {
 
-        const escrowState = this.SwapEscrowState(Buffer.from(swapData.paymentHash, "hex"));
-
-        if(swapData.payIn) {
+        let accounts: PublicKey[] = [];
+        if(swapData.payOut) {
             const vault = this.SwapVault(swapData.token);
 
-            return await this.getFeeRate([
+            accounts = [
                 this.signer.publicKey,
                 swapData.payIn ? swapData.offerer : swapData.claimer,
-                escrowState,
-                vault,
-                swapData.claimerTokenAccount
-            ]);
+                vault
+            ];
+
+            if(swapData.claimerTokenAccount!=null) {
+                accounts.push(swapData.claimerTokenAccount);
+            }
         } else {
             const userData = this.SwapUserVault(swapData.claimer, swapData.token);
 
-            return await this.getFeeRate([
+            accounts = [
                 this.signer.publicKey,
                 swapData.payIn ? swapData.offerer : swapData.claimer,
-                escrowState,
                 userData
-            ]);
+            ];
         }
 
+        if(swapData.paymentHash!=null) {
+            accounts.push(this.SwapEscrowState(Buffer.from(swapData.paymentHash, "hex")));
+        }
+
+        return await this.getFeeRate(accounts);
     }
 
     private getATARentExemptLamports(): Promise<BN> {

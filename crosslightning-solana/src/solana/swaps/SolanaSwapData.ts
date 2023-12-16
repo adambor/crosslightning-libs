@@ -18,6 +18,7 @@ export class SolanaSwapData extends SwapData {
     kind: number;
     payIn: boolean;
     claimerTokenAccount?: PublicKey;
+    initializerTokenAccount?: PublicKey;
 
     securityDeposit: BN;
     claimerBounty: BN;
@@ -37,6 +38,7 @@ export class SolanaSwapData extends SwapData {
         payOut: boolean,
         kind: number,
         payIn: boolean,
+        initializerTokenAccount: PublicKey,
         claimerTokenAccount: PublicKey,
 
         securityDeposit: BN,
@@ -59,6 +61,7 @@ export class SolanaSwapData extends SwapData {
         payOut?: boolean,
         kind?: number,
         payIn?: boolean,
+        initializerTokenAccount?: PublicKey,
         claimerTokenAccount?: PublicKey,
         securityDeposit?: BN,
         claimerBounty?: BN,
@@ -80,6 +83,7 @@ export class SolanaSwapData extends SwapData {
             this.kind = kind;
             this.payIn = payIn;
             this.claimerTokenAccount = claimerTokenAccount;
+            this.initializerTokenAccount = initializerTokenAccount;
             this.securityDeposit = securityDeposit;
             this.claimerBounty = claimerBounty;
             this.txoHash = txoHash;
@@ -96,6 +100,7 @@ export class SolanaSwapData extends SwapData {
             this.kind = offererOrData.kind;
             this.payIn = offererOrData.payIn;
             this.claimerTokenAccount = offererOrData.claimerTokenAccount==null ? null : new PublicKey(offererOrData.claimerTokenAccount);
+            this.initializerTokenAccount = offererOrData.initializerTokenAccount==null ? null : new PublicKey(offererOrData.initializerTokenAccount);
             this.securityDeposit = offererOrData.securityDeposit==null ? null : new BN(offererOrData.securityDeposit);
             this.claimerBounty = offererOrData.claimerBounty==null ? null : new BN(offererOrData.claimerBounty);
             this.txoHash = offererOrData.txoHash;
@@ -222,7 +227,8 @@ export class SolanaSwapData extends SwapData {
             new BN(account.securityDeposit.toString(10)).eq(this.securityDeposit) &&
             new BN(account.claimerBounty.toString(10)).eq(this.claimerBounty) &&
             account.mint.equals(this.token) &&
-            (this.claimerTokenAccount==null || account.claimerTokenAccount.equals(this.claimerTokenAccount));
+            (this.claimerTokenAccount==null || account.claimerTokenAccount.equals(this.claimerTokenAccount)) &&
+            (this.initializerTokenAccount==null || account.initializerDepositTokenAccount.equals(this.initializerTokenAccount));
     }
 
     equals(other: SolanaSwapData): boolean {
@@ -231,6 +237,13 @@ export class SolanaSwapData extends SwapData {
         if(this.claimerTokenAccount!=null && other.claimerTokenAccount!=null) {
             if(!this.claimerTokenAccount.equals(other.claimerTokenAccount)) return false;
         }
+
+        if(this.initializerTokenAccount==null && other.initializerTokenAccount!=null) return false;
+        if(this.initializerTokenAccount!=null && other.initializerTokenAccount==null) return false;
+        if(this.initializerTokenAccount!=null && other.initializerTokenAccount!=null) {
+            if(!this.initializerTokenAccount.equals(other.initializerTokenAccount)) return false;
+        }
+
         return other.kind===this.kind &&
             other.confirmations===this.confirmations &&
             this.nonce.eq(other.nonce) &&
