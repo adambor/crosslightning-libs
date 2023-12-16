@@ -116,9 +116,9 @@ export interface SwapContract<T extends SwapData, TX> {
     getIntermediaryBalance(address: string, token?: TokenAddress): Promise<BN>;
     toTokenAddress(address: string): TokenAddress;
 
-    getCommitFee(): Promise<BN>;
-    getClaimFee(): Promise<BN>;
-    getRefundFee(): Promise<BN>;
+    getCommitFee(swapData: T, feeRate?: any): Promise<BN>;
+    getClaimFee(swapData: T, feeRate?: any): Promise<BN>;
+    getRefundFee(swapData: T, feeRate?: any): Promise<BN>;
 
     getInitPayInFeeRate?(offerer: string, claimer: string, token: TokenAddress, paymentHash?: string): Promise<any>;
     getInitFeeRate?(offerer: string, claimer: string, token: TokenAddress, paymentHash?: string): Promise<any>;

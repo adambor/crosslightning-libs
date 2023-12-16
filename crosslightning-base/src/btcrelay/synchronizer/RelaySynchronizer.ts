@@ -10,7 +10,8 @@ export interface RelaySynchronizer<V extends BtcStoredHeader<any>, T, B extends 
         computedHeaderMap: {[blockheight: number]: V},
         blockHeaderMap: {[blockheight: number]: B},
         btcRelayTipBlockHash: string,
-        latestBlockHeader: B
+        latestBlockHeader: B,
+        startForkId?: number
     }>;
 
 }
