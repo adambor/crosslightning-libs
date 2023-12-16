@@ -89,7 +89,24 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
         //     }
         // }
 
-        const swap = new FromBTCLNSwap<T>(this, result.pr, result.secret, url, swapData, result.swapFee, requiredBaseFee, requiredFeePPM, total, result.pricingInfo, null, null, null, null, null);
+        const swap = new FromBTCLNSwap<T>(
+            this,
+            result.pr,
+            result.secret,
+            url,
+            swapData,
+            result.swapFee,
+            requiredBaseFee,
+            requiredFeePPM,
+            total,
+            result.pricingInfo,
+            result.feeRate,
+            null,
+            null,
+            null,
+            null,
+            null
+        );
 
         await swap.save();
         this.swapData[swap.getPaymentHash().toString("hex")] = swap;
@@ -135,7 +152,24 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
         const total = result.total;
 
-        const swap = new FromBTCLNSwap<T>(this, result.pr, result.secret, url, swapData, result.swapFee, requiredBaseFee, requiredFeePPM, total, result.pricingInfo, lnurl, result.lnurlCallbackResult, result.withdrawRequest.k1, result.withdrawRequest.callback, !noInstantReceive);
+        const swap = new FromBTCLNSwap<T>(
+            this,
+            result.pr,
+            result.secret,
+            url,
+            swapData,
+            result.swapFee,
+            requiredBaseFee,
+            requiredFeePPM,
+            total,
+            result.pricingInfo,
+            result.feeRate,
+            lnurl,
+            result.lnurlCallbackResult,
+            result.withdrawRequest.k1,
+            result.withdrawRequest.callback,
+            !noInstantReceive
+        );
 
         await swap.save();
         this.swapData[swap.getPaymentHash().toString("hex")] = swap;
@@ -294,7 +328,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
                 try {
                     await tryWithRetries(
-                        () => this.contract.swapContract.isValidInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce),
+                        () => this.contract.swapContract.isValidInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce, swap.feeRate),
                         null,
                         (e) => e instanceof SignatureVerificationError
                     );

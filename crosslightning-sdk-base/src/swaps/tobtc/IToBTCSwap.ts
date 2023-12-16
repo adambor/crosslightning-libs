@@ -23,6 +23,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
     timeout: string;
     signature: string;
     nonce: number;
+    feeRate: any;
 
     secret: string;
 
@@ -48,6 +49,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
         timeout?: string,
         signature?: string,
         nonce?: number,
+        feeRate?: any,
         url?: string,
         expiry?: number,
         pricing?: PriceInfoType
@@ -66,6 +68,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
             this.timeout = timeout;
             this.signature = signature;
             this.nonce = nonce;
+            this.feeRate = feeRate;
             this.expiry = expiry;
         } else {
             super(prOrObject);
@@ -83,6 +86,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
             this.timeout = prOrObject.timeout;
             this.signature = prOrObject.signature;
             this.nonce = prOrObject.nonce;
+            this.feeRate = prOrObject.feeRate;
             this.commitTxId = prOrObject.commitTxId;
             this.refundTxId = prOrObject.refundTxId;
             this.expiry = prOrObject.expiry;
@@ -155,7 +159,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
 
         let txResult;
         try {
-            txResult = await this.wrapper.contract.swapContract.initPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce, !noWaitForConfirmation, skipChecks, abortSignal);
+            txResult = await this.wrapper.contract.swapContract.initPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce, !noWaitForConfirmation, skipChecks, abortSignal, this.feeRate);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 console.error(e);
@@ -193,7 +197,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
 
         let result: any[];
         try {
-            result = await this.wrapper.contract.swapContract.txsInitPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce, skipChecks);
+            result = await this.wrapper.contract.swapContract.txsInitPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce, skipChecks, this.feeRate);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 console.error(e);
@@ -469,6 +473,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
             timeout: this.timeout,
             signature: this.signature,
             nonce: this.nonce,
+            feeRate: this.feeRate==null ? null : this.feeRate.toString(),
             commitTxId: this.commitTxId,
             refundTxId: this.refundTxId,
             expiry: this.expiry
@@ -505,14 +510,14 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
      * Get the estimated solana fee of the commit transaction
      */
     getCommitFee(): Promise<BN> {
-        return this.getWrapper().contract.swapContract.getCommitFee();
+        return this.getWrapper().contract.swapContract.getCommitFee(this.data);
     }
 
     /**
      * Get the estimated solana transaction fee of the refund transaction
      */
     getRefundFee(): Promise<BN> {
-        return this.getWrapper().contract.swapContract.getRefundFee();
+        return this.getWrapper().contract.swapContract.getRefundFee(this.data);
     }
 
     /**

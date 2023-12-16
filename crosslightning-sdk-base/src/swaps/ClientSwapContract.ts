@@ -311,13 +311,12 @@ export class ClientSwapContract<T extends SwapData> {
 
         const pricePreFetchPromise = this.swapPrice.preFetchPrice==null || requiredToken==null ? null : this.swapPrice.preFetchPrice(requiredToken, abortController.signal);
 
-        const feeRate: any = await tryWithRetries(() => this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
-            ? Promise.resolve(null)
-            : this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, hash)
-        ).catch(e => {
-            abortController.abort();
-            throw e;
-        });
+        const feeRate: any = this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
+            ? null
+            : await tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, hash)).catch(e => {
+                abortController.abort();
+                throw e;
+            });
 
         const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/payInvoice", {
             method: "POST",
@@ -671,10 +670,9 @@ export class ClientSwapContract<T extends SwapData> {
                 }
             })(),
             (async () => {
-                feeRate = await tryWithRetries(() => this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
-                    ? Promise.resolve(null)
-                    : this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, parsedPR.tagsObject.payment_hash)
-                , null, null, abortController.signal);
+                feeRate = this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
+                    ? null
+                    : await tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, parsedPR.tagsObject.payment_hash), null, null, abortController.signal);
 
                 const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/payInvoice", {
                     method: "POST",
@@ -974,6 +972,22 @@ export class ClientSwapContract<T extends SwapData> {
             tryWithRetries(() => this.swapContract.getIntermediaryBalance(requiredOffererKey, requiredToken), null, null, abortController.signal);
         const pricePrefetchPromise: Promise<BN> = requiredToken==null || this.swapPrice.preFetchPrice==null ? null : this.swapPrice.preFetchPrice(requiredToken, abortController.signal);
 
+        const dummySwapData = requiredOffererKey==null || requiredToken==null ? null : await this.swapContract.createSwapData(
+            ChainSwapType.CHAIN,
+            requiredOffererKey,
+            this.swapContract.getAddress(),
+            requiredToken,
+            null,
+            null,
+            null,
+            null,
+            null,
+            false,
+            true,
+            null,
+            null
+        );
+
         const [
             feePerBlock,
             btcRelayData,
@@ -994,16 +1008,15 @@ export class ClientSwapContract<T extends SwapData> {
             tryWithRetries<BN>(() => {
                 if((this.swapContract as any).getRawClaimFee!=null) {
                     //Workaround for sol
-                    return (this.swapContract as any).getRawClaimFee();
+                    return (this.swapContract as any).getRawClaimFee(dummySwapData);
                 } else {
-                    return this.swapContract.getClaimFee().then(value => value.mul(feeSafetyFactor || new BN(2)));
+                    return this.swapContract.getClaimFee(dummySwapData).then(value => value.mul(feeSafetyFactor || new BN(2)));
                 }
             }, null, null, abortController.signal),
 
-            tryWithRetries<any>(() => this.swapContract.getInitFeeRate==null || requiredOffererKey==null || requiredToken==null
-                    ? Promise.resolve(null)
-                    : this.swapContract.getInitFeeRate(requiredOffererKey, this.swapContract.getAddress(), requiredToken)
-            , null, null, abortController.signal)
+            this.swapContract.getInitFeeRate==null || requiredOffererKey==null || requiredToken==null
+                ? Promise.resolve<any>(null)
+                : tryWithRetries<any>(() => this.swapContract.getInitFeeRate(requiredOffererKey, this.swapContract.getAddress(), requiredToken), null, null, abortController.signal)
         ]).catch(e => {
             abortController.abort();
             throw e;
@@ -1245,7 +1258,8 @@ export class ClientSwapContract<T extends SwapData> {
 
         lnurlCallbackResult?: Promise<void>,
 
-        pricingInfo: PriceInfoType
+        pricingInfo: PriceInfoType,
+        feeRate?: any
     }> {
         let res: any = await this.getLNURL(lnurl);
         if(res==null) {
@@ -1300,7 +1314,8 @@ export class ClientSwapContract<T extends SwapData> {
         total: BN,
         intermediaryKey: string,
         securityDeposit: BN,
-        pricingInfo: PriceInfoType
+        pricingInfo: PriceInfoType,
+        feeRate?: any
     }> {
         if(descriptionHash!=null) {
             if(descriptionHash.length!==32) {
@@ -1317,6 +1332,13 @@ export class ClientSwapContract<T extends SwapData> {
         const liquidityPromise: Promise<BN> = requiredToken==null || requiredKey==null ? null : tryWithRetries(() => this.swapContract.getIntermediaryBalance(requiredKey, requiredToken), null, null, abortController.signal);
         const pricePrefetchPromise: Promise<BN> = requiredToken==null || this.swapPrice.preFetchPrice==null ? null : this.swapPrice.preFetchPrice(requiredToken, abortController.signal);
 
+        const feeRate: any = this.swapContract.getInitFeeRate==null || requiredKey==null || requiredToken==null
+            ? null
+            : await tryWithRetries<any>(() => this.swapContract.getInitFeeRate(requiredKey, this.swapContract.getAddress(), requiredToken)).catch(e => {
+                abortController.abort();
+                throw e;
+            });
+
         const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/createInvoice", {
             method: "POST",
             body: JSON.stringify({
@@ -1325,7 +1347,8 @@ export class ClientSwapContract<T extends SwapData> {
                 address: this.swapContract.getAddress(),
                 token: requiredToken==null ? null : requiredToken.toString(),
                 descriptionHash: descriptionHash==null ? null : descriptionHash.toString("hex"),
-                exactOut
+                exactOut,
+                feeRate: feeRate==null ? null : feeRate.toString()
             }),
             headers: {'Content-Type': 'application/json'},
             timeout: this.options.postRequestTimeout
@@ -1421,7 +1444,8 @@ export class ClientSwapContract<T extends SwapData> {
             total: new BN(jsonBody.data.total),
             intermediaryKey: jsonBody.data.intermediaryKey,
             securityDeposit: new BN(jsonBody.data.securityDeposit),
-            pricingInfo
+            pricingInfo,
+            feeRate
         };
     }
 
@@ -1455,7 +1479,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         const paymentHash = decodedPR.tagsObject.payment_hash;
 
-        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/getInvoicePaymentAuth?paymentHash="+encodeURIComponent(paymentHash)+(feeRate==null ? "" : "&feeRate="+encodeURIComponent(feeRate)), {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/getInvoicePaymentAuth?paymentHash="+encodeURIComponent(paymentHash), {
             method: "GET",
             signal: abortSignal,
             timeout: this.options.getRequestTimeout
@@ -1577,6 +1601,7 @@ export class ClientSwapContract<T extends SwapData> {
         requiredFeePPM?: BN,
         minSecurityDeposit?: BN,
         minOut?: BN,
+        feeRate?: any,
         abortSignal?: AbortSignal,
         intervalSeconds?: number,
     ) : Promise<{
@@ -1592,10 +1617,6 @@ export class ClientSwapContract<T extends SwapData> {
         if(abortSignal!=null && abortSignal.aborted) {
             throw new AbortError();
         }
-
-        const feeRate: any = await tryWithRetries<any>(() => this.swapContract.getInitFeeRate==null || requiredOffererKey==null || requiredToken==null
-            ? Promise.resolve(null)
-            : this.swapContract.getInitFeeRate(requiredOffererKey, this.swapContract.getAddress(), requiredToken), null, null, abortSignal);
 
         while(abortSignal==null || !abortSignal.aborted) {
             const result = await this.getPaymentAuthorization(

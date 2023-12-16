@@ -51,6 +51,7 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T> {
             result.timeout,
             result.signature,
             result.nonce,
+            result.feeRate,
             url,
             result.expiry,
             result.pricingInfo

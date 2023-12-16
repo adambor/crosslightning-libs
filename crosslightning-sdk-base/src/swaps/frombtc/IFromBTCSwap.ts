@@ -19,6 +19,7 @@ export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
     timeout: string;
     signature: string;
     nonce: number;
+    feeRate: any;
 
     protected readonly wrapper: IFromBTCWrapper<T>;
 
@@ -42,6 +43,7 @@ export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
         timeout?: string,
         signature?: string,
         nonce?: number,
+        feeRate?: any,
         expiry?: number,
         pricing?: PriceInfoType
     ) {
@@ -55,6 +57,7 @@ export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
             this.timeout = timeout;
             this.signature = signature;
             this.nonce = nonce;
+            this.feeRate = feeRate;
             this.expiry = expiry;
         } else {
             super(urlOrObject);
@@ -66,6 +69,7 @@ export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
             this.timeout = urlOrObject.timeout;
             this.signature = urlOrObject.signature;
             this.nonce = urlOrObject.nonce;
+            this.feeRate = urlOrObject.feeRate;
             this.commitTxId = urlOrObject.commitTxId;
             this.claimTxId = urlOrObject.claimTxId;
             this.expiry = urlOrObject.expiry;
@@ -217,6 +221,7 @@ export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
             timeout: this.timeout,
             signature: this.signature,
             nonce: this.nonce,
+            feeRate: this.feeRate==null ? null : this.feeRate,
             commitTxId: this.commitTxId,
             claimTxId: this.claimTxId,
             expiry: this.expiry
@@ -224,11 +229,11 @@ export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
     }
 
     getCommitFee(): Promise<BN> {
-        return this.getWrapper().contract.swapContract.getCommitFee();
+        return this.getWrapper().contract.swapContract.getCommitFee(this.data);
     }
 
     getClaimFee(): Promise<BN> {
-        return this.getWrapper().contract.swapContract.getClaimFee();
+        return this.getWrapper().contract.swapContract.getClaimFee(this.data);
     }
 
     getSecurityDeposit(): BN {

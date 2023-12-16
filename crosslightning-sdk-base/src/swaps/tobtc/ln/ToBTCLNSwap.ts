@@ -28,6 +28,7 @@ export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
         timeout: string,
         signature: string,
         nonce: number,
+        feeRate: any,
         url: string,
         confidence: string,
         routingFeeSats: BN,
@@ -48,6 +49,7 @@ export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
         timeout?: string,
         signature?: string,
         nonce?: number,
+        feeRate?: any,
         url?: string,
         confidence?: string,
         routingFeeSats?: BN,
@@ -57,7 +59,7 @@ export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
         successAction?: LNURLPaySuccessAction
     ) {
         if(typeof(prOrObject)==="string") {
-            super(wrapper, data, networkFee, swapFee, prefix, timeout, signature, nonce, url, expiry, pricing);
+            super(wrapper, data, networkFee, swapFee, prefix, timeout, signature, nonce, feeRate, url, expiry, pricing);
             this.confidence = parseFloat(confidence);
             this.pr = prOrObject;
             this.routingFeeSats = routingFeeSats;

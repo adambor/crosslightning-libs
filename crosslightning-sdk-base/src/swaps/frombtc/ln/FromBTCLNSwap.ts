@@ -45,6 +45,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
         requiredFeePPM: BN,
         expectedOut: BN,
         pricing: PriceInfoType,
+        feeRate: any,
         lnurl: string,
         callbackPromise: Promise<void>,
         lnurlK1: string,
@@ -64,6 +65,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
         requiredFeePPM?: BN,
         expectedOut?: BN,
         pricing?: PriceInfoType,
+        feeRate?: any,
         lnurl?: string,
         callbackPromise?: Promise<void>,
         lnurlK1?: string,
@@ -71,7 +73,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
         prPosted?: boolean
     ) {
         if(typeof(prOrObject)==="string") {
-            super(wrapper, url, data, swapFee, null, null, null, null, null, pricing);
+            super(wrapper, url, data, swapFee, null, null, null, null, feeRate, null, pricing);
             this.state = FromBTCLNSwapState.PR_CREATED;
 
             this.pr = prOrObject;
@@ -172,6 +174,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
                 this.requiredFeePPM,
                 this.data.getSecurityDeposit(),
                 this.data.getAmount(),
+                this.feeRate,
                 abortController.signal,
                 checkIntervalSeconds
             );
@@ -222,7 +225,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
 
         let txResult;
         try {
-            txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, !noWaitForConfirmation, skipChecks, abortSignal);
+            txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, !noWaitForConfirmation, skipChecks, abortSignal, this.feeRate);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 throw new Error("Request timed out!");
@@ -268,7 +271,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
 
         let txs: any[];
         try {
-            txs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, skipChecks);
+            txs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, skipChecks, this.feeRate);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 throw new Error("Request timed out!")
@@ -483,11 +486,23 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
                 this.secret.toString("hex"),
                 true,
                 skipChecks,
-                abortSignal
+                abortSignal,
+                this.feeRate
             );
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
-                const result = await this.wrapper.contract.getPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM);
+                const result = await this.wrapper.contract.getPaymentAuthorization(
+                    this.pr,
+                    this.url,
+                    this.data.getToken(),
+                    this.data.getOfferer(),
+                    this.requiredBaseFee,
+                    this.requiredFeePPM,
+                    this.data.getSecurityDeposit(),
+                    this.data.getAmount(),
+                    this.feeRate
+                );
+
                 this.data = result.data;
                 this.prefix = result.prefix;
                 this.timeout = result.timeout;
@@ -503,7 +518,8 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
                     this.secret.toString("hex"),
                     true,
                     skipChecks,
-                    abortSignal
+                    abortSignal,
+                    this.feeRate
                 );
             } else {
                 throw e;
@@ -540,17 +556,28 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
 
         let initTxs: any[];
         try {
-            initTxs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, skipChecks);
+            initTxs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, skipChecks, this.feeRate);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
-                const result = await this.wrapper.contract.getPaymentAuthorization(this.pr, this.url, this.data.getToken(), this.data.getOfferer(), this.requiredBaseFee, this.requiredFeePPM);
+                const result = await this.wrapper.contract.getPaymentAuthorization(
+                    this.pr,
+                    this.url,
+                    this.data.getToken(),
+                    this.data.getOfferer(),
+                    this.requiredBaseFee,
+                    this.requiredFeePPM,
+                    this.data.getSecurityDeposit(),
+                    this.data.getAmount(),
+                    this.feeRate
+                );
+
                 this.data = result.data;
                 this.prefix = result.prefix;
                 this.timeout = result.timeout;
                 this.signature = result.signature;
                 this.nonce = result.nonce;
 
-                initTxs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, skipChecks);
+                initTxs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, null, skipChecks, this.feeRate);
             } else {
                 throw e;
             }

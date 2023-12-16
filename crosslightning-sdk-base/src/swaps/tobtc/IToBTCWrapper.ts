@@ -168,7 +168,7 @@ export abstract class IToBTCWrapper<T extends SwapData> {
                 //Not committed yet, check if still valid
                 try {
                     await tryWithRetries(
-                        () => this.contract.swapContract.isValidClaimInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce),
+                        () => this.contract.swapContract.isValidClaimInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce, swap.feeRate),
                         null,
                         e => e instanceof SignatureVerificationError
                     );

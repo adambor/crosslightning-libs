@@ -29,6 +29,7 @@ export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
         timeout: string,
         signature: string,
         nonce: number,
+        feeRate: any,
         url: string,
         expiry: number,
         pricing: PriceInfoType
@@ -48,12 +49,13 @@ export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
         timeout?: string,
         signature?: string,
         nonce?: number,
+        feeRate?: any,
         url?: string,
         expiry?: number,
         pricing?: PriceInfoType
     ) {
         if(typeof(addressOrObject)==="string") {
-            super(wrapper, data, networkFee, swapFee, prefix, timeout, signature, nonce, url, expiry, pricing);
+            super(wrapper, data, networkFee, swapFee, prefix, timeout, signature, nonce, feeRate, url, expiry, pricing);
 
             this.address = addressOrObject;
             this.amount = amount;
