@@ -25,7 +25,7 @@ import {RelaySynchronizer, StorageObject} from "crosslightning-base/dist";
 import Utils from "./Utils";
 import * as bs58 from "bs58";
 import {tryWithRetries} from "../../utils/RetryUtils";
-import {TokenAccountNotFoundError} from "@solana/spl-token";
+import {defaultAccountStateInstructionData, TokenAccountNotFoundError} from "@solana/spl-token";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
@@ -422,7 +422,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         return SwapCommitStatus.NOT_COMMITED;
     }
 
-    private async getClaimInitMessage(swapData: SolanaSwapData, nonce: number, prefix: string, timeout: string): Promise<Transaction> {
+    private async getClaimInitMessage(swapData: SolanaSwapData, nonce: number, prefix: string, timeout: string, feeRate?: BN): Promise<Transaction> {
 
         const ata = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
         const ataClaimer = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
@@ -459,6 +459,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             })
             .instruction();
 
+        if(feeRate!=null) {
+            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+                units: 100000,
+            }));
+            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+                microLamports: feeRate.toNumber()
+            }));
+        }
         tx.add(ix);
         tx.feePayer = swapData.offerer;
 
@@ -470,7 +478,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         block: ParsedAccountsModeBlockResponse,
         slot: number,
         timestamp: number
-    }): Promise<{ nonce: number; prefix: string; timeout: string; signature: string }> {
+    }, feeRate?: BN): Promise<{ nonce: number; prefix: string; timeout: string; signature: string }> {
         if(this.signer.signer==null) throw new Error("Unsupported");
 
         if(preFetchedBlockData!=null && Date.now()-preFetchedBlockData.timestamp>PREFETCHED_DATA_VALIDITY) preFetchedBlockData = null;
@@ -479,7 +487,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         const authTimeout = Math.floor(Date.now()/1000)+authorizationTimeout;
         const useNonce = nonce.getClaimNonce(swapData.token.toBase58())+1;
 
-        const txToSign = await this.getClaimInitMessage(swapData, useNonce, authPrefix, authTimeout.toString());
+        const txToSign = await this.getClaimInitMessage(swapData, useNonce, authPrefix, authTimeout.toString(), feeRate);
 
         const {block: latestBlock, slot: latestSlot} = preFetchedBlockData || await this.findLatestParsedBlock("finalized");
 
@@ -496,7 +504,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         };
     }
 
-    async isValidClaimInitAuthorization(data: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<Buffer> {
+    async isValidClaimInitAuthorization(data: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, feeRate?: BN): Promise<Buffer> {
 
         if(prefix!=="claim_initialize") {
             throw new SignatureVerificationError("Invalid prefix");
@@ -527,7 +535,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         // const latestBlock = await this.getParsedBlock(parseInt(transactionSlot));
 
-        const txToSign = await this.getClaimInitMessage(data, nonce, prefix, timeout);
+        const txToSign = await this.getClaimInitMessage(data, nonce, prefix, timeout, feeRate);
 
         txToSign.recentBlockhash = transactionBlock.blockhash;
         txToSign.addSignature(data.claimer, Buffer.from(signatureString, "hex"));
@@ -578,7 +586,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         return false;
     }
 
-    private async getInitMessage(swapData: SolanaSwapData, nonce: number, prefix: string, timeout: string): Promise<Transaction> {
+    private async getInitMessage(swapData: SolanaSwapData, nonce: number, prefix: string, timeout: string, feeRate?: BN): Promise<Transaction> {
 
         const claimerAta = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
         const paymentHash = Buffer.from(swapData.paymentHash, "hex");
@@ -612,6 +620,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             })
             .instruction();
 
+        if(feeRate!=null) {
+            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+                units: 100000,
+            }));
+            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+                microLamports: feeRate.toNumber()
+            }));
+        }
         tx.add(result);
         tx.feePayer = swapData.claimer;
 
@@ -623,7 +639,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         block: ParsedAccountsModeBlockResponse,
         slot: number,
         timestamp: number
-    }): Promise<{ nonce: number; prefix: string; timeout: string; signature: string }> {
+    }, feeRate?: BN): Promise<{ nonce: number; prefix: string; timeout: string; signature: string }> {
         if(this.signer.signer==null) throw new Error("Unsupported");
 
         if(preFetchedBlockData!=null && Date.now()-preFetchedBlockData.timestamp>PREFETCHED_DATA_VALIDITY) preFetchedBlockData = null;
@@ -632,7 +648,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         const authTimeout = Math.floor(Date.now()/1000)+authorizationTimeout;
         const useNonce = nonce.getNonce(swapData.token.toBase58())+1;
 
-        const txToSign = await this.getInitMessage(swapData, useNonce, authPrefix, authTimeout.toString(10));
+        const txToSign = await this.getInitMessage(swapData, useNonce, authPrefix, authTimeout.toString(10), feeRate);
 
         const {block: latestBlock, slot: latestSlot} = preFetchedBlockData || await this.findLatestParsedBlock("finalized");
         txToSign.recentBlockhash = latestBlock.blockhash;
@@ -648,7 +664,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         };
     }
 
-    async isValidInitAuthorization(data: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number): Promise<Buffer> {
+    async isValidInitAuthorization(data: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, feeRate?: BN): Promise<Buffer> {
 
         if(prefix!=="initialize") {
             throw new SignatureVerificationError("Invalid prefix");
@@ -685,7 +701,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         // const latestBlock = await this.getParsedBlock(parseInt(transactionSlot));
 
-        const txToSign = await this.getInitMessage(data, nonce, prefix, timeout);
+        const txToSign = await this.getInitMessage(data, nonce, prefix, timeout, feeRate);
 
         //Check validity of recentBlockhash
 
@@ -1093,9 +1109,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     }
 
 
-    async claimWithSecret(swapData: SolanaSwapData, secret: string, checkExpiry?: boolean, initAta?: boolean, waitForConfirmation?, abortSignal?: AbortSignal): Promise<string> {
+    async claimWithSecret(swapData: SolanaSwapData, secret: string, checkExpiry?: boolean, initAta?: boolean, waitForConfirmation?, abortSignal?: AbortSignal, feeRate?: BN): Promise<string> {
 
-        const result = await this.txsClaimWithSecret(swapData, secret, checkExpiry, initAta);
+        const result = await this.txsClaimWithSecret(swapData, secret, checkExpiry, initAta, feeRate);
 
         const [signature] = await this.sendAndConfirm(result, waitForConfirmation, abortSignal);
 
@@ -1104,7 +1120,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     }
 
-    async txsClaimWithSecret(swapData: SolanaSwapData, secret: string, checkExpiry?: boolean, initAta?: boolean): Promise<SolTx[]> {
+    async txsClaimWithSecret(swapData: SolanaSwapData, secret: string, checkExpiry?: boolean, initAta?: boolean, feeRate?: BN): Promise<SolTx[]> {
 
         if(checkExpiry) {
             const expiryTimestamp = swapData.getExpiry();
@@ -1181,6 +1197,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             };
         }
 
+        tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+            units: 50000,
+        }));
+        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+            microLamports: (feeRate || (await this.getClaimFeeRate(swapData))).toNumber()
+        }));
         tx.add(await this.program.methods
             .claimerClaim(Buffer.from(secret, "hex"))
             .accounts(accounts)
@@ -1211,14 +1233,15 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         synchronizer?: RelaySynchronizer<any, SolTx, any>,
         initAta?: boolean,
         waitForConfirmation?: boolean,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        feeRate?: BN
     ): Promise<string> {
 
         const data: {storageAcc: PublicKey} = {
             storageAcc: null
         };
 
-        const txs = await this.txsClaimWithTxData(swapData, blockheight, tx, vout, commitedHeader, synchronizer, initAta, data);
+        const txs = await this.txsClaimWithTxData(swapData, blockheight, tx, vout, commitedHeader, synchronizer, initAta, data, feeRate);
 
         const [signature] = await this.sendAndConfirm(txs, waitForConfirmation, abortSignal);
 
@@ -1236,8 +1259,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         commitedHeader?: SolanaBtcStoredHeader,
         synchronizer?: RelaySynchronizer<any, SolTx, any>,
         initAta?: boolean,
-        storageAccHolder?: {storageAcc: PublicKey}
+        storageAccHolder?: {storageAcc: PublicKey},
+        feeRate?: BN
     ): Promise<SolTx[] | null> {
+
+        const computedFeeRate = (feeRate || (await this.getClaimFeeRate(swapData))).toNumber();
 
         let ataInitIx: TransactionInstruction;
         if(swapData.isPayOut()) {
@@ -1307,7 +1333,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                         //Retrieve computed header
                         commitedHeader = resp.computedHeaderMap[merkleProof.blockheight];
                     }
-                    resp.txs.forEach(tx => txs.push(tx));
+                    resp.txs.forEach(tx => {
+                        tx.tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+                            microLamports: computedFeeRate
+                        }));
+                        txs.push(tx)
+                    });
                 } else {
                     commitedHeader = result.header;
                 }
@@ -1357,7 +1388,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 })
                 .instruction();
 
-            const writeLen = Math.min(writeData.length-pointer, 500);
+            const writeLen = Math.min(writeData.length-pointer, 420);
 
             const writeIx = await this.program.methods
                 .writeData(pointer, writeData.slice(pointer, writeLen))
@@ -1372,6 +1403,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             pointer += writeLen;
 
             const initTx = new Transaction();
+            initTx.add(ComputeBudgetProgram.setComputeUnitPrice({
+                microLamports: computedFeeRate
+            }));
             initTx.add(accIx);
             initTx.add(initIx);
             initTx.add(writeIx);
@@ -1393,6 +1427,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                     data: txDataKey.publicKey
                 })
                 .transaction();
+
+            writeTx.add(ComputeBudgetProgram.setComputeUnitPrice({
+                microLamports: computedFeeRate
+            }));
 
             txs.push({
                 tx: writeTx,
@@ -1456,17 +1494,19 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         if(this.signer.signer==null) {
             //Add compute budget
+            solanaTx.add(ComputeBudgetProgram.setComputeUnitPrice({
+                microLamports: computedFeeRate
+            }));
             solanaTx.add(ComputeBudgetProgram.setComputeUnitLimit({
                 units: 100000,
-            }));
-            solanaTx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports: 8000
             }));
 
             if(Utils.getTxSize(solanaTx, this.signer.publicKey)>1232) {
                 //TX too large
                 solanaTx.instructions.pop();
-                solanaTx.instructions.pop();
+                if(Utils.getTxSize(solanaTx, this.signer.publicKey)>1232) {
+                    solanaTx.instructions.pop();
+                }
             }
         }
 
@@ -1479,6 +1519,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             if (swapData.token.equals(WSOL_ADDRESS) && swapData.claimer.equals(this.signer.publicKey)) {
                 //Move to normal SOL
                 const tx = new Transaction();
+                tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+                    units: 50000,
+                }));
+                tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+                    microLamports: computedFeeRate
+                }));
                 tx.add(
                     SplToken.createCloseAccountInstruction(swapData.claimerTokenAccount, this.signer.publicKey, this.signer.publicKey)
                 );
@@ -1493,15 +1539,15 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     }
 
-    async refund(swapData: SolanaSwapData, check?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        let result = await this.txsRefund(swapData, check, initAta);
+    async refund(swapData: SolanaSwapData, check?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal, feeRate?: BN): Promise<string> {
+        let result = await this.txsRefund(swapData, check, initAta, feeRate);
 
         const [signature] = await this.sendAndConfirm(result, waitForConfirmation, abortSignal);
 
         return signature;
     }
 
-    async txsRefund(swapData: SolanaSwapData, check?: boolean, initAta?: boolean): Promise<SolTx[]> {
+    async txsRefund(swapData: SolanaSwapData, check?: boolean, initAta?: boolean, feeRate?: BN): Promise<SolTx[]> {
 
         if(check) {
             if(!(await tryWithRetries(() => this.isRequestRefundable(swapData), this.retryPolicy))) {
@@ -1593,21 +1639,28 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             }
         }
 
+        tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+            units: 100000,
+        }));
+        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+            microLamports: (feeRate || (await this.getRefundFeeRate(swapData))).toNumber()
+        }));
+
         return [{
             tx,
             signers: []
         }];
     }
 
-    async refundWithAuthorization(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, check?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        let result = await this.txsRefundWithAuthorization(swapData,timeout,prefix,signature,check,initAta);
+    async refundWithAuthorization(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, check?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal, feeRate?: BN): Promise<string> {
+        let result = await this.txsRefundWithAuthorization(swapData,timeout,prefix,signature,check,initAta,feeRate);
 
         const [txSignature] = await this.sendAndConfirm(result, waitForConfirmation, abortSignal);
 
         return txSignature;
     }
 
-    async txsRefundWithAuthorization(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, check?: boolean, initAta?: boolean): Promise<SolTx[]> {
+    async txsRefundWithAuthorization(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, check?: boolean, initAta?: boolean, feeRate?: BN): Promise<SolTx[]> {
         if(check) {
             if(!(await tryWithRetries(() => this.isCommited(swapData), this.retryPolicy))) {
                 throw new SwapDataVerificationError("Not correctly committed");
@@ -1711,15 +1764,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             }
         }
 
-        if(this.signer.signer==null) {
-            //Add compute budget
-            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                units: 100000,
-            }));
-            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports: 8000
-            }));
-        }
+        tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+            units: 100000,
+        }));
+        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+            microLamports: (feeRate || (await this.getRefundFeeRate(swapData))).toNumber()
+        }));
 
         return [{
             tx,
@@ -1728,20 +1778,20 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     }
 
-    async initPayIn(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        let result = await this.txsInitPayIn(swapData,timeout,prefix,signature,nonce,skipChecks);
+    async initPayIn(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal, feeRate?: BN): Promise<string> {
+        let result = await this.txsInitPayIn(swapData,timeout,prefix,signature,nonce,skipChecks,feeRate);
 
         const signatures = await this.sendAndConfirm(result, waitForConfirmation, abortSignal);
 
         return signatures[signatures.length-1];
     }
 
-    async txsInitPayIn(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, skipChecks?: boolean): Promise<SolTx[]> {
+    async txsInitPayIn(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, skipChecks?: boolean, feeRate?: BN): Promise<SolTx[]> {
 
         if(!skipChecks) {
             const [_, payStatus] = await Promise.all([
                 tryWithRetries(
-                    () => this.isValidClaimInitAuthorization(swapData, timeout, prefix, signature, nonce),
+                    () => this.isValidClaimInitAuthorization(swapData, timeout, prefix, signature, nonce, feeRate),
                     this.retryPolicy,
                     (e) => e instanceof SignatureVerificationError
                 ),
@@ -1752,6 +1802,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 throw new SwapDataVerificationError("Invoice already being paid for or paid");
             }
         }
+
+        const computedFeeRate = (feeRate || (await this.getInitPayInFeeRate(swapData.offerer.toBase58(), swapData.claimer.toBase58(), swapData.token, swapData.paymentHash))).toNumber();
 
         const ata = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
         const ataIntermediary = SplToken.getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
@@ -1780,6 +1832,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             } catch (e) {}
             if(balance.lt(swapData.amount)) {
                 const tx = new Transaction();
+
+                tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+                    units: 100000,
+                }));
+                tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+                    microLamports: computedFeeRate
+                }));
+
                 //Need to wrap some more
                 const remainder = swapData.amount.sub(balance);
                 if(!accountExists) {
@@ -1837,7 +1897,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             })
             .instruction();
 
+        tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+            units: 100000,
+        }));
+        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+            microLamports: computedFeeRate
+        }));
         tx.add(ix);
+
         tx.feePayer = swapData.offerer;
         tx.recentBlockhash = block.blockhash;
         tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
@@ -1852,19 +1919,19 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     }
 
-    async init(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        let result = await this.txsInit(swapData,timeout,prefix,signature,nonce,txoHash,skipChecks);
+    async init(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal, feeRate?: BN): Promise<string> {
+        let result = await this.txsInit(swapData,timeout,prefix,signature,nonce,txoHash,skipChecks,feeRate);
 
         const [txSignature] = await this.sendAndConfirm(result, waitForConfirmation, abortSignal);
 
         return txSignature;
     }
 
-    async txsInit(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer, skipChecks?: boolean): Promise<SolTx[]> {
+    async txsInit(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer, skipChecks?: boolean, feeRate?: BN): Promise<SolTx[]> {
 
         if(!skipChecks) {
             await tryWithRetries(
-                () => this.isValidInitAuthorization(swapData, timeout, prefix, signature, nonce),
+                () => this.isValidInitAuthorization(swapData, timeout, prefix, signature, nonce, feeRate),
                 this.retryPolicy,
                 (e) => e instanceof SignatureVerificationError
             );
@@ -1907,7 +1974,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             })
             .instruction();
 
+        tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+            units: 100000,
+        }));
+        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+            microLamports: (feeRate || (await this.getInitFeeRate(swapData.offerer.toBase58(), swapData.claimer.toBase58(), swapData.token, swapData.paymentHash))).toNumber()
+        }));
         tx.add(result);
+
         tx.feePayer = swapData.claimer;
         tx.recentBlockhash = block.blockhash;
         tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
@@ -1920,10 +1994,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
     }
 
-    async initAndClaimWithSecret(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, secret: string, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal): Promise<string[]> {
+    async initAndClaimWithSecret(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, nonce: number, secret: string, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal, feeRate?: BN): Promise<string[]> {
 
-        const [txCommit] = await this.txsInit(swapData, timeout, prefix, signature, nonce, null, skipChecks);
-        const [txClaim] = await this.txsClaimWithSecret(swapData, secret, true, true);
+        const [txCommit] = await this.txsInit(swapData, timeout, prefix, signature, nonce, null, skipChecks, feeRate);
+        const [txClaim] = await this.txsClaimWithSecret(swapData, secret, true, true, feeRate);
 
         return await this.sendAndConfirm([txCommit, txClaim], waitForConfirmation, abortSignal);
 
@@ -1976,6 +2050,111 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         return new PublicKey(address);
     }
 
+    async getFeeRate(mutableAccounts: PublicKey[]) {
+        const resp = await this.signer.connection.getRecentPrioritizationFees({
+            lockedWritableAccounts: mutableAccounts
+        });
+
+        let lamports = resp[0].prioritizationFee;
+        if(lamports==null || lamports<0.008000) lamports = 0.008000;
+
+        const microLamports = new BN(lamports * 1000000);
+
+        return microLamports;
+    }
+
+    async getInitPayInFeeRate(offerer: string, claimer: string, token: PublicKey, paymentHash?: string): Promise<BN> {
+
+        const offererATA = await SplToken.getAssociatedTokenAddress(token, new PublicKey(offerer));
+        const userData = this.SwapUserVault(new PublicKey(claimer), token);
+        const vault = this.SwapVault(token);
+
+        const accounts = [
+            new PublicKey(offerer),
+            offererATA,
+            userData,
+            vault
+        ];
+
+        if(paymentHash!=null) {
+            const escrowState = this.SwapEscrowState(Buffer.from(paymentHash, "hex"));
+            accounts.push(escrowState);
+        }
+
+        return await this.getFeeRate(accounts);
+
+    }
+
+    async getInitFeeRate(offerer: string, claimer: string, token: PublicKey, paymentHash?: string): Promise<BN> {
+
+        const userData = this.SwapUserVault(new PublicKey(offerer), token);
+
+        const accounts = [
+            new PublicKey(claimer),
+            userData
+        ];
+        if(paymentHash!=null) {
+            const escrowState = this.SwapEscrowState(Buffer.from(paymentHash, "hex"));
+            accounts.push(escrowState);
+        }
+
+        return await this.getFeeRate(accounts);
+
+    }
+
+    async getRefundFeeRate(swapData: SolanaSwapData): Promise<BN> {
+
+        const escrowState = this.SwapEscrowState(Buffer.from(swapData.paymentHash, "hex"));
+
+        if(swapData.payIn) {
+            const vault = this.SwapVault(swapData.token);
+
+            return await this.getFeeRate([
+                swapData.offerer,
+                swapData.claimer,
+                escrowState,
+                vault,
+                swapData.claimerTokenAccount
+            ]);
+        } else {
+            const userData = this.SwapUserVault(swapData.offerer, swapData.token);
+
+            return await this.getFeeRate([
+                swapData.offerer,
+                swapData.claimer,
+                escrowState,
+                userData
+            ]);
+        }
+
+    }
+
+    async getClaimFeeRate(swapData: SolanaSwapData): Promise<BN> {
+
+        const escrowState = this.SwapEscrowState(Buffer.from(swapData.paymentHash, "hex"));
+
+        if(swapData.payIn) {
+            const vault = this.SwapVault(swapData.token);
+
+            return await this.getFeeRate([
+                this.signer.publicKey,
+                swapData.payIn ? swapData.offerer : swapData.claimer,
+                escrowState,
+                vault,
+                swapData.claimerTokenAccount
+            ]);
+        } else {
+            const userData = this.SwapUserVault(swapData.claimer, swapData.token);
+
+            return await this.getFeeRate([
+                this.signer.publicKey,
+                swapData.payIn ? swapData.offerer : swapData.claimer,
+                escrowState,
+                userData
+            ]);
+        }
+
+    }
 
     private getATARentExemptLamports(): Promise<BN> {
         return Promise.resolve(new BN(2039280));
