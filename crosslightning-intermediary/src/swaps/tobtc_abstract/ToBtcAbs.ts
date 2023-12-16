@@ -590,6 +590,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
              * token: string                        Desired token to use
              * offerer: string                      Address of the caller
              * exactIn: boolean                     Whether the swap should be an exact in instead of exact out swap
+             * feeRate: string                      Fee rate to be used for the init signature
              */
             const parsedBody = verifySchema(req.body, {
                 address: FieldTypeEnum.String,
@@ -858,11 +859,13 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             metadata.times.swapCreated = Date.now();
 
+            const feeRate = req.body.feeRate!=null && typeof(req.body.feeRate)==="string" ? req.body.feeRate : null;
             const sigData = await this.swapContract.getClaimInitSignature(
                 payObject,
                 this.nonce,
                 this.config.authorizationTimeout,
-                signDataPrefetchPromise==null ? null : await signDataPrefetchPromise
+                signDataPrefetchPromise==null ? null : await signDataPrefetchPromise,
+                feeRate
             );
 
             metadata.times.swapSigned = Date.now();

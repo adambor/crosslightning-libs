@@ -301,6 +301,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
              *  - addBlock: number              Additional blocks to add to the calculation
              *  - addFee: string                Additional fee to add to the final claimer bounty
              * exactOut: boolean             Whether the swap should be an exact out instead of exact in swap
+             * feeRate: string              Fee rate to be used for init signature
              */
 
             const parsedBody = verifySchema(req.body, {
@@ -346,15 +347,31 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 throw e;
             }) : null;
 
+            const dummySwapData = await this.swapContract.createSwapData(
+                ChainSwapType.CHAIN,
+                this.swapContract.getAddress(),
+                parsedBody.address,
+                useToken,
+                null,
+                null,
+                null,
+                new BN(0),
+                this.config.confirmations,
+                false,
+                true,
+                null,
+                null
+            );
+
             let baseSDPromise: Promise<BN>;
             //Solana workaround
             if((this.swapContract as any).getRawRefundFee!=null) {
-                baseSDPromise = (this.swapContract as any).getRawRefundFee().catch(e => {
+                baseSDPromise = (this.swapContract as any).getRawRefundFee(dummySwapData).catch(e => {
                     console.error("From BTC: REST.baseSDprefetch", e);
                     throw e;
                 });
             } else {
-                baseSDPromise = this.swapContract.getRefundFee().then(result => result.mul(new BN(2))).catch(e => {
+                baseSDPromise = this.swapContract.getRefundFee(dummySwapData).then(result => result.mul(new BN(2))).catch(e => {
                     console.error("From BTC: REST.baseSDprefetch", e);
                     throw e;
                 });
@@ -531,11 +548,13 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
             createdSwap.data = data;
 
+            const feeRate = req.body.feeRate!=null && typeof(req.body.feeRate)==="string" ? req.body.feeRate : null;
             const sigData = await this.swapContract.getInitSignature(
                 data,
                 this.nonce,
                 this.config.authorizationTimeout,
-                signDataPrefetchPromise==null ? null : await signDataPrefetchPromise
+                signDataPrefetchPromise==null ? null : await signDataPrefetchPromise,
+                feeRate
             );
 
             metadata.times.swapSigned = Date.now();

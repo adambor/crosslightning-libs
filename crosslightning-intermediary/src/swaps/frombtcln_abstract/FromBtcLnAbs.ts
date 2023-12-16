@@ -458,7 +458,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             payInvoiceObject,
             this.nonce,
             this.config.authorizationTimeout,
-            signDataPrefetchPromise==null ? null : await signDataPrefetchPromise
+            signDataPrefetchPromise==null ? null : await signDataPrefetchPromise,
+            invoiceData.feeRate
         );
 
         if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcSwapSigned = Date.now();
@@ -548,15 +549,31 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 throw e;
             });
 
+            const dummySwapData = await this.swapContract.createSwapData(
+                ChainSwapType.HTLC,
+                this.swapContract.getAddress(),
+                parsedBody.address,
+                useToken,
+                null,
+                parsedBody.paymentHash,
+                null,
+                null,
+                0,
+                false,
+                true,
+                null,
+                new BN(0)
+            );
+
             let baseSDPromise: Promise<BN>;
             //Solana workaround
             if((this.swapContract as any).getRawRefundFee!=null) {
-                baseSDPromise = (this.swapContract as any).getRawRefundFee().catch(e => {
+                baseSDPromise = (this.swapContract as any).getRawRefundFee(dummySwapData).catch(e => {
                     console.error("From BTC-LN: REST.baseSDPrefetch", e);
                     throw e;
                 });
             } else {
-                baseSDPromise = this.swapContract.getRefundFee().then(result => result.mul(new BN(2))).catch(e => {
+                baseSDPromise = this.swapContract.getRefundFee(dummySwapData).then(result => result.mul(new BN(2))).catch(e => {
                     console.error("From BTC-LN: REST.baseSDPrefetch", e);
                     throw e;
                 });
@@ -727,6 +744,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
             metadata.times.swapCreated = Date.now();
             createdSwap.metadata = metadata;
+
+            createdSwap.feeRate = req.body.feeRate!=null && typeof(req.body.feeRate)==="string" ? req.body.feeRate : null;
 
             await PluginManager.swapCreate(createdSwap);
 

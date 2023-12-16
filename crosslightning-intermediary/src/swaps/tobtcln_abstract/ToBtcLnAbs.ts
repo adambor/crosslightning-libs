@@ -476,6 +476,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
              * expiryTimestamp: string      expiry timestamp of the to be created HTLC, determines how many LN paths can be considered
              * token: string                Desired token to use
              * offerer: string              Address of the caller
+             * feeRate: string              Fee rate to use for the init signature
              */
             const parsedBody = verifySchema(req.body, {
                 pr: FieldTypeEnum.String,
@@ -736,11 +737,13 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             if(prefetchedSignData!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetched signature data: ", prefetchedSignData);
 
+            const feeRate = req.body.feeRate!=null && typeof(req.body.feeRate)==="string" ? req.body.feeRate : null;
             const sigData = await this.swapContract.getClaimInitSignature(
                 payObject,
                 this.nonce,
                 this.config.authorizationTimeout,
-                prefetchedSignData
+                prefetchedSignData,
+                feeRate
             );
 
             metadata.times.swapSigned = Date.now();

@@ -24,6 +24,7 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
     prefix: string;
     timeout: string;
     signature: string;
+    feeRate: any;
 
     secret: string;
 
@@ -57,6 +58,7 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
         partialSerialized.swapFee = this.swapFee.toString(10);
         partialSerialized.secret = this.secret;
         partialSerialized.nonce = this.nonce;
+        partialSerialized.feeRate = this.feeRate==null ? null : this.feeRate.toString();
         partialSerialized.prefix = this.prefix;
         partialSerialized.timeout = this.timeout;
         partialSerialized.signature = this.signature;
