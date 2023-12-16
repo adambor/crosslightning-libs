@@ -629,10 +629,14 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             lockedWritableAccounts: mutableAccounts
         });
 
-        let lamports = resp[0].prioritizationFee;
-        if(lamports==null || lamports<0.004000) lamports = 0.004000;
+        let lamports = 0;
+        for(let i=20;i>=0;i--) {
+            const data = resp[resp.length-i-1];
+            if(data!=null) lamports = Math.min(lamports, data.prioritizationFee);
+        }
+        if(lamports<4000) lamports = 4000;
 
-        const microLamports = new BN(lamports * 1000000 * 2);
+        const microLamports = new BN(lamports * 2);
 
         return microLamports.toString(10);
     }
