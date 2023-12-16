@@ -326,7 +326,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             if(token!=null && token.equals(WSOL_ADDRESS)) {
                 let balanceLamports: BN = new BN(await this.signer.connection.getBalance(this.signer.publicKey));
                 if(!ataExists) balanceLamports = balanceLamports.sub(await this.getATARentExemptLamports());
-                balanceLamports = balanceLamports.sub(await this.getCommitFee()); //Discount commit fee
+                balanceLamports = balanceLamports.sub(await this.getCommitFee(null)); //Discount commit fee
                 balanceLamports = balanceLamports.sub(new BN(5000)); //Discount refund fee
                 if(!balanceLamports.isNeg()) sum = sum.add(balanceLamports);
             }
@@ -1497,16 +1497,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             solanaTx.add(ComputeBudgetProgram.setComputeUnitPrice({
                 microLamports: computedFeeRate
             }));
-            solanaTx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                units: 100000,
-            }));
 
             if(Utils.getTxSize(solanaTx, this.signer.publicKey)>1232) {
                 //TX too large
                 solanaTx.instructions.pop();
-                if(Utils.getTxSize(solanaTx, this.signer.publicKey)>1232) {
-                    solanaTx.instructions.pop();
-                }
             }
         }
 
@@ -2160,33 +2154,78 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         return Promise.resolve(new BN(2039280));
     }
 
-    getClaimFee(): Promise<BN> {
-        return Promise.resolve(new BN(-2707440+5000));
+    async getClaimFee(swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
+        if(swapData==null) return new BN(-2707440+5000);
+
+        feeRate = feeRate || await this.getClaimFeeRate(swapData);
+
+        const computeBudget = swapData.getType()===ChainSwapType.HTLC ? 50000 : 200000;
+        const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
+        const priorityLamports = priorityMicroLamports.div(new BN(1000000));
+
+        return new BN(-2707440+5000).add(priorityLamports);
     }
 
-    getRawClaimFee(): Promise<BN> {
-        return Promise.resolve(new BN(5000));
+    async getRawClaimFee(swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
+        if(swapData==null) return new BN(5000);
+
+        feeRate = feeRate || await this.getClaimFeeRate(swapData);
+
+        const computeBudget = swapData.getType()===ChainSwapType.HTLC ? 50000 : 200000;
+        const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
+        const priorityLamports = priorityMicroLamports.div(new BN(1000000));
+
+        return new BN(5000).add(priorityLamports);
     }
 
     /**
      * Get the estimated solana fee of the commit transaction
      */
-    getCommitFee(): Promise<BN> {
-        return Promise.resolve(new BN(2707440+10000));
+    async getCommitFee(swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
+        if(swapData==null) return new BN(2707440+10000);
+
+        feeRate =
+            feeRate
+            ||
+            (swapData.payIn
+                ? await this.getInitPayInFeeRate(swapData.getOfferer(), swapData.getClaimer(), swapData.token, swapData.paymentHash)
+                : await this.getInitFeeRate(swapData.getOfferer(), swapData.getClaimer(), swapData.token, swapData.paymentHash));
+
+        const computeBudget = 100000;
+        const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
+        const priorityLamports = priorityMicroLamports.div(new BN(1000000));
+
+        return new BN(2707440+10000).add(priorityLamports);
     }
 
     /**
      * Get the estimated solana transaction fee of the refund transaction
      */
-    getRefundFee(): Promise<BN> {
-        return Promise.resolve(new BN(-2707440+10000));
+    async getRefundFee(swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
+        if(swapData==null) return new BN(-2707440+10000);
+
+        feeRate = feeRate || await this.getRefundFeeRate(swapData);
+
+        const computeBudget = 100000;
+        const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
+        const priorityLamports = priorityMicroLamports.div(new BN(1000000));
+
+        return new BN(-2707440+10000).add(priorityLamports);
     }
 
     /**
      * Get the estimated solana transaction fee of the refund transaction
      */
-    getRawRefundFee(): Promise<BN> {
-        return Promise.resolve(new BN(10000));
+    async getRawRefundFee(swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
+        if(swapData==null) return new BN(10000);
+
+        feeRate = feeRate || await this.getRefundFeeRate(swapData);
+
+        const computeBudget = 100000;
+        const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
+        const priorityLamports = priorityMicroLamports.div(new BN(1000000));
+
+        return new BN(10000).add(priorityLamports);
     }
 
     setUsAsClaimer(swapData: SolanaSwapData) {

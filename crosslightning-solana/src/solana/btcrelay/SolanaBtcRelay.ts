@@ -550,7 +550,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             .instruction();
     }
 
-    async estimateSynchronizeFee(requiredBlockheight: number): Promise<BN> {
+    async estimateSynchronizeFee(requiredBlockheight: number, feeRate?: string): Promise<BN> {
         const tipData = await this.getTipData();
         const currBlockheight = tipData.blockheight;
 
@@ -558,11 +558,21 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
 
         if(blockheightDelta<=0) return new BN(0);
 
-        return new BN(blockheightDelta).mul(SOL_PER_BLOCKHEADER);
+        feeRate = feeRate || await this.getMainFeeRate();
+        const computeBudget = 200000;
+        const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
+        const priorityLamports = priorityMicroLamports.div(new BN(1000000));
+
+        return new BN(blockheightDelta).mul(SOL_PER_BLOCKHEADER.add(priorityLamports));
     }
 
-    getFeePerBlock(): Promise<BN> {
-        return Promise.resolve(SOL_PER_BLOCKHEADER);
+    async getFeePerBlock(feeRate?: string): Promise<BN> {
+        feeRate = feeRate || await this.getMainFeeRate();
+        const computeBudget = 200000;
+        const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
+        const priorityLamports = priorityMicroLamports.div(new BN(1000000));
+
+        return SOL_PER_BLOCKHEADER.add(priorityLamports);
     }
 
     async sweepForkData(lastSweepId?: number): Promise<number | null> {
@@ -612,6 +622,34 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
 
         return lastCheckedId;
 
+    }
+
+    async getFeeRate(mutableAccounts: PublicKey[]): Promise<string> {
+        const resp = await this.provider.connection.getRecentPrioritizationFees({
+            lockedWritableAccounts: mutableAccounts
+        });
+
+        let lamports = resp[0].prioritizationFee;
+        if(lamports==null || lamports<0.004000) lamports = 0.004000;
+
+        const microLamports = new BN(lamports * 1000000 * 2);
+
+        return microLamports.toString(10);
+    }
+
+    getMainFeeRate(): Promise<any> {
+        return this.getFeeRate([
+            this.provider.publicKey,
+            this.BtcRelayMainState
+        ]);
+    }
+
+    getForkFeeRate(forkId: number): Promise<any> {
+        return this.getFeeRate([
+            this.provider.publicKey,
+            this.BtcRelayMainState,
+            this.BtcRelayFork(forkId, this.provider.publicKey)
+        ]);
     }
 
 }
