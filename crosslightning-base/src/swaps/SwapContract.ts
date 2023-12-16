@@ -26,25 +26,25 @@ export interface SwapContract<T extends SwapData, TX> {
 
     start(): Promise<void>;
 
-    initPayIn(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal): Promise<string>;
-    txsInitPayIn(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, skipChecks?: boolean): Promise<TX[]>;
+    initPayIn(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal, feeRate?: any): Promise<string>;
+    txsInitPayIn(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, skipChecks?: boolean, feeRate?: any): Promise<TX[]>;
 
-    init(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal): Promise<string>;
-    txsInit(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer, skipChecks?: boolean): Promise<TX[]>;
+    init(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal, feeRate?: any): Promise<string>;
+    txsInit(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, txoHash?: Buffer, skipChecks?: boolean, feeRate?: any): Promise<TX[]>;
 
-    claimWithSecret(swapData: T, secret: string, checkExpiry?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
-    txsClaimWithSecret(swapData: T, secret: string, checkExpiry?: boolean, initAta?: boolean): Promise<TX[]>;
+    claimWithSecret(swapData: T, secret: string, checkExpiry?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal, feeRate?: any): Promise<string>;
+    txsClaimWithSecret(swapData: T, secret: string, checkExpiry?: boolean, initAta?: boolean, feeRate?: any): Promise<TX[]>;
 
-    claimWithTxData(swapData: T, blockheight: number, tx: {blockhash: string, confirmations: number, txid: string, hex: string}, vout: number, storedHeader?: BtcStoredHeader<any>, synchronizer?: RelaySynchronizer<any, TX, any>, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
-    txsClaimWithTxData(swapData: T, blockheight: number, tx: {blockhash: string, confirmations: number, txid: string, hex: string}, vout: number, storedHeader?: BtcStoredHeader<any>, synchronizer?: RelaySynchronizer<any, TX, any>, initAta?: boolean): Promise<TX[]>;
+    claimWithTxData(swapData: T, blockheight: number, tx: {blockhash: string, confirmations: number, txid: string, hex: string}, vout: number, storedHeader?: BtcStoredHeader<any>, synchronizer?: RelaySynchronizer<any, TX, any>, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal, feeRate?: any): Promise<string>;
+    txsClaimWithTxData(swapData: T, blockheight: number, tx: {blockhash: string, confirmations: number, txid: string, hex: string}, vout: number, storedHeader?: BtcStoredHeader<any>, synchronizer?: RelaySynchronizer<any, TX, any>, initAta?: boolean, feeRate?: any): Promise<TX[]>;
 
-    refund(swapData: T, check?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
-    txsRefund(swapData: T, check?: boolean, initAta?: boolean): Promise<TX[]>;
+    refund(swapData: T, check?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal, feeRate?: any): Promise<string>;
+    txsRefund(swapData: T, check?: boolean, initAta?: boolean, feeRate?: any): Promise<TX[]>;
 
-    refundWithAuthorization(swapData: T, timeout: string, prefix: string, signature: string, check?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
-    txsRefundWithAuthorization(swapData: T, timeout: string, prefix: string, signature: string, check?: boolean, initAta?: boolean): Promise<TX[]>;
+    refundWithAuthorization(swapData: T, timeout: string, prefix: string, signature: string, check?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal, feeRate?: any): Promise<string>;
+    txsRefundWithAuthorization(swapData: T, timeout: string, prefix: string, signature: string, check?: boolean, initAta?: boolean, feeRate?: any): Promise<TX[]>;
 
-    initAndClaimWithSecret(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, secret: string, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal): Promise<string[]>;
+    initAndClaimWithSecret(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, secret: string, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal, feeRate?: any): Promise<string[]>;
 
     isExpired(swapData: T): boolean;
     isClaimable(swapData: T): Promise<boolean>;
@@ -58,23 +58,23 @@ export interface SwapContract<T extends SwapData, TX> {
 
     preFetchBlockDataForSignatures?(): Promise<any>;
 
-    getClaimInitSignature(swapData: T, nonce: ISwapNonce, authorizationTimeout: number, preFetchedBlockData?: any): Promise<{
+    getClaimInitSignature(swapData: T, nonce: ISwapNonce, authorizationTimeout: number, preFetchedBlockData?: any, feeRate?: any): Promise<{
         nonce: number,
         prefix: string,
         timeout: string,
         signature: string
     }>;
-    isValidClaimInitAuthorization(swapData: T, timeout: string, prefix: string, signature: string, nonce: number): Promise<Buffer | null>;
+    isValidClaimInitAuthorization(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, feeRate?: any): Promise<Buffer | null>;
     getClaimInitAuthorizationExpiry(swapData: T, timeout: string, prefix: string, signature: string, nonce: number): Promise<number>;
     isClaimInitAuthorizationExpired(swapData: T, timeout: string, prefix: string, signature: string, nonce: number): Promise<boolean>;
 
-    getInitSignature(swapData: T, nonce: ISwapNonce, authorizationTimeout: number, preFetchedBlockData?: any): Promise<{
+    getInitSignature(swapData: T, nonce: ISwapNonce, authorizationTimeout: number, preFetchedBlockData?: any, feeRate?: any): Promise<{
         nonce: number,
         prefix: string,
         timeout: string,
         signature: string
     }>;
-    isValidInitAuthorization(swapData: T, timeout: string, prefix: string, signature: string, nonce: number): Promise<Buffer | null>;
+    isValidInitAuthorization(swapData: T, timeout: string, prefix: string, signature: string, nonce: number, feeRate?: any): Promise<Buffer | null>;
     getInitAuthorizationExpiry(swapData: T, timeout: string, prefix: string, signature: string, nonce: number): Promise<number>;
     isInitAuthorizationExpired(swapData: T, timeout: string, prefix: string, signature: string, nonce: number): Promise<boolean>;
 
@@ -119,6 +119,11 @@ export interface SwapContract<T extends SwapData, TX> {
     getCommitFee(): Promise<BN>;
     getClaimFee(): Promise<BN>;
     getRefundFee(): Promise<BN>;
+
+    getInitPayInFeeRate?(offerer: string, claimer: string, token: TokenAddress, paymentHash?: string): Promise<any>;
+    getInitFeeRate?(offerer: string, claimer: string, token: TokenAddress, paymentHash?: string): Promise<any>;
+    getRefundFeeRate?(swapData: T): Promise<any>;
+    getClaimFeeRate?(swapData: T): Promise<any>;
 
     setUsAsClaimer(swapData: T);
     setUsAsOfferer(swapData: T);
