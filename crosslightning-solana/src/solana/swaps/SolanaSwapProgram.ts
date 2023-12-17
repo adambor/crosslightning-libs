@@ -1500,16 +1500,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         if(ataInitIx!=null) solanaTx.add(ataInitIx);
         solanaTx.add(claimIx);
 
-        if(this.signer.signer==null) {
-            //Add compute budget
-            solanaTx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports: computedFeeRate
-            }));
+        //Add compute budget
+        solanaTx.add(ComputeBudgetProgram.setComputeUnitPrice({
+            microLamports: computedFeeRate
+        }));
 
-            if(Utils.getTxSize(solanaTx, this.signer.publicKey)>1232) {
-                //TX too large
-                solanaTx.instructions.pop();
-            }
+        if(Utils.getTxSize(solanaTx, this.signer.publicKey)>1232) {
+            //TX too large
+            solanaTx.instructions.pop();
         }
 
         txs.push({
