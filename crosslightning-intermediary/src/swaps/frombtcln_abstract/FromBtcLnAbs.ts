@@ -464,6 +464,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
         if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcSwapSigned = Date.now();
 
+        //Important to prevent race condition and issuing 2 signed init messages at the same time
         if(invoiceData.state===FromBtcLnSwapState.CREATED) {
             invoiceData.data = payInvoiceObject;
 
@@ -472,9 +473,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             invoiceData.timeout = sigData.timeout;
             invoiceData.signature = sigData.signature;
 
+            //Setting the state variable is done outside the promise, so is done synchronously
             await invoiceData.setState(FromBtcLnSwapState.RECEIVED);
-
-            //await PluginManager.swapStateChange(invoiceData);
 
             await this.storageManager.saveData(invoice.id, invoiceData);
             return;

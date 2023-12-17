@@ -78,9 +78,14 @@ export class IntermediaryStorageManager<T extends StorageObject> implements IInt
 
     async loadData(type: new(data: any) => T): Promise<void> {
         this.type = type;
-        let files;
 
-        files = await fs.readdir(this.directory);
+        let files: string[];
+        try {
+            files = await fs.readdir(this.directory);
+        } catch (e) {
+            console.error(e);
+            return;
+        }
 
         for(let file of files) {
             const paymentHash = file.split(".")[0];

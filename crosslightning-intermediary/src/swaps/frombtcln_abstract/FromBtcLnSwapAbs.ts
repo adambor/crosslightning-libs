@@ -65,10 +65,10 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
         return partialSerialized;
     }
 
-    async setState(newState: FromBtcLnSwapState) {
+    setState(newState: FromBtcLnSwapState): Promise<void> {
         const oldState = this.state;
         this.state = newState;
-        await PluginManager.swapStateChange(this, oldState);
+        return PluginManager.swapStateChange(this, oldState);
     }
 
 }
