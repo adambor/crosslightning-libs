@@ -1203,7 +1203,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         }
 
         tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-            units: 50000,
+            units: 75000,
         }));
         tx.add(ComputeBudgetProgram.setComputeUnitPrice({
             microLamports: parseInt(feeRate || (await this.getClaimFeeRate(swapData)))
