@@ -7,6 +7,7 @@ import {SwapCommitStatus, SwapData} from "crosslightning-base";
 import {tryWithRetries} from "../../../utils/RetryUtils";
 import {SignatureVerificationError} from "crosslightning-base";
 import {PriceInfoType} from "../../ISwap";
+import {LNURLWithdraw, LNURLWithdrawParamsWithUrl} from "../../ClientSwapContract";
 
 export enum FromBTCLNSwapState {
     EXPIRED = -2,
@@ -27,9 +28,9 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
     readonly requiredBaseFee: BN;
     readonly requiredFeePPM: BN;
     readonly expectedOut: BN;
-    readonly lnurl: string;
-    readonly lnurlK1: string;
-    readonly lnurlCallback: string;
+    lnurl: string;
+    lnurlK1: string;
+    lnurlCallback: string;
     prPosted: boolean;
     callbackPromise: Promise<void>;
 
@@ -158,10 +159,21 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
             await this.save();
         }
 
-        if(this.callbackPromise!=null) this.callbackPromise.catch(e => {
-            callbackError = e;
-            abortController.abort();
-        });
+        let existingCallbackPromise;
+
+        let changeListener = () => {
+            if(existingCallbackPromise==null) {
+                if(this.callbackPromise!=null) {
+                    this.callbackPromise.catch(e => {
+                        callbackError = e;
+                        abortController.abort();
+                    });
+                    existingCallbackPromise = this.callbackPromise;
+                }
+            }
+        };
+        changeListener();
+        this.events.addListener("swapState", changeListener);
 
         let result;
         try {
@@ -179,9 +191,11 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
                 checkIntervalSeconds
             );
         } catch (e) {
+            this.events.removeListener("swapState", changeListener);
             if(callbackError!=null) throw callbackError;
             throw e;
         }
+        this.events.removeListener("swapState", changeListener);
 
         if(abortController.signal.aborted) {
             if(callbackError!=null) throw callbackError;
@@ -201,6 +215,20 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
         await this.save();
 
         this.emitEvent();
+    }
+
+    /**
+     * Pay the generated lightning network invoice with LNURL-withdraw
+     */
+    async settleWithLNURLWithdraw(lnurl: string | LNURLWithdraw, noInstantReceive?: boolean): Promise<void> {
+        const result = await this.getWrapper().contract.settleWithLNURLWithdraw(typeof(lnurl)==="string" ? lnurl : lnurl.params, this.pr, noInstantReceive);
+        this.lnurl = typeof(lnurl)==="string" ? lnurl : lnurl.params.url;
+        this.lnurlCallback = result.withdrawRequest.callback;
+        this.lnurlK1 = result.withdrawRequest.k1;
+        this.prPosted = !noInstantReceive;
+        this.callbackPromise = result.lnurlCallbackResult;
+        await this.save();
+        await this.emitEvent();
     }
 
     /**

@@ -1,7 +1,7 @@
 import {FromBTCLNSwap, FromBTCLNSwapState} from "./FromBTCLNSwap";
 import {IFromBTCWrapper} from "../IFromBTCWrapper";
 import {IWrapperStorage} from "../../../storage/IWrapperStorage";
-import {ClientSwapContract, PaymentAuthError} from "../../ClientSwapContract";
+import {ClientSwapContract, LNURLWithdraw, LNURLWithdrawParamsWithUrl, PaymentAuthError} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import * as bolt11 from "bolt11";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
@@ -18,6 +18,7 @@ import {
     TokenAddress
 } from "crosslightning-base";
 import {tryWithRetries} from "../../../utils/RetryUtils";
+import {LNURLWithdrawParams} from "js-lnurl/lib";
 
 export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
@@ -127,10 +128,10 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
      * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
      * @param noInstantReceive  Flag to disable instantly posting the lightning PR to LN service for withdrawal, when set the lightning PR is sent to LN service when waitForPayment is called
      */
-    async createViaLNURL(lnurl: string, amount: BN, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, noInstantReceive?: boolean): Promise<FromBTCLNSwap<T>> {
+    async createViaLNURL(lnurl: string | LNURLWithdraw, amount: BN, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, noInstantReceive?: boolean): Promise<FromBTCLNSwap<T>> {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const result = await this.contract.receiveLightningLNURL(lnurl, amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, noInstantReceive);
+        const result = await this.contract.receiveLightningLNURL(typeof(lnurl)==="string" ? lnurl : lnurl.params, amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, noInstantReceive);
 
         const parsed = bolt11.decode(result.pr);
 
@@ -164,7 +165,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
             total,
             result.pricingInfo,
             result.feeRate,
-            lnurl,
+            typeof(lnurl)==="string" ? lnurl : lnurl.params.url,
             result.lnurlCallbackResult,
             result.withdrawRequest.k1,
             result.withdrawRequest.callback,

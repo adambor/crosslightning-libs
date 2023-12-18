@@ -6,7 +6,13 @@ import {ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";
 import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
 import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
 import {FromBTCWrapper} from "./frombtc/onchain/FromBTCWrapper";
-import {ClientSwapContract, LNURLPay, LNURLWithdraw} from "./ClientSwapContract";
+import {
+    ClientSwapContract,
+    LNURLPay,
+    LNURLPayParamsWithUrl,
+    LNURLWithdraw,
+    LNURLWithdrawParamsWithUrl
+} from "./ClientSwapContract";
 import {IntermediaryDiscovery} from "../intermediaries/IntermediaryDiscovery";
 import * as bitcoin from "bitcoinjs-lib";
 import * as bolt11 from "bolt11";
@@ -368,7 +374,7 @@ export class Swapper<
      * @param maxRoutingBaseFee     Maximum routing fee to use - base fee (higher routing fee means higher probability of payment success)
      * @param maxRoutingPPM         Maximum routing fee to use - proportional fee in PPM (higher routing fee means higher probability of payment success)
      */
-    async createToBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurlPay: string, amount: BN, comment: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN): Promise<ToBTCLNSwap<T>> {
+    async createToBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurlPay: string | LNURLPay, amount: BN, comment: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN): Promise<ToBTCLNSwap<T>> {
         return this.createSwap<ToBTCLNSwap<T>>(
             (candidate: Intermediary) => this.tobtcln.createViaLNURL(
                 lnurlPay,
@@ -450,7 +456,7 @@ export class Swapper<
      * @param amount            Amount to receive, in satoshis (bitcoin's smallest denomination)
      * @param noInstantReceive  Flag to disable instantly posting the lightning PR to LN service for withdrawal, when set the lightning PR is sent to LN service when waitForPayment is called
      */
-    async createFromBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurl: string, amount: BN, noInstantReceive?: boolean): Promise<FromBTCLNSwap<T>> {
+    async createFromBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurl: string | LNURLWithdraw, amount: BN, noInstantReceive?: boolean): Promise<FromBTCLNSwap<T>> {
         return this.createSwap<FromBTCLNSwap<T>>(
             (candidate: Intermediary) => this.frombtcln.createViaLNURL(
                 lnurl,

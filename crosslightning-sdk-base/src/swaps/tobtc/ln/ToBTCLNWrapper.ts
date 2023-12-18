@@ -2,7 +2,7 @@ import * as bolt11 from "bolt11";
 import {ToBTCLNSwap} from "./ToBTCLNSwap";
 import {IToBTCWrapper} from "../IToBTCWrapper";
 import {IWrapperStorage} from "../../../storage/IWrapperStorage";
-import {ClientSwapContract} from "../../ClientSwapContract";
+import {ClientSwapContract, LNURLPay, LNURLPayParamsWithUrl} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {UserError} from "../../../errors/UserError";
 import {ChainEvents, SwapData, TokenAddress} from "crosslightning-base";
@@ -108,7 +108,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
      * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
      */
     async createViaLNURL(
-        lnurlPay: string,
+        lnurlPay: string | LNURLPay,
         amount: BN,
         comment: string,
         expirySeconds: number,
@@ -125,7 +125,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
 
         const fee = this.calculateFeeForAmount(amount, maxBaseFee, maxPPMFee);
 
-        const result = await this.contract.payLightningLNURL(lnurlPay, amount, comment, expirySeconds, fee, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
+        const result = await this.contract.payLightningLNURL(typeof(lnurlPay)==="string" ? lnurlPay : lnurlPay.params, amount, comment, expirySeconds, fee, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
 
         const swap = new ToBTCLNSwap(
             this,
@@ -143,7 +143,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
             result.routingFeeSats,
             result.expiry,
             result.pricingInfo,
-            lnurlPay,
+            typeof(lnurlPay)==="string" ? lnurlPay : lnurlPay.params.url,
             result.successAction
         );
 
