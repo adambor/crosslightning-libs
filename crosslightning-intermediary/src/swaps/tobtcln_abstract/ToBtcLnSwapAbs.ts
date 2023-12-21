@@ -22,6 +22,7 @@ export class ToBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
     readonly swapFee: BN;
     readonly maxFee: BN;
     readonly signatureExpiry: BN;
+    refundAuthTimeout: BN;
 
     realRoutingFee: BN;
     secret: string;

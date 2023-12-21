@@ -92,7 +92,9 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 value: [
                     ToBtcLnSwapState.SAVED,
                     ToBtcLnSwapState.COMMITED,
-                    ToBtcLnSwapState.PAID
+                    ToBtcLnSwapState.PAID,
+                    ToBtcLnSwapState.NON_PAYABLE,
+                    ToBtcLnSwapState.REFUNDED
                 ]
             }
         ]);
@@ -100,9 +102,10 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         for(let invoiceData of queriedData) {
             const decodedPR = bolt11.decode(invoiceData.pr);
 
+            const timestamp = new BN(Math.floor(Date.now()/1000)).sub(new BN(this.config.maxSkew));
+
             if (invoiceData.state === ToBtcLnSwapState.SAVED) {
                 //Current timestamp plus maximum allowed on-chain time skew
-                const timestamp = new BN(Math.floor(Date.now()/1000)).sub(new BN(this.config.maxSkew));
 
                 const isSignatureExpired = invoiceData.signatureExpiry!=null && invoiceData.signatureExpiry.lt(timestamp);
                 if(isSignatureExpired) {
@@ -123,6 +126,18 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             if (invoiceData.state === ToBtcLnSwapState.COMMITED || invoiceData.state === ToBtcLnSwapState.PAID) {
                 await this.processInitialized(invoiceData, invoiceData.data);
+            }
+
+            if (invoiceData.state === ToBtcLnSwapState.NON_PAYABLE) {
+                if(invoiceData.data.getExpiry().lt(timestamp) && (invoiceData.refundAuthTimeout==null || invoiceData.refundAuthTimeout.lt(timestamp))) {
+                    await this.removeSwapData(invoiceData.getHash());
+                }
+            }
+
+            if(invoiceData.state == ToBtcLnSwapState.REFUNDED) {
+                if(invoiceData.refundAuthTimeout==null || invoiceData.refundAuthTimeout.lt(timestamp)) {
+                    await this.removeSwapData(invoiceData.getHash());
+                }
             }
         }
     }
@@ -449,7 +464,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
                 await savedInvoice.setState(ToBtcLnSwapState.REFUNDED);
 
-                await this.removeSwapData(paymentHash);
+                await this.storageManager.saveData(paymentHash, savedInvoice);
 
                 continue;
             }
@@ -586,6 +601,15 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     return;
                 }
             } catch (e) {}
+
+            const existingSwap = await this.storageManager.getData(parsedPR.tagsObject.payment_hash);
+            if(existingSwap.state!=ToBtcLnSwapState.SAVED) {
+                res.status(400).json({
+                    code: 20010,
+                    msg: "Already processed"
+                });
+                return;
+            }
 
             metadata.times.priorPaymentChecked = Date.now();
 
@@ -800,6 +824,15 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             const isSwapFound = data!=null;
             if(isSwapFound) {
+                const isExpired = data.data.getExpiry().lt(new BN(Math.floor(Date.now()/1000)).sub(new BN(this.config.maxSkew)));
+                if(isExpired) {
+                    res.status(200).json({
+                        code: 20010,
+                        msg: "Payment expired"
+                    });
+                    return;
+                }
+
                 if(data.state===ToBtcLnSwapState.NON_PAYABLE) {
                     const isCommited = await this.swapContract.isCommited(data.data);
 
@@ -812,6 +845,21 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     }
 
                     const refundSigData = await this.swapContract.getRefundSignature(data.data, this.config.authorizationTimeout);
+
+                    if(data.refundAuthTimeout==null) {
+                        data.refundAuthTimeout = new BN(refundSigData.timeout);
+                    } else {
+                        data.refundAuthTimeout = BN.max(data.refundAuthTimeout, new BN(refundSigData.timeout));
+                    }
+
+                    //Double check the state after promise result
+                    if (data.state !== ToBtcLnSwapState.NON_PAYABLE) {
+                        res.status(400).json({
+                            code: 20005,
+                            msg: "Not committed"
+                        });
+                        return;
+                    }
 
                     res.status(200).json({
                         code: 20000,
