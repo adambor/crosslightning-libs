@@ -4,10 +4,13 @@ import {Connection, PublicKey} from "@solana/web3.js";
 
 export class SolanaFeeEstimator {
 
-    connection: Connection;
+    private readonly connection: Connection;
+    private readonly maxFeeMicroLamports: BN;
 
-    constructor(connection: Connection) {
+
+    constructor(connection: Connection, maxFeeMicroLamports: number = 250000) {
         this.connection = connection;
+        this.maxFeeMicroLamports = new BN(maxFeeMicroLamports);
     }
 
     private async getBlockMeanFeeRate(slot: number): Promise<BN | null> {
@@ -97,7 +100,7 @@ export class SolanaFeeEstimator {
 
         const fee =  BN.max(BN.max(globalFeeRate, localFeeRate), new BN(8000));
 
-        return fee;
+        return BN.min(fee, this.maxFeeMicroLamports);
     }
 
 }
