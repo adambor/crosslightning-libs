@@ -606,7 +606,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             } catch (e) {}
 
             const existingSwap = await this.storageManager.getData(parsedPR.tagsObject.payment_hash);
-            if(existingSwap.state!=ToBtcLnSwapState.SAVED) {
+            if(existingSwap!=null && existingSwap.state!=ToBtcLnSwapState.SAVED) {
                 res.status(400).json({
                     code: 20010,
                     msg: "Already processed"
