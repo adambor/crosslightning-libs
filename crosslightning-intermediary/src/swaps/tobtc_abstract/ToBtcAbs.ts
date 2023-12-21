@@ -138,6 +138,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             {
                 key: "state",
                 values: [
+                    ToBtcSwapState.REFUNDED,
                     ToBtcSwapState.SAVED,
                     ToBtcSwapState.NON_PAYABLE,
                     ToBtcSwapState.COMMITED,
@@ -151,7 +152,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             const timestamp = new BN(Math.floor(Date.now()/1000)).sub(new BN(this.config.maxSkew));
 
             if(payment.state===ToBtcSwapState.SAVED && payment.signatureExpiry!=null) {
-                if(payment.signatureExpiry.lt(timestamp)) {
+                if(payment.signatureExpiry.lt(timestamp) && (payment.refundAuthTimeout==null || payment.refundAuthTimeout.lt(timestamp))) {
                     const isCommitted = await this.swapContract.isCommited(payment.data);
                     if(!isCommitted) {
                         //Signature expired
@@ -167,10 +168,17 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             }
 
             if(payment.state===ToBtcSwapState.NON_PAYABLE || payment.state===ToBtcSwapState.SAVED) {
-                if(payment.data.getExpiry().lt(timestamp)) {
+                if(payment.data.getExpiry().lt(timestamp) && (payment.refundAuthTimeout==null || payment.refundAuthTimeout.lt(timestamp))) {
                     //Expired
                     await payment.setState(ToBtcSwapState.CANCELED);
                     // await PluginManager.swapStateChange(payment);
+                    await this.removeSwapData(this.getChainHash(payment).toString("hex"));
+                    continue;
+                }
+            }
+
+            if(payment.state===ToBtcSwapState.REFUNDED) {
+                if(payment.refundAuthTimeout==null || payment.refundAuthTimeout.lt(timestamp)) {
                     await this.removeSwapData(this.getChainHash(payment).toString("hex"));
                     continue;
                 }
@@ -547,7 +555,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
                 await savedInvoice.setState(ToBtcSwapState.REFUNDED);
 
-                await this.removeSwapData(paymentHash);
+                await this.storageManager.saveData(paymentHash, savedInvoice);
 
                 continue;
             }
@@ -836,6 +844,17 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             metadata.times.priceCalculated = Date.now();
 
+            const paymentHash = this.getHash(parsedBody.address, parsedBody.nonce, amountBD, this.config.bitcoinNetwork).toString("hex");
+
+            const existingSwapData = await this.storageManager.getData(paymentHash);
+
+            if(existingSwapData!=null) {
+                res.status(400).json({
+                    msg: "Swap already processed!"
+                });
+                return;
+            }
+
             //Add grace period another time, so the user has 1 hour to commit
             const expirySeconds = this.getExpiryFromCLTV(parsedBody.confirmationTarget, parsedBody.confirmations).add(new BN(this.config.gracePeriod));
             const currentTimestamp = new BN(Math.floor(Date.now()/1000));
@@ -847,7 +866,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 this.swapContract.getAddress(),
                 useToken,
                 total,
-                this.getHash(parsedBody.address, parsedBody.nonce, amountBD, this.config.bitcoinNetwork).toString("hex"),
+                paymentHash,
                 minRequiredExpiry,
                 parsedBody.nonce,
                 parsedBody.confirmations,
@@ -871,13 +890,12 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             metadata.times.swapSigned = Date.now();
 
             const createdSwap = new ToBtcSwapAbs<T>(parsedBody.address, amountBD, swapFee, networkFeeAdjusted, parsedBody.nonce, parsedBody.confirmationTarget, new BN(sigData.timeout));
-            const paymentHash = this.getChainHash(createdSwap);
             createdSwap.data = payObject;
             createdSwap.metadata = metadata;
 
             await PluginManager.swapCreate(createdSwap);
 
-            await this.storageManager.saveData(paymentHash.toString("hex"), createdSwap);
+            await this.storageManager.saveData(paymentHash, createdSwap);
 
             res.status(200).json({
                 code: 20000,
@@ -931,6 +949,16 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 return;
             }
 
+            const isExpired = payment.data.getExpiry().lt(new BN(Math.floor(Date.now()/1000)).sub(new BN(this.config.maxSkew)));
+
+            if(isExpired) {
+                res.status(200).json({
+                    code: 20010,
+                    msg: "Payment expired"
+                });
+                return;
+            }
+
             if (payment.state === ToBtcSwapState.COMMITED) {
                 res.status(200).json({
                     code: 20008,
@@ -962,6 +990,21 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 }
 
                 const refundResponse = await this.swapContract.getRefundSignature(payment.data, this.config.authorizationTimeout);
+
+                if(payment.refundAuthTimeout==null) {
+                    payment.refundAuthTimeout = new BN(refundResponse.timeout);
+                } else {
+                    payment.refundAuthTimeout = BN.max(payment.refundAuthTimeout, new BN(refundResponse.timeout));
+                }
+
+                //Double check the state after promise result
+                if (payment.state !== ToBtcSwapState.NON_PAYABLE) {
+                    res.status(400).json({
+                        code: 20005,
+                        msg: "Not committed"
+                    });
+                    return;
+                }
 
                 res.status(200).json({
                     code: 20000,

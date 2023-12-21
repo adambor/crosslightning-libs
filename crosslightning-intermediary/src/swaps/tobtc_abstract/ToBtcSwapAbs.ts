@@ -27,6 +27,7 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
     readonly nonce: BN;
     readonly preferedConfirmationTarget: number;
     readonly signatureExpiry: BN;
+    refundAuthTimeout: BN;
 
     realNetworkFee: BN;
     txId: string;
