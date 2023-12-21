@@ -2265,13 +2265,16 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         return WSOL_ADDRESS;
     }
 
-    async withdraw(token: any, amount: BN, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        const txs = await this.txsWithdraw(token, amount);
+    async withdraw(token: any, amount: BN, waitForConfirmation?: boolean, abortSignal?: AbortSignal, feeRate?: string): Promise<string> {
+        const txs = await this.txsWithdraw(token, amount, feeRate);
         const [txId] = await this.sendAndConfirm(txs, waitForConfirmation, abortSignal, false);
         return txId;
     }
-    async txsWithdraw(token: any, amount: BN): Promise<SolTx[]> {
+    async txsWithdraw(token: any, amount: BN, feeRate?: string): Promise<SolTx[]> {
         const ata = await SplToken.getAssociatedTokenAddress(token, this.signer.publicKey);
+
+        const computeBudget = 100000;
+        feeRate = feeRate || await this.getFeeRate([this.signer.publicKey, ata, this.SwapUserVault(this.signer.publicKey, token), this.SwapVault(token)]);
 
         const tx = new Transaction();
 
@@ -2315,20 +2318,30 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             );
         }
 
+        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+            microLamports: parseInt(feeRate)
+        }));
+        tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+            units: computeBudget
+        }));
+
         return [{
             tx,
             signers: []
         }];
     }
-    async deposit(token: any, amount: BN, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        const txs = await this.txsDeposit(token, amount);
+    async deposit(token: any, amount: BN, waitForConfirmation?: boolean, abortSignal?: AbortSignal, feeRate?: string): Promise<string> {
+        const txs = await this.txsDeposit(token, amount, feeRate);
         const [txId] = await this.sendAndConfirm(txs, waitForConfirmation, abortSignal, false);
         return txId;
     }
-    async txsDeposit(token: any, amount: BN): Promise<SolTx[]> {
+    async txsDeposit(token: any, amount: BN, feeRate?: string): Promise<SolTx[]> {
         const ata = await SplToken.getAssociatedTokenAddress(token, this.signer.publicKey);
 
         const tx = new Transaction();
+
+        const computeBudget = 100000;
+        feeRate = feeRate || await this.getFeeRate([this.signer.publicKey, ata, this.SwapUserVault(this.signer.publicKey, token), this.SwapVault(token)]);
 
         if(WSOL_ADDRESS.equals(token)) {
             let accountExists: boolean = false;
@@ -2380,24 +2393,69 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         tx.add(depositIx);
 
+        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+            microLamports: parseInt(feeRate)
+        }));
+        tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+            units: computeBudget
+        }));
+
         return [{
             tx,
             signers: []
         }]
     }
-    async transfer(token: any, amount: BN, dstAddress: string, waitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        const txs = await this.txsTransfer(token, amount, dstAddress);
+    async transfer(token: any, amount: BN, dstAddress: string, waitForConfirmation?: boolean, abortSignal?: AbortSignal, feeRate?: string): Promise<string> {
+        const txs = await this.txsTransfer(token, amount, dstAddress, feeRate);
         const [txId] = await this.sendAndConfirm(txs, waitForConfirmation, abortSignal, false);
         return txId;
     }
-    async txsTransfer(token: any, amount: BN, dstAddress: string): Promise<SolTx[]> {
+    async txsTransfer(token: any, amount: BN, dstAddress: string, feeRate?: string): Promise<SolTx[]> {
+        const recipient = new PublicKey(dstAddress);
+
+        const computeBudget = 100000;
+
         if(WSOL_ADDRESS.equals(token)) {
-            return [{
-                tx: new Transaction().add(SystemProgram.transfer({
+            const wsolAta = SplToken.getAssociatedTokenAddressSync(token, this.signer.publicKey, false);
+            const account = await tryWithRetries<SplToken.Account>(async () => {
+                try {
+                    return await SplToken.getAccount(this.signer.connection, wsolAta);
+                } catch (e) {
+                    if(e instanceof TokenAccountNotFoundError) {
+                        return null;
+                    }
+                    throw e;
+                }
+            }, this.retryPolicy);
+
+            const tx = new Transaction();
+            if(account!=null) {
+                feeRate = feeRate || await this.getFeeRate([this.signer.publicKey, recipient, wsolAta]);
+                //Unwrap
+                tx.add(
+                    SplToken.createCloseAccountInstruction(wsolAta, this.signer.publicKey, this.signer.publicKey)
+                );
+            } else {
+                feeRate = feeRate || await this.getFeeRate([this.signer.publicKey, recipient]);
+            }
+
+            tx.add(
+                SystemProgram.transfer({
                     fromPubkey: this.signer.publicKey,
-                    toPubkey: new PublicKey(dstAddress),
+                    toPubkey: recipient,
                     lamports: BigInt(amount.toString(10))
-                })),
+                })
+            );
+
+            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+                microLamports: parseInt(feeRate)
+            }));
+            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+                units: computeBudget
+            }));
+
+            return [{
+                tx,
                 signers: []
             }];
         }
@@ -2409,6 +2467,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         }
 
         const dstAta = SplToken.getAssociatedTokenAddressSync(token, new PublicKey(dstAddress), false);
+
+        feeRate = feeRate || await this.getFeeRate([this.signer.publicKey, ata, dstAta]);
 
         const tx = new Transaction();
 
@@ -2431,6 +2491,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const ix = SplToken.createTransferInstruction(ata, dstAta, this.signer.publicKey, BigInt(amount.toString(10)));
         tx.add(ix);
+
+        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+            microLamports: parseInt(feeRate)
+        }));
+        tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+            units: computeBudget
+        }));
 
         return [{
             tx: tx,
