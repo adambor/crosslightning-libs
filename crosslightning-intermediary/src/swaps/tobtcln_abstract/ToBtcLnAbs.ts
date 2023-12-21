@@ -261,6 +261,9 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
      */
     private async processInitialized(invoiceData: ToBtcLnSwapAbs<T>, data: T) {
 
+        //Only process swaps in SAVED state
+        if(invoiceData.state!==ToBtcLnSwapState.SAVED) return;
+
         const lnPr = invoiceData.pr;
         const decodedPR = bolt11.decode(lnPr);
 
