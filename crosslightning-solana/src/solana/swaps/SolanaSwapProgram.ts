@@ -26,6 +26,7 @@ import Utils from "./Utils";
 import * as bs58 from "bs58";
 import {tryWithRetries} from "../../utils/RetryUtils";
 import {defaultAccountStateInstructionData, TokenAccountNotFoundError} from "@solana/spl-token";
+import {SolanaFeeEstimator} from "./SolanaFeeEstimator";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
@@ -213,6 +214,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     };
 
     readonly retryPolicy: SolanaRetryPolicy;
+    readonly solanaFeeEstimator: SolanaFeeEstimator;
 
     constructor(signer: AnchorProvider & {signer?: Signer}, btcRelay: SolanaBtcRelay<any>, storage: IStorageManager<StoredDataAccount>, programAddress?: string, retryPolicy?: SolanaRetryPolicy) {
         this.signer = signer;
@@ -223,6 +225,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         this.btcRelay = btcRelay;
 
         this.storage = storage;
+
+        this.solanaFeeEstimator = new SolanaFeeEstimator(signer.connection);
 
         this.SwapVaultAuthority = PublicKey.findProgramAddressSync(
             [Buffer.from(AUTHORITY_SEED)],
@@ -2051,20 +2055,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     }
 
     async getFeeRate(mutableAccounts: PublicKey[]): Promise<string> {
-        const resp = await this.signer.connection.getRecentPrioritizationFees({
-            lockedWritableAccounts: mutableAccounts
-        });
-
-        let lamports = 0;
-        for(let i=20;i>=0;i--) {
-            const data = resp[resp.length-i-1];
-            if(data!=null) lamports = Math.min(lamports, data.prioritizationFee);
-        }
-        if(lamports<4000) lamports = 4000;
-
-        const microLamports = new BN(lamports * 2);
-
-        return microLamports.toString(10);
+        return this.solanaFeeEstimator.getFeeRate(mutableAccounts).then(e => e.toString(10));
     }
 
     async getInitPayInFeeRate(offerer: string, claimer: string, token: PublicKey, paymentHash?: string): Promise<string> {
