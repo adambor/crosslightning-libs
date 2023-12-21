@@ -15,37 +15,38 @@ export class SolanaFeeEstimator {
 
     private async getBlockMeanFeeRate(slot: number): Promise<BN | null> {
 
-        try {
-            const response = await (this.connection as any)._rpcRequest("getBlock", [
-                slot,
-                {
-                    encoding: "json",
-                    transactionDetails: "signatures",
-                    commitment: "confirmed",
-                    rewards: true
-                }
-            ]);
+        //Have to use raw _rpcRequest because getBlock nor getParsedBlock don't work with transactionDetails=signatures
+        const response = await (this.connection as any)._rpcRequest("getBlock", [
+            slot,
+            {
+                encoding: "json",
+                transactionDetails: "signatures",
+                commitment: "confirmed",
+                rewards: true
+            }
+        ]);
 
-            const block = response.result;
-
-            const blockComission = block.rewards.find(e => e.rewardType==="Fee");
-
-            const totalBlockFees = new BN(blockComission.lamports).mul(new BN(2));
-
-            //Subtract per-signature fee
-            const computeFees = totalBlockFees.sub(new BN(block.signatures.length).mul(new BN(5000)));
-
-            const computeFeesMicroLamports = computeFees.mul(new BN(1000000));
-
-            const perCUMicroLamports = computeFeesMicroLamports.div(new BN(48000000));
-
-            return perCUMicroLamports;
-        } catch (e) {
-            if(e.code===-32004 || e.code===-32007 || e.code===-32009 || e.code===-32014) {
+        if(response.error!=null) {
+            if(response.error.code===-32004 || response.error.code===-32007 || response.error.code===-32009 || response.error.code===-32014) {
                 return null;
             }
-            throw e;
+            throw new Error(response.error.message);
         }
+
+        const block = response.result;
+
+        const blockComission = block.rewards.find(e => e.rewardType==="Fee");
+
+        const totalBlockFees = new BN(blockComission.lamports).mul(new BN(2));
+
+        //Subtract per-signature fee
+        const computeFees = totalBlockFees.sub(new BN(block.signatures.length).mul(new BN(5000)));
+
+        const computeFeesMicroLamports = computeFees.mul(new BN(1000000));
+
+        const perCUMicroLamports = computeFeesMicroLamports.div(new BN(48000000));
+
+        return perCUMicroLamports;
 
     }
 
