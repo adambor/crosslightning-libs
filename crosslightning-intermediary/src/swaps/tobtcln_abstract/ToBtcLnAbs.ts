@@ -261,9 +261,6 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
      */
     private async processInitialized(invoiceData: ToBtcLnSwapAbs<T>, data: T) {
 
-        //Only process swaps in SAVED state
-        if(invoiceData.state!==ToBtcLnSwapState.SAVED) return;
-
         const lnPr = invoiceData.pr;
         const decodedPR = bolt11.decode(lnPr);
 
@@ -430,6 +427,9 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 if(savedInvoice.metadata!=null) savedInvoice.metadata.times.txReceived = Date.now();
 
                 console.log("[To BTC-LN: Solana.Initialize] SOL request submitted: ", paymentHash);
+
+                //Only process swaps in SAVED state
+                if(savedInvoice.state!==ToBtcLnSwapState.SAVED) continue;
 
                 await this.processInitialized(savedInvoice, event.swapData);
 
