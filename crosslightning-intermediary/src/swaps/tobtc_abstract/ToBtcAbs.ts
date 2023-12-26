@@ -328,6 +328,10 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 return;
             }
 
+            const unlock: () => boolean = payment.lock(60);
+
+            if(unlock==null) return;
+
             if(payment.metadata!=null) payment.metadata.times.payCLTVChecked = Date.now();
 
             const maxNetworkFee = payment.networkFee;
@@ -352,6 +356,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             if(fundPsbtResponse==null) {
                 //Here we can retry later, so it stays in COMMITED state
                 console.error("[To BTC: Solana.Initialize] Failed to call fundPsbt on this.LND");
+                unlock();
                 return;
             }
 
@@ -409,6 +414,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             if(signedPsbt==null) {
                 console.error("[To BTC: Solana.Initialize] Failed to sign psbt!");
                 await unlockUtxos();
+                unlock();
                 return;
             }
 
@@ -422,6 +428,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 console.error("[To BTC: Solana.Initialize] Fee changed too much! Max possible fee: "+maxNetworkFee.toString(10)+" required transaction fee: "+txFee.toString(10));
                 await unlockUtxos();
                 await setNonPayableAndSave();
+                unlock();
                 return;
             }
 
@@ -453,12 +460,14 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             if(txSendResult==null) {
                 console.error("[To BTC: Solana.Initialize] Failed to broadcast transaction!");
                 await unlockUtxos();
+                unlock();
                 return;
             }
 
             await payment.setState(ToBtcSwapState.BTC_SENT);
             // await PluginManager.swapStateChange(payment);
             await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
+            unlock();
         }
 
         if(payment.state===ToBtcSwapState.NON_PAYABLE) return;
