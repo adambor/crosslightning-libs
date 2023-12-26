@@ -1,6 +1,6 @@
 {
   "name": "crosslightning-solana",
-  "version": "3.13.2",
+  "version": "3.13.3",
   "description": "Solana specific base implementation",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",
