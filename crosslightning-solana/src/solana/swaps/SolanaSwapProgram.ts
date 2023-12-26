@@ -1173,6 +1173,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         let accounts: {[key: string]: PublicKey};
 
         if(swapData.isPayOut()) {
+            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+                units: 75000,
+            }));
+
             accounts = {
                 signer: this.signer.publicKey,
                 initializer: swapData.isPayIn() ? swapData.offerer : swapData.claimer,
@@ -1189,6 +1193,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 data: null
             };
         } else {
+            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+                units: 25000,
+            }));
+
             accounts = {
                 signer: this.signer.publicKey,
                 initializer: swapData.isPayIn() ? swapData.offerer : swapData.claimer,
@@ -1206,9 +1214,6 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             };
         }
 
-        tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-            units: 75000,
-        }));
         tx.add(ComputeBudgetProgram.setComputeUnitPrice({
             microLamports: parseInt(feeRate || (await this.getClaimFeeRate(swapData)))
         }));
@@ -1403,7 +1408,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             const writeLen = Math.min(writeData.length-pointer, 420);
 
             const writeIx = await this.program.methods
-                .writeData(pointer, writeData.slice(pointer, writeLen))
+                .writeData(pointer, writeData.slice(pointer, pointer+writeLen))
                 .accounts({
                     signer: this.signer.publicKey,
                     data: txDataKey.publicKey
@@ -1433,7 +1438,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             const writeLen = Math.min(writeData.length-pointer, 950);
 
             const writeTx = await this.program.methods
-                .writeData(pointer, writeData.slice(pointer, writeLen))
+                .writeData(pointer, writeData.slice(pointer, pointer+writeLen))
                 .accounts({
                     signer: this.signer.publicKey,
                     data: txDataKey.publicKey
@@ -1563,6 +1568,19 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         const tx = new Transaction();
 
+        if(swapData.isPayIn()) {
+            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+                units: 100000,
+            }));
+        } else {
+            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+                units: 25000,
+            }));
+        }
+        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+            microLamports: parseInt(feeRate || (await this.getRefundFeeRate(swapData)))
+        }));
+
         let ata: PublicKey = null;
 
         if(swapData.isPayIn()) {
@@ -1642,13 +1660,6 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
                 );
             }
         }
-
-        tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-            units: 100000,
-        }));
-        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-            microLamports: parseInt(feeRate || (await this.getRefundFeeRate(swapData)))
-        }));
 
         return [{
             tx,
@@ -2171,7 +2182,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         feeRate = feeRate || await this.getClaimFeeRate(swapData);
 
-        const computeBudget = swapData.getType()===ChainSwapType.HTLC ? 50000 : 200000;
+        const computeBudget = swapData.getType()===ChainSwapType.HTLC ? (
+            swapData.payOut ? 75000 : 25000
+        ) : 400000;
         const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
         const priorityLamports = priorityMicroLamports.div(new BN(1000000));
 
@@ -2183,7 +2196,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         feeRate = feeRate || await this.getClaimFeeRate(swapData);
 
-        const computeBudget = swapData.getType()===ChainSwapType.HTLC ? 50000 : 200000;
+        const computeBudget = swapData.getType()===ChainSwapType.HTLC ? (
+            swapData.payOut ? 75000 : 25000
+        ) : 400000;
         const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
         const priorityLamports = priorityMicroLamports.div(new BN(1000000));
 
@@ -2218,7 +2233,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         feeRate = feeRate || await this.getRefundFeeRate(swapData);
 
-        const computeBudget = 100000;
+        const computeBudget = swapData.payIn ? 100000 : 25000;
         const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
         const priorityLamports = priorityMicroLamports.div(new BN(1000000));
 
@@ -2233,7 +2248,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         feeRate = feeRate || await this.getRefundFeeRate(swapData);
 
-        const computeBudget = 100000;
+        const computeBudget = swapData.payIn ? 100000 : 25000;
         const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
         const priorityLamports = priorityMicroLamports.div(new BN(1000000));
 
