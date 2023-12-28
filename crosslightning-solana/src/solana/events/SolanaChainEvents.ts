@@ -23,7 +23,8 @@ for(let ix of programIdl.instructions) {
 export type IxWithAccounts = ({name: string, data: any, accounts: {[key: string]: PublicKey}});
 export type EventObject = {
     events: Event<IdlEvent, Record<string, any>>[],
-    instructions: IxWithAccounts[]
+    instructions: IxWithAccounts[],
+    blockTime: number
 };
 
 export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
@@ -100,11 +101,21 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                 const secret: Buffer = Buffer.from(event.data.secret);
                 const paymentHash: Buffer = Buffer.from(event.data.hash);
 
-                parsedEvents.push(new ClaimEvent<SolanaSwapData>(paymentHash.toString("hex"), secret.toString("hex")));
+                const parsedEvent = new ClaimEvent<SolanaSwapData>(paymentHash.toString("hex"), secret.toString("hex"));
+                (parsedEvent as any).meta = {
+                    timestamp: eventObject.blockTime
+                };
+                parsedEvents.push(parsedEvent);
             }
             if(event.name==="RefundEvent") {
                 const paymentHash: Buffer = Buffer.from(event.data.hash);
-                parsedEvents.push(new RefundEvent<SolanaSwapData>(paymentHash.toString("hex")));
+
+
+                const parsedEvent = new RefundEvent<SolanaSwapData>(paymentHash.toString("hex"));
+                (parsedEvent as any).meta = {
+                    timestamp: eventObject.blockTime
+                };
+                parsedEvents.push(parsedEvent);
             }
             if(event.name==="InitializeEvent") {
                 const paymentHash: Buffer = Buffer.from(event.data.hash);
@@ -158,12 +169,16 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
 
                 //const usedNonce = ix.data.nonce.toNumber();
 
-                parsedEvents.push(new InitializeEvent<SolanaSwapData>(
+                const parsedEvent = new InitializeEvent<SolanaSwapData>(
                     paymentHash.toString("hex"),
                     txoHash.toString("hex"),
                     0,
                     swapData
-                ));
+                );
+                (parsedEvent as any).meta = {
+                    timestamp: eventObject.blockTime
+                };
+                parsedEvents.push(parsedEvent);
             }
         }
 
@@ -206,7 +221,8 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
 
                 await this.processEvent({
                     events,
-                    instructions
+                    instructions,
+                    blockTime: transaction.blockTime
                 });
             }
         } catch (e) {
