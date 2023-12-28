@@ -24,7 +24,8 @@ export type IxWithAccounts = ({name: string, data: any, accounts: {[key: string]
 export type EventObject = {
     events: Event<IdlEvent, Record<string, any>>[],
     instructions: IxWithAccounts[],
-    blockTime: number
+    blockTime: number,
+    signature: string
 };
 
 export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
@@ -103,7 +104,8 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
 
                 const parsedEvent = new ClaimEvent<SolanaSwapData>(paymentHash.toString("hex"), secret.toString("hex"));
                 (parsedEvent as any).meta = {
-                    timestamp: eventObject.blockTime
+                    timestamp: eventObject.blockTime,
+                    txId: eventObject.signature
                 };
                 parsedEvents.push(parsedEvent);
             }
@@ -113,7 +115,8 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
 
                 const parsedEvent = new RefundEvent<SolanaSwapData>(paymentHash.toString("hex"));
                 (parsedEvent as any).meta = {
-                    timestamp: eventObject.blockTime
+                    timestamp: eventObject.blockTime,
+                    txId: eventObject.signature
                 };
                 parsedEvents.push(parsedEvent);
             }
@@ -176,7 +179,8 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                     swapData
                 );
                 (parsedEvent as any).meta = {
-                    timestamp: eventObject.blockTime
+                    timestamp: eventObject.blockTime,
+                    txId: eventObject.signature
                 };
                 parsedEvents.push(parsedEvent);
             }
@@ -222,7 +226,8 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                 await this.processEvent({
                     events,
                     instructions,
-                    blockTime: transaction.blockTime
+                    blockTime: transaction.blockTime,
+                    signature
                 });
             }
         } catch (e) {
