@@ -6,11 +6,15 @@ export class SolanaFeeEstimator {
 
     private readonly connection: Connection;
     private readonly maxFeeMicroLamports: BN;
+    private readonly numSamples: number;
+    private readonly period: number;
 
 
-    constructor(connection: Connection, maxFeeMicroLamports: number = 250000) {
+    constructor(connection: Connection, maxFeeMicroLamports: number = 250000, numSamples: number = 8, period: number = 150) {
         this.connection = connection;
         this.maxFeeMicroLamports = new BN(maxFeeMicroLamports);
+        this.numSamples = numSamples;
+        this.period = period;
     }
 
     private async getBlockMeanFeeRate(slot: number): Promise<BN | null> {
@@ -50,7 +54,7 @@ export class SolanaFeeEstimator {
 
     }
 
-    private async getGlobalFeeRate(numSamples: number = 8, period: number = 150): Promise<BN> {
+    private async getGlobalFeeRate(numSamples: number = this.numSamples, period: number = this.period): Promise<BN> {
 
         let slot = await this.connection.getSlot();
 

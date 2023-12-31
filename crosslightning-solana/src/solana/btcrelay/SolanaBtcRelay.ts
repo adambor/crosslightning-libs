@@ -6,6 +6,7 @@ import {programIdl} from "./program/programIdl";
 import {BitcoinRpc, BtcBlock, BtcRelay, StatePredictorUtils} from "crosslightning-base";
 import {fork} from "child_process";
 import {sign} from "tweetnacl";
+import {SolanaFeeEstimator} from "../..";
 
 const LOG_FETCH_LIMIT = 500;
 
@@ -35,13 +36,21 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
     readonly maxForkHeadersPerTx: number = 6;
     readonly maxShortForkHeadersPerTx: number = 6;
 
-    constructor(provider: AnchorProvider, bitcoinRpc: BitcoinRpc<B>, programAddress?: string) {
+    solanaFeeEstimator: SolanaFeeEstimator;
+
+    constructor(
+        provider: AnchorProvider,
+        bitcoinRpc: BitcoinRpc<B>,
+        programAddress?: string,
+        solanaFeeEstimator: SolanaFeeEstimator = new SolanaFeeEstimator(provider.connection)
+    ) {
         this.provider = provider;
         this.programCoder = new BorshCoder(programIdl as any);
         this.program = new Program(programIdl as any, programAddress || programIdl.metadata.address, provider);
         this.eventParser = new EventParser(this.program.programId, this.programCoder);
 
         this.bitcoinRpc = bitcoinRpc;
+        this.solanaFeeEstimator = solanaFeeEstimator;
 
         this.BtcRelayMainState = PublicKey.findProgramAddressSync(
             [Buffer.from(BTC_RELAY_STATE_SEED)],
@@ -624,32 +633,15 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
 
     }
 
-    async getFeeRate(mutableAccounts: PublicKey[]): Promise<string> {
-        const resp = await this.provider.connection.getRecentPrioritizationFees({
-            lockedWritableAccounts: mutableAccounts
-        });
-
-        let lamports = 0;
-        for(let i=20;i>=0;i--) {
-            const data = resp[resp.length-i-1];
-            if(data!=null) lamports = Math.min(lamports, data.prioritizationFee);
-        }
-        if(lamports<4000) lamports = 4000;
-
-        const microLamports = new BN(lamports * 2);
-
-        return microLamports.toString(10);
-    }
-
     getMainFeeRate(): Promise<any> {
-        return this.getFeeRate([
+        return this.solanaFeeEstimator.getFeeRate([
             this.provider.publicKey,
             this.BtcRelayMainState
         ]);
     }
 
     getForkFeeRate(forkId: number): Promise<any> {
-        return this.getFeeRate([
+        return this.solanaFeeEstimator.getFeeRate([
             this.provider.publicKey,
             this.BtcRelayMainState,
             this.BtcRelayFork(forkId, this.provider.publicKey)

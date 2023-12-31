@@ -26,7 +26,7 @@ import Utils from "./Utils";
 import * as bs58 from "bs58";
 import {tryWithRetries} from "../../utils/RetryUtils";
 import {defaultAccountStateInstructionData, TokenAccountNotFoundError} from "@solana/spl-token";
-import {SolanaFeeEstimator} from "./SolanaFeeEstimator";
+import {SolanaFeeEstimator} from "../../utils/SolanaFeeEstimator";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
@@ -216,7 +216,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
     readonly retryPolicy: SolanaRetryPolicy;
     readonly solanaFeeEstimator: SolanaFeeEstimator;
 
-    constructor(signer: AnchorProvider & {signer?: Signer}, btcRelay: SolanaBtcRelay<any>, storage: IStorageManager<StoredDataAccount>, programAddress?: string, retryPolicy?: SolanaRetryPolicy) {
+    constructor(
+        signer: AnchorProvider & {signer?: Signer},
+        btcRelay: SolanaBtcRelay<any>,
+        storage: IStorageManager<StoredDataAccount>,
+        programAddress?: string,
+        retryPolicy?: SolanaRetryPolicy,
+        solanaFeeEstimator: SolanaFeeEstimator = new SolanaFeeEstimator(signer.connection)
+    ) {
         this.signer = signer;
         this.program = new Program(programIdl as any, programAddress || programIdl.metadata.address, signer);
         this.coder = new BorshCoder(programIdl as any);
@@ -226,7 +233,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
 
         this.storage = storage;
 
-        this.solanaFeeEstimator = new SolanaFeeEstimator(signer.connection);
+        this.solanaFeeEstimator = solanaFeeEstimator;
 
         this.SwapVaultAuthority = PublicKey.findProgramAddressSync(
             [Buffer.from(AUTHORITY_SEED)],
