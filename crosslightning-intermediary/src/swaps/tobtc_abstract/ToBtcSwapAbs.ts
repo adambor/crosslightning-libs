@@ -24,6 +24,7 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
     readonly amount: BN;
     readonly swapFee: BN;
     readonly networkFee: BN;
+    readonly satsPerVbyte: BN;
     readonly nonce: BN;
     readonly preferedConfirmationTarget: number;
     readonly signatureExpiry: BN;
@@ -32,10 +33,10 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
     realNetworkFee: BN;
     txId: string;
 
-    constructor(address: string, amount: BN, swapFee: BN, networkFee: BN, nonce: BN, preferedConfirmationTarget: number, signatureExpiry: BN);
+    constructor(address: string, amount: BN, swapFee: BN, networkFee: BN, satsPerVbyte: BN, nonce: BN, preferedConfirmationTarget: number, signatureExpiry: BN);
     constructor(obj: any);
 
-    constructor(prOrObj: string | any, amount?: BN, swapFee?: BN, networkFee?: BN, nonce?: BN, preferedConfirmationTarget?: number, signatureExpiry?: BN) {
+    constructor(prOrObj: string | any, amount?: BN, swapFee?: BN, networkFee?: BN, satsPerVbyte?: BN, nonce?: BN, preferedConfirmationTarget?: number, signatureExpiry?: BN) {
         if(typeof(prOrObj)==="string") {
             super();
             this.state = ToBtcSwapState.SAVED;
@@ -43,6 +44,7 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
             this.amount = amount;
             this.swapFee = swapFee;
             this.networkFee = networkFee;
+            this.satsPerVbyte = satsPerVbyte;
             this.nonce = nonce;
             this.preferedConfirmationTarget = preferedConfirmationTarget;
             this.signatureExpiry = signatureExpiry;
@@ -53,6 +55,7 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
             this.amount = new BN(prOrObj.amount);
             this.swapFee = new BN(prOrObj.swapFee);
             this.networkFee = new BN(prOrObj.networkFee);
+            this.satsPerVbyte = new BN(prOrObj.satsPerVbyte);
             this.nonce = new BN(prOrObj.nonce);
             this.preferedConfirmationTarget = prOrObj.preferedConfirmationTarget;
             this.signatureExpiry = prOrObj.signatureExpiry==null ? null : new BN(prOrObj.signatureExpiry);
@@ -70,6 +73,7 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
         partialSerialized.amount = this.amount.toString(10);
         partialSerialized.swapFee = this.swapFee.toString(10);
         partialSerialized.networkFee = this.networkFee.toString(10);
+        partialSerialized.satsPerVbyte = this.satsPerVbyte.toString(10);
         partialSerialized.nonce = this.nonce.toString(10);
         partialSerialized.preferedConfirmationTarget = this.preferedConfirmationTarget;
         partialSerialized.signatureExpiry = this.signatureExpiry==null ? null : this.signatureExpiry.toString(10);

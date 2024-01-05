@@ -28,7 +28,9 @@ export type CoinselectTxInput = {
     txId: string,
     vout: number,
     type?: CoinselectAddressTypes,
-    value: number
+    value: number,
+    outputScript?: Buffer,
+    address?: string
 };
 
 export type CoinselectTxOutput = {

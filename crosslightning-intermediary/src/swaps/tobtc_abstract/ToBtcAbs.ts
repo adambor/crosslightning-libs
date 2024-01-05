@@ -153,14 +153,18 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             vout: number,
             txId: string,
             value: number,
-            type: CoinselectAddressTypes
+            type: CoinselectAddressTypes,
+            outputScript: Buffer,
+            address: string
         }[] = utxos.map(utxo => {
             totalSpendable += utxo.tokens;
             return {
                 vout: utxo.transaction_vout,
                 txId: utxo.transaction_id,
                 value: utxo.tokens,
-                type: ADDRESS_FORMAT_MAP[utxo.address_format]
+                type: ADDRESS_FORMAT_MAP[utxo.address_format],
+                outputScript: Buffer.from(utxo.output_script, "hex"),
+                address: utxo.address
             };
         });
 
@@ -430,8 +434,6 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             if(payment.metadata!=null) payment.metadata.times.payCLTVChecked = Date.now();
 
-            const maxNetworkFee = payment.networkFee;
-
             const coinselectResult = await this.getChainFee(payment.address, payment.amount.toNumber());
 
             if(coinselectResult==null) {
@@ -440,39 +442,18 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 return;
             }
 
-            let fundPsbtResponse;
-            try {
-                fundPsbtResponse = await lncli.fundPsbt({
-                    lnd: this.LND,
-                    inputs: coinselectResult.inputs.map(e => {
-                        return {
-                            transaction_id: e.txId,
-                            transaction_vout: e.vout
-                        }
-                    }),
-                    outputs: [
-                        {
-                            address: payment.address,
-                            tokens: payment.amount.toNumber()
-                        }
-                    ],
-                    fee_tokens_per_vbyte: coinselectResult.satsPerVbyte,
-                    min_confirmations: 0
-                });
-            } catch (e) {
-                console.error(e);
-            }
-
-            if(fundPsbtResponse==null) {
-                //Here we can retry later, so it stays in COMMITED state
-                console.error("[To BTC: Solana.Initialize] Failed to call fundPsbt on this.LND");
+            //Check tx fee
+            const feeRate = new BN(coinselectResult.satsPerVbyte);
+            const swapPaysEnoughNetworkFee = payment.satsPerVbyte.gte(feeRate);
+            if(!swapPaysEnoughNetworkFee) {
+                //TODO: Here we can maybe retry with a bit different confirmation target
+                console.error("[To BTC: Solana.Initialize] Fee changed too much! Max possible feerate: "+payment.satsPerVbyte.toString(10)+" sats/vB required feerate: "+feeRate.toString(10)+" sats/vB");
+                await setNonPayableAndSave();
                 unlock();
                 return;
             }
 
-            if(payment.metadata!=null) payment.metadata.times.payFundPSBT = Date.now();
-
-            let psbt = bitcoin.Psbt.fromHex(fundPsbtResponse.psbt);
+            let psbt = new bitcoin.Psbt();
 
             //Apply nonce
             const nonceBN = data.getEscrowNonce();
@@ -491,9 +472,23 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             const sequence = 0xFE000000 + sequenceBN.toNumber();
             console.log("[To BTC: Solana.Initialize] Nonce sequence: ", sequence);
 
-            for(let i=0;i<psbt.inputCount;i++) {
-                psbt.setInputSequence(i, sequence);
-            }
+            psbt.addInputs(coinselectResult.inputs.map(input => {
+                return {
+                    hash: input.txId,
+                    index: input.vout,
+                    witnessUtxo: {
+                        script: input.outputScript,
+                        value: input.value
+                    },
+                    sighashType: 0x01,
+                    sequence
+                };
+            }));
+
+            psbt.addOutput({
+                script: bitcoin.address.toOutputScript(payment.address, this.config.bitcoinNetwork),
+                value: payment.amount.toNumber()
+            });
 
             //Sign the PSBT
             const psbtHex = psbt.toHex();
@@ -510,37 +505,24 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             if(payment.metadata!=null) payment.metadata.times.paySignPSBT = Date.now();
 
-            const unlockUtxos = async() => {
-                for(let input of fundPsbtResponse.inputs) {
-                    await lncli.unlockUtxo({
-                        lnd: this.LND,
-                        id: input.lock_id,
-                        transaction_id: input.transaction_id,
-                        transaction_vout: input.transaction_vout
-                    });
-                }
-            };
-
             if(signedPsbt==null) {
                 console.error("[To BTC: Solana.Initialize] Failed to sign psbt!");
-                await unlockUtxos();
                 unlock();
                 return;
             }
 
             psbt = bitcoin.Psbt.fromHex(signedPsbt.psbt);
 
-            //Check tx fee
             const txFee = new BN(psbt.getFee());
-            const swapPaysEnoughNetworkFee = maxNetworkFee.gte(txFee);
-            if(!swapPaysEnoughNetworkFee) {
-                //TODO: Here we can maybe retry with a bit different confirmation target
-                console.error("[To BTC: Solana.Initialize] Fee changed too much! Max possible fee: "+maxNetworkFee.toString(10)+" required transaction fee: "+txFee.toString(10));
-                await unlockUtxos();
-                await setNonPayableAndSave();
-                unlock();
-                return;
-            }
+            // //Check tx fee
+            // const swapPaysEnoughNetworkFee = maxNetworkFee.gte(txFee);
+            // if(!swapPaysEnoughNetworkFee) {
+            //     //TODO: Here we can maybe retry with a bit different confirmation target
+            //     console.error("[To BTC: Solana.Initialize] Fee changed too much! Max possible fee: "+maxNetworkFee.toString(10)+" required transaction fee: "+txFee.toString(10));
+            //     await setNonPayableAndSave();
+            //     unlock();
+            //     return;
+            // }
 
             //Send BTC TX
             console.log("[To BTC: Solana.Initialize] Generated raw transaction: ", signedPsbt.transaction);
@@ -569,7 +551,6 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             if(txSendResult==null) {
                 console.error("[To BTC: Solana.Initialize] Failed to broadcast transaction!");
-                await unlockUtxos();
                 unlock();
                 return;
             }
@@ -993,7 +974,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             metadata.times.swapSigned = Date.now();
 
-            const createdSwap = new ToBtcSwapAbs<T>(parsedBody.address, amountBD, swapFee, networkFeeAdjusted, parsedBody.nonce, parsedBody.confirmationTarget, new BN(sigData.timeout));
+            const createdSwap = new ToBtcSwapAbs<T>(parsedBody.address, amountBD, swapFee, networkFeeAdjusted, feeSatsPervByteAdjusted, parsedBody.nonce, parsedBody.confirmationTarget, new BN(sigData.timeout));
             createdSwap.data = payObject;
             createdSwap.metadata = metadata;
 

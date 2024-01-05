@@ -44,7 +44,8 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
 
             process.on('SIGINT', () => {
                 console.log("Process exiting, stopping estimator...");
-                this.estimator.stop()
+                this.estimator.stop();
+                process.exit();
             });
         });
     }
