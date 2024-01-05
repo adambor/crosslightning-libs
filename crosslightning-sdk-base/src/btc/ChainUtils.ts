@@ -125,6 +125,7 @@ export class ChainUtils {
             let resp: string;
             try {
                 resp = await response.text();
+                if(resp==="Transaction not found") return null;
             } catch (e) {
                 throw new Error(response.statusText);
             }
