@@ -9,26 +9,30 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
     receivedFee: [number, number, number, number];
     iterations: number = 0;
 
-    constructor(
-        host: string,
-        port: number,
-        username: string,
-        password: string
-    ) {
+    host: string;
+    port: number;
+    username: string;
+    password: string;
+
+    startFeeEstimator() {
+
         importPromise.then(({FeeEstimator}) => {
             this.estimator = new FeeEstimator({
                 mode: 'bundles', // 'txs' | 'bundles' - optional, default 'txs'
                 refresh: 30, // optional, default 30 - interval in seconds, setting too low can cause unexpected errors
                 rpcOptions: {
-                    host,
-                    port,
-                    username,
-                    password
+                    host: this.host,
+                    port: this.port,
+                    username: this.username,
+                    password: this.password
                 }
             });
 
             this.estimator.on('error', (err) => {
-                console.error("Fee estimator error: ", err)
+                console.error("Fee estimator error: ", err);
+                this.receivedFee = null;
+                this.iterations = 0;
+                this.startFeeEstimator();
             });
 
             // receive live fee rate updates from the FeeEstimator
@@ -48,6 +52,19 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
                 process.exit();
             });
         });
+    }
+
+    constructor(
+        host: string,
+        port: number,
+        username: string,
+        password: string
+    ) {
+        this.host = host;
+        this.port = port;
+        this.username = username;
+        this.password = password;
+        this.startFeeEstimator();
     }
 
     estimateFee(): Promise<number | null> {
