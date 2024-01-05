@@ -934,7 +934,7 @@ export class ClientSwapContract<T extends SwapData> {
             }
 
             if(txId!=null) {
-                const btcTx = await tryWithRetries(() => ChainUtils.getTransaction(txId).catch(e => console.error(e)));
+                const btcTx = await tryWithRetries(() => ChainUtils.getTransaction(txId));
                 if(btcTx==null) {
                     console.log("BTC tx not found yet!");
                     return null;
