@@ -28,3 +28,6 @@ export * from "./swaps/SwapHandlerSwap";
 
 export * from "./plugins/PluginManager";
 export * from "./plugins/IPlugin";
+
+export * from "./fees/IBtcFeeEstimator";
+export * from "./fees/OneDollarFeeEstimator";

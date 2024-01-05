@@ -24,7 +24,9 @@ import {AuthenticatedLnd} from "lightning";
 import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
-import {ToBtcLnSwapState} from "../..";
+import {IBtcFeeEstimator} from "../../fees/IBtcFeeEstimator";
+import {coinSelect} from "../../utils/coinselect2";
+import {CoinselectAddressTypes, CoinselectTxInput, CoinselectTxOutput} from "../../utils/coinselect2/utils";
 
 const OUTPUT_SCRIPT_MAX_LENGTH = 200;
 
@@ -51,8 +53,18 @@ export type ToBtcConfig = {
     minConfTarget: number,
 
     txCheckInterval: number,
-    swapCheckInterval: number
-}
+    swapCheckInterval: number,
+
+    feeEstimator?: IBtcFeeEstimator
+};
+
+const CONFIRMATIONS_REQUIRED = 1;
+
+const ADDRESS_FORMAT_MAP = {
+    "p2wpkh": "p2wpkh",
+    "np2wpkh": "p2sh-p2wpkh",
+    "p2tr" : "p2tr"
+};
 
 /**
  * Handler for to BTC swaps, utilizing PTLCs (proof-time locked contracts) using btc relay (on-chain bitcoin SPV)
@@ -81,6 +93,100 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         super(storageDirectory, path, swapContract, chainEvents, swapNonce, allowedTokens, lnd, swapPricing);
         this.bitcoinRpc = bitcoinRpc;
         this.config = config;
+    }
+
+    private async getSpendableUtxos(): Promise<{
+        address: string,
+        address_format: string,
+        confirmation_count: number,
+        output_script: string,
+        tokens: number,
+        transaction_id: string,
+        transaction_vout: number
+    }[]> {
+
+        const resBlockheight = await lncli.getHeight({
+            lnd: this.LND
+        });
+
+        const blockheight: number = resBlockheight.current_block_height;
+
+        const resChainTxns = await lncli.getChainTransactions({
+            lnd: this.LND,
+            after: blockheight-CONFIRMATIONS_REQUIRED
+        });
+
+        const selfUTXOs: {[txId: string]: boolean} = {};
+
+        const transactions = resChainTxns.transactions;
+        for(let tx of transactions) {
+            if(tx.is_outgoing) {
+                selfUTXOs[tx.id] = true;
+            }
+        }
+
+        const resUtxos = await lncli.getUtxos({
+            lnd: this.LND
+        });
+
+        return resUtxos.utxos.filter(utxo => utxo.confirmation_count>=CONFIRMATIONS_REQUIRED || selfUTXOs[utxo.transaction_id]);
+
+    }
+
+    private async getChainFee(targetAddress: string, targetAmount: number): Promise<{
+        satsPerVbyte: number,
+        fee: number,
+        inputs: CoinselectTxInput[],
+        outputs: CoinselectTxOutput[]
+    } | null> {
+        const satsPerVbyte: number | null = this.config.feeEstimator==null
+            ? await lncli.getChainFeeRate({lnd: this.LND}).then(res => res.tokens_per_vbyte).catch(e => console.error(e))
+            : await this.config.feeEstimator.estimateFee();
+
+        if(satsPerVbyte==null) return null;
+
+        const utxos = await this.getSpendableUtxos();
+
+        let totalSpendable = 0;
+
+        const utxoPool: {
+            vout: number,
+            txId: string,
+            value: number,
+            type: CoinselectAddressTypes
+        }[] = utxos.map(utxo => {
+            totalSpendable += utxo.tokens;
+            return {
+                vout: utxo.transaction_vout,
+                txId: utxo.transaction_id,
+                value: utxo.tokens,
+                type: ADDRESS_FORMAT_MAP[utxo.address_format]
+            };
+        });
+
+        console.log("[To BTC: getChainFee()] Total spendable value: "+totalSpendable+" num utxos: "+utxoPool.length);
+
+        const targets = [
+            {
+                address: targetAddress,
+                value: targetAmount,
+                script: bitcoin.address.toOutputScript(targetAddress, this.config.bitcoinNetwork)
+            }
+        ];
+
+        let obj = coinSelect(utxoPool, targets, satsPerVbyte, "p2wpkh");
+
+        if(obj.inputs==null || obj.outputs==null) {
+            return null;
+        }
+
+        return {
+            fee: obj.fee,
+            satsPerVbyte,
+            outputs: obj.outputs,
+            inputs: obj.inputs
+        };
+
     }
 
     /**
@@ -203,12 +309,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         for(let txId in this.activeSubscriptions) {
             try {
                 const payment: ToBtcSwapAbs<T> = this.activeSubscriptions[txId];
-                let tx: BtcTx;
-                try {
-                    tx = await this.bitcoinRpc.getTransaction(txId);
-                } catch (e) {
-                    console.error(e);
-                }
+                let tx: BtcTx = await this.bitcoinRpc.getTransaction(txId);
 
                 if(tx==null) {
                     continue;
@@ -273,12 +374,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
         if(payment.state===ToBtcSwapState.BTC_SENDING) {
             //Payment was signed (maybe also sent)
-            let tx;
-            try {
-                tx = await this.bitcoinRpc.getTransaction(payment.txId);
-            } catch (e) {
-                console.error(e);
-            }
+            const tx = await this.bitcoinRpc.getTransaction(payment.txId);
 
             const isTxSent = tx!=null;
 
@@ -336,18 +432,32 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             const maxNetworkFee = payment.networkFee;
 
+            const coinselectResult = await this.getChainFee(payment.address, payment.amount.toNumber());
+
+            if(coinselectResult==null) {
+                console.error("[To BTC: Solana.Initialize] Failed to run coinselect algorithm (not enough funds?)");
+                unlock();
+                return;
+            }
+
             let fundPsbtResponse;
             try {
                 fundPsbtResponse = await lncli.fundPsbt({
                     lnd: this.LND,
+                    inputs: coinselectResult.inputs.map(e => {
+                        return {
+                            transaction_id: e.txId,
+                            transaction_vout: e.vout
+                        }
+                    }),
                     outputs: [
                         {
                             address: payment.address,
                             tokens: payment.amount.toNumber()
                         }
                     ],
-                    target_confirmations: payment.preferedConfirmationTarget,
-                    min_confirmations: 0 //TODO: This might not be the best idea
+                    fee_tokens_per_vbyte: coinselectResult.satsPerVbyte,
+                    min_confirmations: 0
                 });
             } catch (e) {
                 console.error(e);
@@ -750,22 +860,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             metadata.times.amountsChecked = Date.now();
 
-            let chainFeeResp;
-            try {
-                chainFeeResp = await lncli.getChainFeeEstimate({
-                    lnd: this.LND,
-                    send_to: [
-                        {
-                            address: parsedBody.address,
-                            tokens: amountBD.toString(10)
-                        }
-                    ],
-                    target_confirmations: parsedBody.confirmationTarget,
-                    utxo_confirmations: 0
-                });
-            } catch (e) {
-                console.error(e);
-            }
+            let chainFeeResp = await this.getChainFee(parsedBody.address, amountBD.toNumber());
 
             metadata.times.chainFeeFetched = Date.now();
 
@@ -779,7 +874,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             }
 
             const networkFee = chainFeeResp.fee;
-            const feeSatsPervByte = chainFeeResp.tokens_per_vbyte;
+            const feeSatsPervByte = chainFeeResp.satsPerVbyte;
 
             console.log("[To BTC: REST.PayInvoice] Total network fee: ", networkFee);
             console.log("[To BTC: REST.PayInvoice] Network fee (sats/vB): ", feeSatsPervByte);
