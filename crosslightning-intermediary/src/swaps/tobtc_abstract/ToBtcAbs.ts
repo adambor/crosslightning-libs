@@ -55,7 +55,8 @@ export type ToBtcConfig = {
     txCheckInterval: number,
     swapCheckInterval: number,
 
-    feeEstimator?: IBtcFeeEstimator
+    feeEstimator?: IBtcFeeEstimator,
+    onchainReservedPerChannel?: number
 };
 
 const CONFIRMATIONS_REQUIRED = 1;
@@ -95,6 +96,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         super(storageDirectory, path, swapContract, chainEvents, swapNonce, allowedTokens, lnd, swapPricing);
         this.bitcoinRpc = bitcoinRpc;
         this.config = config;
+        this.config.onchainReservedPerChannel = this.config.onchainReservedPerChannel || 40000;
     }
 
     private async getSpendableUtxos(): Promise<{
@@ -200,6 +202,36 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         let obj = coinSelect(utxoPool, targets, satsPerVbyte, LND_CHANGE_OUTPUT_TYPE);
 
         if(obj.inputs==null || obj.outputs==null) {
+            return null;
+        }
+
+        const spentInputs = new Set<string>();
+        obj.inputs.forEach(txIn => {
+            spentInputs.add(txIn.txId+":"+txIn.vout);
+        });
+
+        let leavesValue: number = 0;
+        utxoPool.forEach(val => {
+            const utxoEconomicalValue = (val.value - (satsPerVbyte * utils.inputBytes(val)));
+            if (
+                //Utxo not spent
+                !spentInputs.has(val.txId + ":" + val.vout) &&
+                //Only economical utxos at current fees
+                utxoEconomicalValue > 0
+            ) {
+                leavesValue += utxoEconomicalValue;
+            }
+        });
+        if(obj.outputs.length>1) {
+            const changeUtxo = obj.outputs[1];
+            leavesValue += changeUtxo.value - (satsPerVbyte * utils.inputBytes(changeUtxo));
+        }
+
+        const {channels} = await lncli.getChannels({lnd: this.LND});
+
+        console.log("[To BTC: getChainFee()] Leaves value: "+leavesValue+" required: "+(channels.length*this.config.onchainReservedPerChannel));
+
+        if(leavesValue < channels.length*this.config.onchainReservedPerChannel) {
             return null;
         }
 
