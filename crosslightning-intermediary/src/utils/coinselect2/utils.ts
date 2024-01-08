@@ -5,7 +5,7 @@ const TX_INPUT_BASE = 32 + 4 + 1 + 4;
 const WITNESS_OVERHEAD = 2/4;
 
 const P2WPKH_WITNESS = (1+1+72+1+33)/4;
-const P2TR_WITNESS = (1+1+64)/4;
+const P2TR_WITNESS = (1+1+65)/4;
 
 const TX_INPUT_PUBKEYHASH = 107;
 const TX_INPUT_P2SH_P2WPKH = 23 + P2WPKH_WITNESS + 1;
@@ -71,16 +71,19 @@ function outputBytes (output: {
   return TX_OUTPUT_BASE + (output.script ? output.script.length : OUTPUT_BYTES[output.type]);
 }
 
+const DUST_THRESHOLDS = {
+    "p2sh-p2wpkh": 540,
+    "p2wpkh": 294,
+    "p2tr": 330,
+    "p2pkh": 546,
+    "p2wsh": 330
+};
+
 function dustThreshold (output: {
     script?: Buffer,
     type: CoinselectAddressTypes
 }): number {
-  /* ... classify the output for input estimate  */
-  return (inputBytes({
-      type: output.type
-  })+outputBytes({
-      type: output.type
-  })) * 3;
+  return DUST_THRESHOLDS[output.type];
 }
 
 function transactionBytes (
@@ -145,7 +148,7 @@ function finalize(
   const remainderAfterExtraOutput = sumOrNaN(inputs) - (sumOrNaN(outputs) + feeAfterExtraOutput)
 
   // is it worth a change output?
-  if (remainderAfterExtraOutput > dustThreshold({type: changeType})) {
+  if (remainderAfterExtraOutput >= dustThreshold({type: changeType})) {
     outputs = outputs.concat({ value: remainderAfterExtraOutput, type: changeType })
   }
 

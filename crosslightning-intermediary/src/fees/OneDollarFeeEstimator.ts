@@ -1,6 +1,6 @@
 import {IBtcFeeEstimator} from "./IBtcFeeEstimator";
 const dynamicImport = new Function('specifier', 'return import(specifier)');
-const importPromise = dynamicImport('@samouraiwallet/one-dollar-fee-estimator');
+const importPromise = dynamicImport('one-dollar-fee-estimator-failover');
 
 export class OneDollarFeeEstimator implements IBtcFeeEstimator {
 
@@ -15,6 +15,7 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
     password: string;
 
     startFeeEstimator() {
+        console.log("Starting fee estimator worker!");
 
         importPromise.then(({FeeEstimator}) => {
             this.estimator = new FeeEstimator({
@@ -30,26 +31,18 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
 
             this.estimator.on('error', (err) => {
                 console.error("Fee estimator error: ", err);
-                this.receivedFee = null;
-                this.iterations = 0;
-                this.startFeeEstimator();
+                if(err.message.startsWith("FeeEstimator worker stopped")) {
+                    console.log("Restarting fee estimator worker!");
+                    this.receivedFee = null;
+                    this.iterations = 0;
+                    this.startFeeEstimator();
+                }
             });
 
             // receive live fee rate updates from the FeeEstimator
             this.estimator.on('fees', (fees) => {
                 this.receivedFee = fees;
                 this.iterations++;
-            });
-
-            process.on('exit', () => {
-                console.log("Process exiting, stopping estimator...");
-                this.estimator.stop()
-            });
-
-            process.on('SIGINT', () => {
-                console.log("Process exiting, stopping estimator...");
-                this.estimator.stop();
-                process.exit();
             });
         });
     }
@@ -65,6 +58,17 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
         this.username = username;
         this.password = password;
         this.startFeeEstimator();
+
+        process.on('exit', () => {
+            console.log("Process exiting, stopping estimator...");
+            if(this.estimator!=null) this.estimator.stop();
+        });
+
+        process.on('SIGINT', () => {
+            console.log("Process exiting, stopping estimator...");
+            if(this.estimator!=null) this.estimator.stop();
+            process.exit();
+        });
     }
 
     estimateFee(): Promise<number | null> {

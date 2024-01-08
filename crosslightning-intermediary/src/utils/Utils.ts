@@ -1,5 +1,5 @@
 import * as BN from "bn.js";
-import {ParamsDictionary, Request, Response} from "express-serve-static-core";
+import {ParamsDictionary, Request, Response} from "express";
 import * as QueryString from "qs";
 
 export function parseBN(str: string | number): BN | null {

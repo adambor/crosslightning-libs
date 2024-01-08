@@ -26,7 +26,7 @@ import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
 import {IBtcFeeEstimator} from "../../fees/IBtcFeeEstimator";
 import {coinSelect} from "../../utils/coinselect2";
-import {CoinselectAddressTypes, CoinselectTxInput, CoinselectTxOutput} from "../../utils/coinselect2/utils";
+import {CoinselectAddressTypes, CoinselectTxInput, CoinselectTxOutput, utils} from "../../utils/coinselect2/utils";
 
 const OUTPUT_SCRIPT_MAX_LENGTH = 200;
 
@@ -65,6 +65,8 @@ const ADDRESS_FORMAT_MAP = {
     "np2wpkh": "p2sh-p2wpkh",
     "p2tr" : "p2tr"
 };
+
+const LND_CHANGE_OUTPUT_TYPE = "p2tr";
 
 /**
  * Handler for to BTC swaps, utilizing PTLCs (proof-time locked contracts) using btc relay (on-chain bitcoin SPV)
@@ -133,6 +135,23 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
     }
 
+    private getChangeAddress(): Promise<{
+        addr: string
+    }> {
+        return new Promise((resolve, reject) => {
+            this.LND.wallet.nextAddr({
+                type: 4,
+                change: true
+            }, (err, res) => {
+                if(err!=null) {
+                    reject([503, 'UnexpectedErrGettingNextAddr', {err}]);
+                    return;
+                }
+                resolve(res);
+            });
+        });
+    }
+
     private async getChainFee(targetAddress: string, targetAmount: number): Promise<{
         satsPerVbyte: number,
         fee: number,
@@ -178,7 +197,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             }
         ];
 
-        let obj = coinSelect(utxoPool, targets, satsPerVbyte, "p2wpkh");
+        let obj = coinSelect(utxoPool, targets, satsPerVbyte, LND_CHANGE_OUTPUT_TYPE);
 
         if(obj.inputs==null || obj.outputs==null) {
             return null;
@@ -442,6 +461,8 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 return;
             }
 
+            if(payment.metadata!=null) payment.metadata.times.payChainFee = Date.now();
+
             //Check tx fee
             const feeRate = new BN(coinselectResult.satsPerVbyte);
             const swapPaysEnoughNetworkFee = payment.satsPerVbyte.gte(feeRate);
@@ -490,6 +511,13 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 value: payment.amount.toNumber()
             });
 
+            if(coinselectResult.outputs.length>1) {
+                psbt.addOutput({
+                    script: bitcoin.address.toOutputScript((await this.getChangeAddress()).addr, this.config.bitcoinNetwork),
+                    value: coinselectResult.outputs[1].value
+                });
+            }
+
             //Sign the PSBT
             const psbtHex = psbt.toHex();
 
@@ -529,6 +557,25 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             const tx = bitcoin.Transaction.fromHex(signedPsbt.transaction);
             const txId = tx.getId();
+
+            //Sanity check on sats/vB
+            const maxAllowedFee = new BN(tx.virtualSize())
+                //Considering the extra output was not added, because was detrminetal
+                .add(new BN(utils.outputBytes({type: LND_CHANGE_OUTPUT_TYPE})))
+                //Multiply by maximum allowed feerate
+                .mul(payment.satsPerVbyte)
+                //Possibility that extra output was not added due to it being lower than dust
+                .add(new BN(utils.dustThreshold({type: LND_CHANGE_OUTPUT_TYPE})));
+
+            if(txFee.gt(maxAllowedFee)) {
+                console.error("[To BTC: SC.Initialize: "+Date.now()+"] Generated tx fee too high, max allowed: "+maxAllowedFee.toString(10)+", got: "+txFee.toString()+" !");
+                console.error("PSBT HEX: ", psbt.toHex());
+                console.error("Coinselect result: ", JSON.stringify(coinselectResult));
+                console.error("Fee rate: ", feeRate.toString(10));
+                console.error("Max allowed feerate: ", payment.satsPerVbyte.toString(10));
+                unlock();
+                return;
+            }
 
             payment.data = data;
             payment.txId = txId;
