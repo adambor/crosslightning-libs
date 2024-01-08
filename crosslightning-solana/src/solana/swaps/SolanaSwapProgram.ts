@@ -222,7 +222,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         storage: IStorageManager<StoredDataAccount>,
         programAddress?: string,
         retryPolicy?: SolanaRetryPolicy,
-        solanaFeeEstimator: SolanaFeeEstimator = new SolanaFeeEstimator(signer.connection)
+        solanaFeeEstimator: SolanaFeeEstimator = btcRelay.solanaFeeEstimator || new SolanaFeeEstimator(signer.connection)
     ) {
         this.signer = signer;
         this.program = new Program(programIdl as any, programAddress || programIdl.metadata.address, signer);

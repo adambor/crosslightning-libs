@@ -1,6 +1,7 @@
 import * as BN from "bn.js";
 import {Connection, PublicKey} from "@solana/web3.js";
 
+const MAX_FEE_AGE = 5000;
 
 export class SolanaFeeEstimator {
 
@@ -9,6 +10,10 @@ export class SolanaFeeEstimator {
     private readonly numSamples: number;
     private readonly period: number;
 
+    private blockFeeCache: {
+        timestamp: number,
+        feeRate: Promise<BN>
+    } = null;
 
     constructor(connection: Connection, maxFeeMicroLamports: number = 250000, numSamples: number = 8, period: number = 150) {
         this.connection = connection;
@@ -54,18 +59,18 @@ export class SolanaFeeEstimator {
 
     }
 
-    private async getGlobalFeeRate(numSamples: number = this.numSamples, period: number = this.period): Promise<BN> {
+    private async _getGlobalFeeRate(): Promise<BN> {
 
         let slot = await this.connection.getSlot();
 
         const slots: number[] = [];
 
-        for(let i=0;i<period;i++) {
+        for(let i=0;i<this.period;i++) {
             slots.push(slot-i);
         }
 
         const promises: Promise<BN>[] = [];
-        for(let i=0;i<numSamples;i++) {
+        for(let i=0;i<this.numSamples;i++) {
             promises.push((async () => {
                 let feeRate: BN = null;
                 while(feeRate==null) {
@@ -85,6 +90,32 @@ export class SolanaFeeEstimator {
         meanFees.forEach(e => min==null ? min = e : min = BN.min(min, e));
 
         return min;
+
+    }
+
+    private async getGlobalFeeRate(): Promise<BN> {
+
+        if(this.blockFeeCache==null || Date.now() - this.blockFeeCache.timestamp > MAX_FEE_AGE) {
+            const promise = this._getGlobalFeeRate();
+            this.blockFeeCache = {
+                timestamp: Date.now(),
+                feeRate: promise
+            };
+            return await promise;
+        }
+
+        let res = await this.blockFeeCache.feeRate.catch(e => {});
+
+        if(res==null) {
+            const promise = this._getGlobalFeeRate();
+            this.blockFeeCache = {
+                timestamp: Date.now(),
+                feeRate: promise
+            };
+            return await promise;
+        }
+
+        return res as BN;
 
     }
 
