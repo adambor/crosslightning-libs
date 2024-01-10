@@ -116,7 +116,7 @@ export class BinanceSwapPrice extends ISwapPrice {
 
     constructor(maxAllowedFeeDiffPPM: BN, coinsMap?: BinanceCoinsMapType, url?: string, httpRequestTimeout?: number) {
         super(maxAllowedFeeDiffPPM);
-        this.url = url || "https://api.binance.com/api/v3";
+        this.url = url || "https://api.binance.us/api/v3";
         if(coinsMap!=null) {
             this.COINS_MAP = coinsMap;
         }
