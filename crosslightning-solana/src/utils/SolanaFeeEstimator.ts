@@ -136,7 +136,7 @@ export class SolanaFeeEstimator {
             ]);
 
             if(response.error==null) {
-                const calculatedFee = BN.min(new BN(8000), new BN(response.result.priorityFeeLevels.high));
+                const calculatedFee = BN.max(new BN(8000), new BN(response.result.priorityFeeLevels.high));
                 return BN.min(calculatedFee, this.maxFeeMicroLamports);
             }
 
