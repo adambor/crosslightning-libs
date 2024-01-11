@@ -120,6 +120,27 @@ export class SolanaFeeEstimator {
     }
 
     async getFeeRate(mutableAccounts: PublicKey[]): Promise<BN> {
+
+        //Try to use getPriorityFeeEstimate api of Helius
+        const response = await (this.connection as any)._rpcRequest("getPriorityFeeEstimate", [
+            {
+                "accountKeys": mutableAccounts.map(e => e.toBase58()),
+                "options": {
+                    "includeAllPriorityFeeLevels": true
+                }
+            }
+        ]);
+
+        if(response.error==null) {
+            return BN.min(new BN(response.result.priorityFeeLevels.high), this.maxFeeMicroLamports);
+        }
+
+        if(response.error!=null) {
+            if(response.error.code!==-32601) {
+                throw new Error(response.error.message);
+            }
+        }
+
         const [globalFeeRate, localFeeRate] = await Promise.all([
             this.getGlobalFeeRate(),
             this.connection.getRecentPrioritizationFees({
