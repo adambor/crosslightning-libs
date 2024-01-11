@@ -9,17 +9,20 @@ export class SolanaFeeEstimator {
     private readonly maxFeeMicroLamports: BN;
     private readonly numSamples: number;
     private readonly period: number;
+    private useHeliusApi: "yes" | "no" | "auto";
+    private heliusApiSupported: boolean = true;
 
     private blockFeeCache: {
         timestamp: number,
         feeRate: Promise<BN>
     } = null;
 
-    constructor(connection: Connection, maxFeeMicroLamports: number = 250000, numSamples: number = 8, period: number = 150) {
+    constructor(connection: Connection, maxFeeMicroLamports: number = 250000, numSamples: number = 8, period: number = 150, useHeliusApi: "yes" | "no" | "auto" = "auto") {
         this.connection = connection;
         this.maxFeeMicroLamports = new BN(maxFeeMicroLamports);
         this.numSamples = numSamples;
         this.period = period;
+        this.useHeliusApi = useHeliusApi;
     }
 
     private async getBlockMeanFeeRate(slot: number): Promise<BN | null> {
@@ -121,24 +124,29 @@ export class SolanaFeeEstimator {
 
     async getFeeRate(mutableAccounts: PublicKey[]): Promise<BN> {
 
-        //Try to use getPriorityFeeEstimate api of Helius
-        const response = await (this.connection as any)._rpcRequest("getPriorityFeeEstimate", [
-            {
-                "accountKeys": mutableAccounts.map(e => e.toBase58()),
-                "options": {
-                    "includeAllPriorityFeeLevels": true
+        if(this.useHeliusApi==="yes" || (this.useHeliusApi==="auto" && this.heliusApiSupported)) {
+            //Try to use getPriorityFeeEstimate api of Helius
+            const response = await (this.connection as any)._rpcRequest("getPriorityFeeEstimate", [
+                {
+                    "accountKeys": mutableAccounts.map(e => e.toBase58()),
+                    "options": {
+                        "includeAllPriorityFeeLevels": true
+                    }
+                }
+            ]);
+
+            if(response.error==null) {
+                const calculatedFee = BN.min(new BN(8000), new BN(response.result.priorityFeeLevels.high));
+                return BN.min(calculatedFee, this.maxFeeMicroLamports);
+            }
+
+            if(response.error!=null) {
+                if(response.error.code!==-32601) {
+                    throw new Error(response.error.message);
                 }
             }
-        ]);
 
-        if(response.error==null) {
-            return BN.min(new BN(response.result.priorityFeeLevels.high), this.maxFeeMicroLamports);
-        }
-
-        if(response.error!=null) {
-            if(response.error.code!==-32601) {
-                throw new Error(response.error.message);
-            }
+            this.heliusApiSupported = false;
         }
 
         const [globalFeeRate, localFeeRate] = await Promise.all([
