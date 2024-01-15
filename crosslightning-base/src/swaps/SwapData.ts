@@ -1,5 +1,5 @@
 import {ChainSwapType} from "./ChainSwapType";
-import * as BN from "bn.js";
+import BN from "bn.js";
 import {TokenAddress} from "./TokenAddress";
 import {StorageObject} from "../storage/StorageObject";
 
@@ -42,6 +42,11 @@ export abstract class SwapData implements StorageObject {
     abstract isPayIn(): boolean;
 
     abstract getHash(): string;
+    abstract getSequence?(): BN;
+    getUniqueIdentifier(): string {
+        if(this.getSequence==null) return this.getHash();
+        return this.getHash()+this.getSequence().toString("hex", 8);
+    }
 
     abstract getTxoHash(): string;
 

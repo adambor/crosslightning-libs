@@ -22,6 +22,7 @@
   "author": "adambor",
   "license": "ISC",
   "dependencies": {
+    "@types/bn.js": "^5.1.5",
     "bn.js": "^5.2.1"
   },
   "devDependencies": {
