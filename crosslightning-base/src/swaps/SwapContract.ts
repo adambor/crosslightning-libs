@@ -97,6 +97,7 @@ export interface SwapContract<T extends SwapData, TX> {
         token: TokenAddress,
         amount: BN,
         paymentHash: string,
+        sequence: BN,
         expiry: BN,
         escrowNonce: BN,
         confirmations: number,
