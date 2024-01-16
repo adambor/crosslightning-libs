@@ -140,7 +140,7 @@ export class ClientSwapContract<T extends SwapData> {
         this.options.maxExpectedOnchainSendGracePeriodBlocks = options.maxExpectedOnchainSendGracePeriodBlocks || 12;
     }
 
-    getOnchainSendTimeout(data: SwapData) {
+    getOnchainSendTimeout(data: SwapData): BN {
         const tsDelta = (this.options.blocksTillTxConfirms + data.getConfirmations()) * BITCOIN_BLOCKTIME * this.options.safetyFactor;
         return data.getExpiry().sub(new BN(tsDelta));
     }
@@ -1050,6 +1050,7 @@ export class ClientSwapContract<T extends SwapData> {
             requiredOffererKey,
             this.swapContract.getAddress(),
             requiredToken,
+            null,
             null,
             null,
             null,
