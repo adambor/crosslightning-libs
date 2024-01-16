@@ -783,6 +783,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
             null,
             Buffer.alloc(8),
             Buffer.alloc(8),
+            Buffer.alloc(8),
             null,
             Buffer.alloc(8)
         ];
@@ -790,6 +791,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         messageBuffers[0] = Buffer.from(prefix, "ascii");
         messageBuffers[1].writeBigUInt64LE(BigInt(swapData.amount.toString(10)));
         messageBuffers[2].writeBigUInt64LE(BigInt(swapData.expiry.toString(10)));
+        messageBuffers[2].writeBigUInt64LE(BigInt(swapData.sequence.toString(10)));
         messageBuffers[3] = Buffer.from(swapData.paymentHash, "hex");
         messageBuffers[4].writeBigUInt64LE(BigInt(timeout));
 
