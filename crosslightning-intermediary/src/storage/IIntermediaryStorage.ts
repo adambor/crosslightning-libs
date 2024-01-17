@@ -1,4 +1,5 @@
 import {StorageObject} from "crosslightning-base";
+import * as BN from "bn.js";
 
 export type StorageQueryParam = {
     key: string,
@@ -12,9 +13,9 @@ export interface IIntermediaryStorage<T extends StorageObject> {
 
     query(params: StorageQueryParam[]): Promise<T[]>;
 
-    getData(hash: string): Promise<T>;
-    saveData(hash: string, object: T): Promise<void>;
-    removeData(hash: string): Promise<void>;
+    getData(hash: string, sequence: BN | null): Promise<T>;
+    saveData(hash: string, sequence: BN | null, object: T): Promise<void>;
+    removeData(hash: string, sequence: BN | null): Promise<void>;
     loadData(type: new(data: any) => T): Promise<void>;
 
 }

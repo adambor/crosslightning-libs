@@ -7,6 +7,7 @@ import {AuthenticatedLnd} from "lightning";
 import {SwapHandlerSwap} from "./SwapHandlerSwap";
 import {PluginManager} from "../plugins/PluginManager";
 import {IIntermediaryStorage} from "../storage/IIntermediaryStorage";
+import * as BN from "bn.js";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -74,10 +75,10 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
      */
     abstract getInfo(): SwapHandlerInfoType;
 
-    async removeSwapData(hash: string) {
-        const swap = await this.storageManager.getData(hash);
+    async removeSwapData(hash: string, sequence: BN) {
+        const swap = await this.storageManager.getData(hash, sequence);
         if(swap!=null) await PluginManager.swapRemove<T>(swap);
-        await this.storageManager.removeData(hash);
+        await this.storageManager.removeData(hash, sequence);
     }
 
 }

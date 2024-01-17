@@ -139,7 +139,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                             cancelInvoices.push(parsedPR.tagsObject.payment_hash);
                         } else {
                             await swap.setState(FromBtcLnSwapState.COMMITED);
-                            await this.storageManager.saveData(swap.data.getHash(), swap);
+                            await this.storageManager.saveData(swap.data.getHash(), null, swap);
                         }
                         continue;
                     }
@@ -195,7 +195,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     id: paymentHash
                 });
                 console.log("[From BTC-LN: BTCLN.CancelHodlInvoice] Invoice cancelled, because was timed out, id: ", paymentHash);
-                await this.removeSwapData(paymentHash);
+                await this.removeSwapData(paymentHash, null);
             } catch (e) {
                 console.error("[From BTC-LN: BTCLN.CancelHodlInvoice] Cannot cancel hodl invoice id: ", paymentHash);
             }
@@ -218,7 +218,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 // await PluginManager.swapStateChange(swap);
 
                 console.log("[From BTC-LN: BTCLN.SettleHodlInvoice] Invoice settled, id: ", paymentHash.toString("hex"));
-                await this.removeSwapData(paymentHash.toString("hex"));
+                await this.removeSwapData(paymentHash.toString("hex"), null);
             } catch (e) {
                 console.error("[From BTC-LN: BTCLN.SettleHodlInvoice] Cannot cancel hodl invoice id: ", paymentHash.toString("hex"));
             }
@@ -251,7 +251,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 const paymentHash = event.paymentHash;
                 const paymentHashBuffer = Buffer.from(paymentHash, "hex");
 
-                const savedSwap = await this.storageManager.getData(paymentHash);
+                const savedSwap = await this.storageManager.getData(paymentHash, null);
 
                 const isSwapFound = savedSwap != null;
                 if (isSwapFound) {
@@ -269,7 +269,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
                 if (isSwapFound) {
                     savedSwap.data = event.swapData;
-                    await this.storageManager.saveData(paymentHashBuffer.toString("hex"), savedSwap);
+                    await this.storageManager.saveData(paymentHashBuffer.toString("hex"), null, savedSwap);
                 }
 
             }
@@ -282,7 +282,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 const secretHex = secret.toString("hex");
                 const paymentHashHex = paymentHash.toString("hex");
 
-                const savedSwap = await this.storageManager.getData(paymentHashHex);
+                const savedSwap = await this.storageManager.getData(paymentHashHex, null);
 
                 const isSwapFound = savedSwap != null;
                 if (!isSwapFound) {
@@ -301,13 +301,13 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     if(savedSwap.metadata!=null) savedSwap.metadata.times.htlcSettled = Date.now();
                     await savedSwap.setState(FromBtcLnSwapState.SETTLED);
                     // await PluginManager.swapStateChange(savedSwap);
-                    await this.removeSwapData(paymentHashHex);
+                    await this.removeSwapData(paymentHashHex, null);
                 } catch (e) {
                     console.error("[From BTC-LN: BTCLN.SettleHodlInvoice] FATAL Cannot settle hodl invoice id: " + paymentHashHex + " secret: ", secretHex);
                     savedSwap.secret = secretHex;
                     await savedSwap.setState(FromBtcLnSwapState.CLAIMED);
                     //await PluginManager.swapStateChange(savedSwap);
-                    await this.storageManager.saveData(paymentHashHex, savedSwap);
+                    await this.storageManager.saveData(paymentHashHex, null, savedSwap);
                 }
 
                 continue;
@@ -321,7 +321,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
                 const paymentHashBuffer: Buffer = Buffer.from(event.paymentHash, "hex");
 
-                const savedSwap = await this.storageManager.getData(event.paymentHash);
+                const savedSwap = await this.storageManager.getData(event.paymentHash, null);
 
                 const isSwapFound = savedSwap != null;
                 if (!isSwapFound) {
@@ -336,12 +336,12 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     console.log("[From BTC-LN: BTCLN.CancelHodlInvoice] Invoice cancelled, because was refunded, id: ", event.paymentHash);
                     await savedSwap.setState(FromBtcLnSwapState.REFUNDED);
                     // await PluginManager.swapStateChange(savedSwap);
-                    await this.removeSwapData(event.paymentHash);
+                    await this.removeSwapData(event.paymentHash, null);
                 } catch (e) {
                     console.error("[From BTC-LN: BTCLN.CancelHodlInvoice] Cannot cancel hodl invoice id: ", event.paymentHash);
                     await savedSwap.setState(FromBtcLnSwapState.CANCELED);
                     // await PluginManager.swapStateChange(savedSwap);
-                    await this.storageManager.saveData(event.paymentHash, savedSwap);
+                    await this.storageManager.saveData(event.paymentHash, null, savedSwap);
                 }
 
                 continue;
@@ -393,7 +393,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 id: invoice.id,
                 lnd: this.LND
             });
-            await this.removeSwapData(invoice.id);
+            await this.removeSwapData(invoice.id, null);
         };
 
         const balance: BN = await balancePrefetch;
@@ -443,6 +443,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             useToken,
             sendAmount,
             invoice.id,
+            new BN(0),
             new BN(Math.floor(Date.now() / 1000)).add(expiryTimeout),
             new BN(0),
             0,
@@ -476,7 +477,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             //Setting the state variable is done outside the promise, so is done synchronously
             await invoiceData.setState(FromBtcLnSwapState.RECEIVED);
 
-            await this.storageManager.saveData(invoice.id, invoiceData);
+            await this.storageManager.saveData(invoice.id, null, invoiceData);
             return;
         }
     }
@@ -556,6 +557,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 useToken,
                 null,
                 parsedBody.paymentHash,
+                new BN(0),
                 null,
                 null,
                 0,
@@ -733,6 +735,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 useToken,
                 total,
                 parsedBody.paymentHash,
+                new BN(0),
                 null,
                 null,
                 0,
@@ -749,7 +752,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
             await PluginManager.swapCreate(createdSwap);
 
-            await this.storageManager.saveData(parsedBody.paymentHash, createdSwap);
+            await this.storageManager.saveData(parsedBody.paymentHash, null, createdSwap);
 
             res.status(200).json({
                 msg: "Success",
@@ -881,7 +884,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 return;
             }
 
-            const invoiceData: FromBtcLnSwapAbs<T> = await this.storageManager.getData(parsedBody.paymentHash);
+            const invoiceData: FromBtcLnSwapAbs<T> = await this.storageManager.getData(parsedBody.paymentHash, null);
 
             const isSwapFound = invoiceData != null;
             if (!isSwapFound) {

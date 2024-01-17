@@ -2,6 +2,7 @@ import {StorageObject} from "crosslightning-base";
 import * as fs from "fs/promises";
 import {IIntermediaryStorage, StorageQueryParam} from "../storage/IIntermediaryStorage";
 import has = Reflect.has;
+import * as BN from "bn.js";
 
 export class IntermediaryStorageManager<T extends StorageObject> implements IIntermediaryStorage<T> {
 
@@ -48,11 +49,11 @@ export class IntermediaryStorageManager<T extends StorageObject> implements IInt
         }));
     }
 
-    getData(paymentHash: string): Promise<T> {
-        return Promise.resolve(this.data[paymentHash]);
+    getData(paymentHash: string, sequence: BN | null): Promise<T> {
+        return Promise.resolve(this.data[paymentHash+"_"+(sequence || new BN(0)).toString("hex", 8)]);
     }
 
-    async saveData(hash: string, object: T): Promise<void> {
+    async saveData(hash: string, sequence: BN | null, object: T): Promise<void> {
 
         try {
             await fs.mkdir(this.directory)
@@ -62,15 +63,15 @@ export class IntermediaryStorageManager<T extends StorageObject> implements IInt
 
         const cpy = object.serialize();
 
-        await fs.writeFile(this.directory+"/"+hash+".json", JSON.stringify(cpy));
+        await fs.writeFile(this.directory+"/"+hash+"_"+(sequence || new BN(0)).toString("hex", 8)+".json", JSON.stringify(cpy));
 
     }
 
-    async removeData(hash: string): Promise<void> {
+    async removeData(hash: string, sequence: BN | null): Promise<void> {
         const paymentHash = hash;
         try {
             if(this.data[paymentHash]!=null) delete this.data[paymentHash];
-            await fs.rm(this.directory+"/"+paymentHash+".json");
+            await fs.rm(this.directory+"/"+paymentHash+"_"+(sequence || new BN(0)).toString("hex", 8)+".json");
         } catch (e) {
             console.error(e);
         }
@@ -88,11 +89,11 @@ export class IntermediaryStorageManager<T extends StorageObject> implements IInt
         }
 
         for(let file of files) {
-            const paymentHash = file.split(".")[0];
+            const indentifier = file.split(".")[0];
             const result = await fs.readFile(this.directory+"/"+file);
             const obj = JSON.parse(result.toString());
             const parsed = new type(obj);
-            this.data[paymentHash] = parsed;
+            this.data[indentifier] = parsed;
         }
     }
 

@@ -27,6 +27,7 @@ import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
 import {IBtcFeeEstimator} from "../../fees/IBtcFeeEstimator";
 import {coinSelect} from "../../utils/coinselect2";
 import {CoinselectAddressTypes, CoinselectTxInput, CoinselectTxOutput, utils} from "../../utils/coinselect2/utils";
+import {randomBytes} from "crypto";
 
 const OUTPUT_SCRIPT_MAX_LENGTH = 200;
 
@@ -299,7 +300,6 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             {
                 key: "state",
                 values: [
-                    ToBtcSwapState.REFUNDED,
                     ToBtcSwapState.SAVED,
                     ToBtcSwapState.NON_PAYABLE,
                     ToBtcSwapState.COMMITED,
@@ -313,34 +313,27 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             const timestamp = new BN(Math.floor(Date.now()/1000)).sub(new BN(this.config.maxSkew));
 
             if(payment.state===ToBtcSwapState.SAVED && payment.signatureExpiry!=null) {
-                if(payment.signatureExpiry.lt(timestamp) && (payment.refundAuthTimeout==null || payment.refundAuthTimeout.lt(timestamp))) {
+                if(payment.signatureExpiry.lt(timestamp)) {
                     const isCommitted = await this.swapContract.isCommited(payment.data);
                     if(!isCommitted) {
                         //Signature expired
                         await payment.setState(ToBtcSwapState.CANCELED);
                         // await PluginManager.swapStateChange(payment);
-                        await this.removeSwapData(this.getChainHash(payment).toString("hex"));
+                        await this.removeSwapData(this.getChainHash(payment).toString("hex"), payment.data.getSequence());
                     } else {
                         await payment.setState(ToBtcSwapState.COMMITED);
-                        await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
+                        await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment.data.getSequence(), payment);
                     }
                     continue;
                 }
             }
 
             if(payment.state===ToBtcSwapState.NON_PAYABLE || payment.state===ToBtcSwapState.SAVED) {
-                if(payment.data.getExpiry().lt(timestamp) && (payment.refundAuthTimeout==null || payment.refundAuthTimeout.lt(timestamp))) {
+                if(payment.data.getExpiry().lt(timestamp)) {
                     //Expired
                     await payment.setState(ToBtcSwapState.CANCELED);
                     // await PluginManager.swapStateChange(payment);
-                    await this.removeSwapData(this.getChainHash(payment).toString("hex"));
-                    continue;
-                }
-            }
-
-            if(payment.state===ToBtcSwapState.REFUNDED) {
-                if(payment.refundAuthTimeout==null || payment.refundAuthTimeout.lt(timestamp)) {
-                    await this.removeSwapData(this.getChainHash(payment).toString("hex"));
+                    await this.removeSwapData(this.getChainHash(payment).toString("hex"), payment.data.getSequence());
                     continue;
                 }
             }
@@ -440,7 +433,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             } else {
                 await payment.setState(ToBtcSwapState.BTC_SENT);
                 // await PluginManager.swapStateChange(payment);
-                await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
+                await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment.data.getSequence(), payment);
             }
         }
 
@@ -448,7 +441,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             payment.data = data;
             await payment.setState(ToBtcSwapState.NON_PAYABLE);
             // await PluginManager.swapStateChange(payment);
-            await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
+            await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment.data.getSequence(), payment);
         };
 
         if(payment.state===ToBtcSwapState.SAVED) {
@@ -461,7 +454,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             payment.data = data;
             await payment.setState(ToBtcSwapState.COMMITED);
             // await PluginManager.swapStateChange(payment);
-            await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
+            await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment.data.getSequence(), payment);
         }
 
         if(payment.state===ToBtcSwapState.COMMITED) {
@@ -614,7 +607,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             payment.realNetworkFee = txFee;
             await payment.setState(ToBtcSwapState.BTC_SENDING);
             // await PluginManager.swapStateChange(payment);
-            await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
+            await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment.data.getSequence(), payment);
 
             let txSendResult;
             try {
@@ -636,7 +629,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             await payment.setState(ToBtcSwapState.BTC_SENT);
             // await PluginManager.swapStateChange(payment);
-            await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment);
+            await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment.data.getSequence(), payment);
             unlock();
         }
 
@@ -680,7 +673,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
                 console.log("[To BTC: Solana.Initialize] Payment hash: ", paymentHash);
 
-                const savedInvoice = await this.storageManager.getData(paymentHash);
+                const savedInvoice = await this.storageManager.getData(paymentHash, event.swapData.getSequence());
 
                 if(savedInvoice==null) {
                     console.error("[To BTC: Solana.Initialize] No invoice submitted");
@@ -698,7 +691,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             if(event instanceof ClaimEvent) {
                 const paymentHash = event.paymentHash;
 
-                const savedInvoice = await this.storageManager.getData(paymentHash);
+                const savedInvoice = await this.storageManager.getData(paymentHash, event.sequence);
 
                 if(savedInvoice==null) {
                     console.error("[To BTC: Solana.ClaimEvent] No invoice submitted");
@@ -708,15 +701,14 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 console.log("[To BTC: Solana.ClaimEvent] Transaction confirmed! Event: ", event);
 
                 await savedInvoice.setState(ToBtcSwapState.CLAIMED);
-
-                await this.removeSwapData(paymentHash);
+                await this.removeSwapData(paymentHash, event.sequence);
 
                 continue;
             }
             if(event instanceof RefundEvent) {
                 const paymentHash = event.paymentHash;
 
-                const savedInvoice = await this.storageManager.getData(paymentHash);
+                const savedInvoice = await this.storageManager.getData(paymentHash, event.sequence);
 
                 if(savedInvoice==null) {
                     console.error("[To BTC: Solana.RefundEvent] No invoice submitted");
@@ -733,8 +725,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 }
 
                 await savedInvoice.setState(ToBtcSwapState.REFUNDED);
-
-                await this.storageManager.saveData(paymentHash, savedInvoice);
+                await this.removeSwapData(paymentHash, event.sequence);
 
                 continue;
             }
@@ -1010,20 +1001,12 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             const paymentHash = this.getHash(parsedBody.address, parsedBody.nonce, amountBD, this.config.bitcoinNetwork).toString("hex");
 
-            const existingSwapData = await this.storageManager.getData(paymentHash);
-
-            if(existingSwapData!=null) {
-                res.status(400).json({
-                    msg: "Swap already processed!"
-                });
-                return;
-            }
-
             //Add grace period another time, so the user has 1 hour to commit
             const expirySeconds = this.getExpiryFromCLTV(parsedBody.confirmationTarget, parsedBody.confirmations).add(new BN(this.config.gracePeriod));
             const currentTimestamp = new BN(Math.floor(Date.now()/1000));
             const minRequiredExpiry = currentTimestamp.add(expirySeconds);
 
+            const sequence = new BN(randomBytes(8));
             const payObject: T = await this.swapContract.createSwapData(
                 ChainSwapType.CHAIN_NONCED,
                 parsedBody.offerer,
@@ -1031,6 +1014,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 useToken,
                 total,
                 paymentHash,
+                sequence,
                 minRequiredExpiry,
                 parsedBody.nonce,
                 parsedBody.confirmations,
@@ -1059,7 +1043,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             await PluginManager.swapCreate(createdSwap);
 
-            await this.storageManager.saveData(paymentHash, createdSwap);
+            await this.storageManager.saveData(paymentHash, sequence, createdSwap);
 
             res.status(200).json({
                 code: 20000,
@@ -1088,12 +1072,14 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         const getRefundAuthorization = expressHandlerWrapper(async (req, res) => {
             /**
              * paymentHash: string              Payment hash identifier of the swap
+             * sequence: BN                     Sequence identifier of the swap
              */
             const parsedBody = verifySchema({...req.body, ...req.query}, {
                 paymentHash: (val: string) => val!=null &&
-                typeof(val)==="string" &&
-                val.length===64 &&
-                HEX_REGEX.test(val) ? val: null,
+                    typeof(val)==="string" &&
+                    val.length===64 &&
+                    HEX_REGEX.test(val) ? val: null,
+                sequence: FieldTypeEnum.BN
             });
 
             if (parsedBody==null) {
@@ -1103,7 +1089,14 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 return;
             }
 
-            const payment = await this.storageManager.getData(parsedBody.paymentHash);
+            if(parsedBody.sequence.isNeg() || parsedBody.sequence.gte(new BN(2).pow(new BN(64)))) {
+                res.status(400).json({
+                    msg: "Invalid sequence"
+                });
+                return;
+            }
+
+            const payment = await this.storageManager.getData(parsedBody.paymentHash, parsedBody.sequence);
 
             if (payment == null || payment.state === ToBtcSwapState.SAVED) {
                 res.status(200).json({
@@ -1155,11 +1148,11 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
                 const refundResponse = await this.swapContract.getRefundSignature(payment.data, this.config.authorizationTimeout);
 
-                if(payment.refundAuthTimeout==null) {
-                    payment.refundAuthTimeout = new BN(refundResponse.timeout);
-                } else {
-                    payment.refundAuthTimeout = BN.max(payment.refundAuthTimeout, new BN(refundResponse.timeout));
-                }
+                // if(payment.refundAuthTimeout==null) {
+                //     payment.refundAuthTimeout = new BN(refundResponse.timeout);
+                // } else {
+                //     payment.refundAuthTimeout = BN.max(payment.refundAuthTimeout, new BN(refundResponse.timeout));
+                // }
 
                 //Double check the state after promise result
                 if (payment.state !== ToBtcSwapState.NON_PAYABLE) {

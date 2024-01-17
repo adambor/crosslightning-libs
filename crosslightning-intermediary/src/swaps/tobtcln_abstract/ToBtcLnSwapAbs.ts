@@ -22,7 +22,7 @@ export class ToBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
     readonly swapFee: BN;
     readonly maxFee: BN;
     readonly signatureExpiry: BN;
-    refundAuthTimeout: BN;
+    // refundAuthTimeout: BN;
 
     realRoutingFee: BN;
     secret: string;
@@ -45,7 +45,7 @@ export class ToBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
             this.swapFee = new BN(prOrObj.swapFee);
             this.maxFee = new BN(prOrObj.maxFee);
             this.signatureExpiry = prOrObj.signatureExpiry==null ? null : new BN(prOrObj.signatureExpiry);
-            this.refundAuthTimeout = prOrObj.refundAuthTimeout==null ? null : new BN(prOrObj.refundAuthTimeout);
+            // this.refundAuthTimeout = prOrObj.refundAuthTimeout==null ? null : new BN(prOrObj.refundAuthTimeout);
             this.secret = prOrObj.secret;
         }
         this.type = SwapHandlerType.TO_BTCLN;
@@ -58,7 +58,7 @@ export class ToBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
         partialSerialized.swapFee = this.swapFee.toString(10);
         partialSerialized.maxFee = this.maxFee.toString(10);
         partialSerialized.signatureExpiry = this.signatureExpiry == null ? null : this.signatureExpiry.toString(10);
-        partialSerialized.refundAuthTimeout = this.refundAuthTimeout==null ? null : this.refundAuthTimeout.toString(10);
+        // partialSerialized.refundAuthTimeout = this.refundAuthTimeout==null ? null : this.refundAuthTimeout.toString(10);
         partialSerialized.secret = this.secret;
         return partialSerialized;
     }
