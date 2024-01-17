@@ -791,9 +791,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx> {
         messageBuffers[0] = Buffer.from(prefix, "ascii");
         messageBuffers[1].writeBigUInt64LE(BigInt(swapData.amount.toString(10)));
         messageBuffers[2].writeBigUInt64LE(BigInt(swapData.expiry.toString(10)));
-        messageBuffers[2].writeBigUInt64LE(BigInt(swapData.sequence.toString(10)));
-        messageBuffers[3] = Buffer.from(swapData.paymentHash, "hex");
-        messageBuffers[4].writeBigUInt64LE(BigInt(timeout));
+        messageBuffers[3].writeBigUInt64LE(BigInt(swapData.sequence.toString(10)));
+        messageBuffers[4] = Buffer.from(swapData.paymentHash, "hex");
+        messageBuffers[5].writeBigUInt64LE(BigInt(timeout));
 
         const messageBuffer = createHash("sha256").update(Buffer.concat(messageBuffers)).digest();
 
