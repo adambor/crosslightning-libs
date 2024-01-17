@@ -897,7 +897,7 @@ export class ClientSwapContract<T extends SwapData> {
         signature?: string
     }> {
 
-        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/getRefundAuthorization?paymentHash="+encodeURIComponent(data.getHash()), {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/getRefundAuthorization?paymentHash="+encodeURIComponent(data.getHash())+"&sequence="+encodeURIComponent(data.getSequence().toString(10)), {
             method: "GET",
             timeout: this.options.getRequestTimeout
         }));
@@ -1039,6 +1039,8 @@ export class ClientSwapContract<T extends SwapData> {
 
         const abortController = new AbortController();
 
+        const sequence: BN = new BN(randomBytes(8));
+
         //Prefetch price & liquidity
         const liquidityPromise: Promise<BN> = requiredToken==null || requiredOffererKey==null ?
             null :
@@ -1129,7 +1131,8 @@ export class ClientSwapContract<T extends SwapData> {
                 },
 
                 exactOut,
-                feeRate: feeRate==null ? null : feeRate.toString()
+                feeRate: feeRate==null ? null : feeRate.toString(),
+                sequence: sequence.toString(10)
             }),
             headers: {'Content-Type': 'application/json'},
             timeout: this.options.postRequestTimeout,
@@ -1193,6 +1196,11 @@ export class ClientSwapContract<T extends SwapData> {
         if(data.getType()!=ChainSwapType.CHAIN) {
             abortController.abort();
             throw new IntermediaryError("Invalid type of the swap");
+        }
+
+        if(!data.getSequence().eq(sequence)) {
+            abortController.abort();
+            throw new IntermediaryError("Invalid swap sequence");
         }
 
         //Check that we have enough time to send the TX and for it to confirm
