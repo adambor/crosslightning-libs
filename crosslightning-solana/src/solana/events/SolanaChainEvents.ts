@@ -102,8 +102,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
             if(event.name==="ClaimEvent") {
                 const secret: Buffer = Buffer.from(event.data.secret);
                 const paymentHash: Buffer = Buffer.from(event.data.hash);
-
-                const parsedEvent = new ClaimEvent<SolanaSwapData>(paymentHash.toString("hex"), secret.toString("hex"));
+                const parsedEvent = new ClaimEvent<SolanaSwapData>(paymentHash.toString("hex"), event.data.sequence, secret.toString("hex"));
                 (parsedEvent as any).meta = {
                     timestamp: eventObject.blockTime,
                     txId: eventObject.signature
@@ -113,7 +112,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
             if(event.name==="RefundEvent") {
                 const paymentHash: Buffer = Buffer.from(event.data.hash);
 
-                const parsedEvent = new RefundEvent<SolanaSwapData>(paymentHash.toString("hex"));
+                const parsedEvent = new RefundEvent<SolanaSwapData>(paymentHash.toString("hex"), event.data.sequence);
                 (parsedEvent as any).meta = {
                     timestamp: eventObject.blockTime,
                     txId: eventObject.signature
@@ -175,6 +174,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
 
                 const parsedEvent = new InitializeEvent<SolanaSwapData>(
                     paymentHash.toString("hex"),
+                    associatedEvent.data.sequence,
                     txoHash.toString("hex"),
                     0,
                     swapData

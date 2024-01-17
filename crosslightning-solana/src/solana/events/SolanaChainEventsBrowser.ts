@@ -130,6 +130,7 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
 
                     parsedEvent = new InitializeEvent<SolanaSwapData>(
                         paymentHash.toString("hex"),
+                        event.sequence,
                         txoHash.toString("hex"),
                         0,
                         swapData
@@ -148,7 +149,7 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
             const paymentHash = Buffer.from(event.hash).toString("hex");
             const secret = Buffer.from(event.secret).toString("hex");
 
-            const parsedEvent = new ClaimEvent<SolanaSwapData>(paymentHash, secret);
+            const parsedEvent = new ClaimEvent<SolanaSwapData>(paymentHash, event.sequence, secret);
 
             for(let listener of this.listeners) {
                 await listener([parsedEvent]);
@@ -157,7 +158,7 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
         this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("RefundEvent", async (event, slotNumber, signature) => {
             const paymentHash = Buffer.from(event.hash).toString("hex");
 
-            const parsedEvent = new RefundEvent<SolanaSwapData>(paymentHash);
+            const parsedEvent = new RefundEvent<SolanaSwapData>(paymentHash, event.sequence);
 
             for(let listener of this.listeners) {
                 await listener([parsedEvent]);
