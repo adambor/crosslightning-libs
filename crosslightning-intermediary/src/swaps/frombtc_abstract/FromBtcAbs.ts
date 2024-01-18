@@ -23,7 +23,6 @@ import {createHash} from "crypto";
 import {expressHandlerWrapper, FieldTypeEnum, verifySchema} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
-import {FromBtcLnSwapState} from "../..";
 
 export type FromBtcConfig = {
     authorizationTimeout: number,

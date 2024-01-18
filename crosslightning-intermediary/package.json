@@ -1,6 +1,6 @@
 {
   "name": "crosslightning-intermediary",
-  "version": "8.7.18",
+  "version": "9.0.3",
   "description": "Main functionality implementation for intermediary node, easily extensible to any chain",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",
@@ -22,21 +22,21 @@
   "author": "adambor",
   "license": "ISC",
   "dependencies": {
-    "@bitcoinerlab/secp256k1": "^1.0.5",
-    "@types/bn.js": "^5.1.5",
-    "bitcoinjs-lib": "^6.1.5",
-    "bn.js": "^5.2.1",
-    "bolt11": "^1.4.1",
-    "cross-fetch": "^3.1.5",
-    "crosslightning-base": "file:../crosslightning-base",
-    "crypto": "^1.0.1",
-    "express": "^4.18.2",
-    "lightning": "^10.2.1",
-    "ln-service": "^57.2.0",
-    "one-dollar-fee-estimator-failover": "^0.1.1"
+    "@bitcoinerlab/secp256k1": "1.0.5",
+    "@types/bn.js": "5.1.5",
+    "bitcoinjs-lib": "6.1.5",
+    "bn.js": "5.2.1",
+    "bolt11": "1.4.1",
+    "cross-fetch": "3.1.5",
+    "crosslightning-base": "5.0.1",
+    "crypto": "1.0.1",
+    "express": "4.18.2",
+    "lightning": "10.2.1",
+    "ln-service": "57.2.0",
+    "one-dollar-fee-estimator-failover": "0.1.1"
   },
   "devDependencies": {
-    "@types/node": "^18.15.11",
-    "typescript": "^4.9.5"
+    "@types/node": "18.15.11",
+    "typescript": "4.9.5"
   }
 }

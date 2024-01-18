@@ -55,23 +55,25 @@ export class IntermediaryStorageManager<T extends StorageObject> implements IInt
 
     async saveData(hash: string, sequence: BN | null, object: T): Promise<void> {
 
+        const _sequence = (sequence || new BN(0)).toString("hex", 8);
+
         try {
             await fs.mkdir(this.directory)
         } catch (e) {}
 
-        this.data[hash] = object;
+        this.data[hash+"_"+_sequence] = object;
 
         const cpy = object.serialize();
 
-        await fs.writeFile(this.directory+"/"+hash+"_"+(sequence || new BN(0)).toString("hex", 8)+".json", JSON.stringify(cpy));
+        await fs.writeFile(this.directory+"/"+hash+"_"+_sequence+".json", JSON.stringify(cpy));
 
     }
 
     async removeData(hash: string, sequence: BN | null): Promise<void> {
-        const paymentHash = hash;
+        const identifier = hash+"_"+(sequence || new BN(0)).toString("hex", 8);
         try {
-            if(this.data[paymentHash]!=null) delete this.data[paymentHash];
-            await fs.rm(this.directory+"/"+paymentHash+"_"+(sequence || new BN(0)).toString("hex", 8)+".json");
+            if(this.data[identifier]!=null) delete this.data[identifier];
+            await fs.rm(this.directory+"/"+identifier+".json");
         } catch (e) {
             console.error(e);
         }
