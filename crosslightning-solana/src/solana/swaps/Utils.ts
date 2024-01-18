@@ -1,7 +1,7 @@
 import {BorshCoder, DecodeType, IdlTypes} from "@coral-xyz/anchor";
 import {IdlField} from "@coral-xyz/anchor/dist/cjs/idl";
 import {Message, PublicKey, Transaction} from "@solana/web3.js";
-import programIdl from "./programIdl.json";
+import * as programIdl from "./programIdl.json";
 import {SwapProgram} from "./programTypes";
 
 type DecodedFieldOrNull<D, Defined> = D extends IdlField ? DecodeType<D["type"], Defined> : unknown;

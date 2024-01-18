@@ -1,4 +1,3 @@
-import {IdlAccount} from "@coral-xyz/anchor/dist/cjs/idl";
 import {PublicKey} from "@solana/web3.js";
 import * as BN from "bn.js";
 import {SwapData, ChainSwapType, TokenAddress} from "crosslightning-base";
@@ -147,6 +146,7 @@ export class SolanaSwapData extends SwapData {
             payOut: this.payOut,
             kind: this.kind,
             payIn: this.payIn,
+            offererAta: this.offererAta==null ? null : this.offererAta.toBase58(),
             claimerAta: this.claimerAta==null ? null : this.claimerAta.toBase58(),
             securityDeposit: this.securityDeposit==null ? null : this.securityDeposit.toString(10),
             claimerBounty: this.claimerBounty==null ? null : this.claimerBounty.toString(10),

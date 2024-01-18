@@ -3,7 +3,7 @@ import {Message, PublicKey} from "@solana/web3.js";
 import {AnchorProvider, Event} from "@coral-xyz/anchor";
 import * as fs from "fs/promises";
 import {SolanaSwapProgram} from "../swaps/SolanaSwapProgram";
-import programIdl from "../swaps/programIdl.json";
+import * as programIdl from "../swaps/programIdl.json";
 import {ChainEvents, SwapEvent, EventListener, ClaimEvent, RefundEvent, InitializeEvent} from "crosslightning-base";
 import * as BN from "bn.js";
 import {InitializeIxType, InitializePayInIxType} from "../swaps/Utils";

@@ -1,4 +1,4 @@
-export const programIdl = {
+{
     "version": "0.1.0",
     "name": "btc_relay",
     "instructions": [
@@ -208,7 +208,7 @@ export const programIdl = {
                 },
                 {
                     "name": "mainState",
-                    "isMut": true,
+                    "isMut": false,
                     "isSigner": false
                 }
             ],
@@ -259,7 +259,7 @@ export const programIdl = {
                 },
                 {
                     "name": "mainState",
-                    "isMut": true,
+                    "isMut": false,
                     "isSigner": false
                 }
             ],
@@ -653,9 +653,19 @@ export const programIdl = {
             "code": 6012,
             "name": "InvalidBlockheight",
             "msg": "Blockheight doesn't match"
+        },
+        {
+            "code": 6013,
+            "name": "InvalidForkId",
+            "msg": "Fork has invalid ID"
+        },
+        {
+            "code": 6014,
+            "name": "InvalidRemainingAccounts",
+            "msg": "Didn't pass enough remaining accounts!"
         }
     ],
     "metadata": {
-        "address": "De2dsY5K3DXBDNzKUjE6KguVP5JUhveKNpMVRmRkazff"
+        "address": "3KHSHFpEK6bsjg3bqcxQ9qssJYtRCMi2S9TYVe4q6CQc"
     }
-};
+}

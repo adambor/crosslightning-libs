@@ -1,12 +1,10 @@
 import {AnchorProvider, BorshCoder, DecodeType, IdlTypes, InstructionFn} from "@coral-xyz/anchor";
 import {Message, PublicKey} from "@solana/web3.js";
 import {ChainEvents, ClaimEvent, EventListener, InitializeEvent, RefundEvent} from "crosslightning-base";
-import {IdlField, IdlInstruction} from "@coral-xyz/anchor/dist/cjs/idl";
+import {IdlInstruction} from "@coral-xyz/anchor/dist/cjs/idl";
 import {SolanaSwapData} from "../swaps/SolanaSwapData";
 import {SolanaSwapProgram} from "../swaps/SolanaSwapProgram";
 import * as BN from "bn.js";
-import {SwapProgram} from "../swaps/programTypes";
-import programIdl from "../swaps/programIdl.json";
 import {SwapTypeEnum} from "../swaps/SwapTypeEnum";
 import {InitializeIxType, InitializePayInIxType} from "../swaps/Utils";
 
@@ -88,7 +86,7 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
                 ) {
                     const parsedIx: InitializePayInIxType | InitializeIxType = ix as any;
 
-                    const paymentHash: Buffer = Buffer.from(ix.data.hash);
+                    const paymentHash: Buffer = Buffer.from(parsedIx.data.swapData.hash);
 
                     if(!paymentHashBuffer.equals(paymentHash)) continue;
 
