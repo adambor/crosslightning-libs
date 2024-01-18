@@ -6,7 +6,7 @@ import {SolanaSwapProgram} from "../swaps/SolanaSwapProgram";
 import * as programIdl from "../swaps/programIdl.json";
 import {ChainEvents, SwapEvent, EventListener, ClaimEvent, RefundEvent, InitializeEvent} from "crosslightning-base";
 import * as BN from "bn.js";
-import {InitializeIxType, InitializePayInIxType} from "../swaps/Utils";
+import {InitializeIxType, InitializePayInIxType, onceAsync} from "../swaps/Utils";
 import {SwapProgram} from "../swaps/programTypes";
 import {SwapTypeEnum} from "../swaps/SwapTypeEnum";
 import {tryWithRetries} from "../../utils/RetryUtils";
@@ -127,7 +127,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                     event.data.sequence,
                     Buffer.from(event.data.txoHash).toString("hex"),
                     SwapTypeEnum.toChainSwapType(event.data.kind),
-                    async () => {
+                    onceAsync<SolanaSwapData>(async () => {
                         if(eventObject.instructions==null) {
                             const transaction = await tryWithRetries<TransactionResponse>(async () => {
                                 const res = await this.signer.connection.getTransaction(eventObject.signature, {
@@ -183,7 +183,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                                 );
                             }
                         }
-                    }
+                    })
                 );
                 (parsedEvent as any).meta = {
                     timestamp: eventObject.blockTime,

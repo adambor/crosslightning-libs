@@ -6,7 +6,7 @@ import {SolanaSwapData} from "../swaps/SolanaSwapData";
 import {SolanaSwapProgram} from "../swaps/SolanaSwapProgram";
 import * as BN from "bn.js";
 import {SwapTypeEnum} from "../swaps/SwapTypeEnum";
-import {InitializeIxType, InitializePayInIxType} from "../swaps/Utils";
+import {InitializeIxType, InitializePayInIxType, onceAsync} from "../swaps/Utils";
 
 export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
 
@@ -75,7 +75,7 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
                 event.sequence,
                 Buffer.from(event.txoHash).toString("hex"),
                 SwapTypeEnum.toChainSwapType(event.kind),
-                async () => {
+                onceAsync<SolanaSwapData>(async () => {
                     const tx = await this.provider.connection.getTransaction(signature);
 
                     if(tx==null) return null;
@@ -127,7 +127,7 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
                             );
                         }
                     }
-                }
+                })
             );
 
             for(let listener of this.listeners) {

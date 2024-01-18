@@ -137,4 +137,17 @@ class Utils {
 
 }
 
+export function onceAsync<T>(executor: () => Promise<T>): () => Promise<T> {
+    let promise: Promise<T>;
+
+    return () => {
+        if(promise==null) {
+            promise = executor();
+            return promise;
+        } else {
+            return promise.catch(() => promise = executor());
+        }
+    }
+}
+
 export default Utils;
