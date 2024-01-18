@@ -13,7 +13,6 @@ export * from "./events/types/SwapEvent";
 export * from "./lockable/Lockable";
 export * from "./storage/IStorageManager";
 export * from "./storage/StorageObject";
-export * from "./swaps/ISwapNonce";
 export * from "./swaps/SwapContract";
 export * from "./swaps/SwapData";
 export * from "./swaps/ChainSwapType";
