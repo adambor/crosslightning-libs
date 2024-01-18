@@ -70,73 +70,65 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
             const paymentHashBuffer = Buffer.from(event.hash);
             const paymentHashHex = paymentHashBuffer.toString("hex");
 
-            const tx = await this.provider.connection.getTransaction(signature);
+            const parsedEvent: InitializeEvent<SolanaSwapData> = new InitializeEvent<SolanaSwapData>(
+                paymentHashHex,
+                event.sequence,
+                Buffer.from(event.txoHash).toString("hex"),
+                SwapTypeEnum.toChainSwapType(event.kind),
+                async () => {
+                    const tx = await this.provider.connection.getTransaction(signature);
 
-            if(tx==null) return;
+                    if(tx==null) return null;
 
-            const ixs = this.decodeInstructions(tx.transaction.message);
+                    const ixs = this.decodeInstructions(tx.transaction.message);
 
-            let parsedEvent: InitializeEvent<SolanaSwapData>;
+                    for(let ix of ixs) {
+                        if (ix == null) continue;
 
-            for(let ix of ixs) {
-                if (ix == null) continue;
+                        if (
+                            (ix.name === "offererInitializePayIn" || ix.name === "offererInitialize")
+                        ) {
+                            const parsedIx: InitializePayInIxType | InitializeIxType = ix as any;
 
-                if (
-                    (ix.name === "offererInitializePayIn" || ix.name === "offererInitialize")
-                ) {
-                    const parsedIx: InitializePayInIxType | InitializeIxType = ix as any;
+                            const paymentHash: Buffer = Buffer.from(parsedIx.data.swapData.hash);
 
-                    const paymentHash: Buffer = Buffer.from(parsedIx.data.swapData.hash);
+                            if(!paymentHashBuffer.equals(paymentHash)) continue;
 
-                    if(!paymentHashBuffer.equals(paymentHash)) continue;
+                            let securityDeposit: BN = new BN(0);
+                            let claimerBounty: BN = new BN(0);
+                            let payIn: boolean;
+                            if(parsedIx.name === "offererInitializePayIn") {
+                                payIn = true;
 
-                    const txoHash: Buffer = Buffer.from(event.txoHash);
+                            } else {
+                                payIn = false;
+                                securityDeposit = parsedIx.data.securityDeposit;
+                                claimerBounty = parsedIx.data.claimerBounty;
+                            }
 
-                    let securityDeposit: BN = new BN(0);
-                    let claimerBounty: BN = new BN(0);
-                    let payIn: boolean;
-                    if(parsedIx.name === "offererInitializePayIn") {
-                        payIn = true;
-
-                    } else {
-                        payIn = false;
-                        securityDeposit = parsedIx.data.securityDeposit;
-                        claimerBounty = parsedIx.data.claimerBounty;
+                            return new SolanaSwapData(
+                                parsedIx.accounts.offerer,
+                                parsedIx.accounts.claimer,
+                                parsedIx.accounts.mint,
+                                parsedIx.data.swapData.amount,
+                                paymentHash.toString("hex"),
+                                parsedIx.data.swapData.sequence,
+                                parsedIx.data.swapData.expiry,
+                                parsedIx.data.swapData.nonce,
+                                parsedIx.data.swapData.confirmations,
+                                parsedIx.data.swapData.payOut,
+                                SwapTypeEnum.toNumber(parsedIx.data.swapData.kind),
+                                payIn,
+                                parsedIx.name === "offererInitializePayIn" ? parsedIx.accounts.offererAta : undefined, //32 bytes
+                                parsedIx.data.swapData.payOut ? parsedIx.accounts.claimerAta : PublicKey.default,
+                                securityDeposit,
+                                claimerBounty,
+                                Buffer.from(event.txoHash).toString("hex")
+                            );
+                        }
                     }
-
-                    const swapData: SolanaSwapData = new SolanaSwapData(
-                        parsedIx.accounts.offerer,
-                        parsedIx.accounts.claimer,
-                        parsedIx.accounts.mint,
-                        parsedIx.data.swapData.amount,
-                        paymentHash.toString("hex"),
-                        parsedIx.data.swapData.sequence,
-                        parsedIx.data.swapData.expiry,
-                        parsedIx.data.swapData.nonce,
-                        parsedIx.data.swapData.confirmations,
-                        parsedIx.data.swapData.payOut,
-                        SwapTypeEnum.toNumber(parsedIx.data.swapData.kind),
-                        payIn,
-                        parsedIx.name === "offererInitializePayIn" ? parsedIx.accounts.offererAta : undefined, //32 bytes
-                        parsedIx.data.swapData.payOut ? parsedIx.accounts.claimerAta : PublicKey.default,
-                        securityDeposit,
-                        claimerBounty,
-                        Buffer.from(event.txoHash).toString("hex")
-                    );
-
-                    //const usedNonce = ix.data.nonce.toNumber();
-
-                    parsedEvent = new InitializeEvent<SolanaSwapData>(
-                        paymentHash.toString("hex"),
-                        event.sequence,
-                        txoHash.toString("hex"),
-                        0,
-                        swapData
-                    );
                 }
-            }
-
-            if(parsedEvent==null) return;
+            );
 
             for(let listener of this.listeners) {
                 await listener([parsedEvent]);

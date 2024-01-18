@@ -70,7 +70,6 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
             result.prefix,
             result.timeout,
             result.signature,
-            result.nonce,
             result.feeRate,
             result.expiry,
             result.pricingInfo
@@ -110,14 +109,13 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
                     if(swap.state===FromBTCSwapState.PR_CREATED) {
                         if(swap.data!=null) {
                             try {
-                                if(!swap.data.equals(event.swapData)) throw new Error("Unexpected data in event, skipping!");
+                                if(!swap.data.getSequence().eq(event.sequence)) throw new Error("Unexpected data in event, skipping!");
                             } catch (e) {
                                 console.error(e);
                                 continue;
                             }
                         }
                         swap.state = FromBTCSwapState.CLAIM_COMMITED;
-                        swap.data = event.swapData;
                         swapChanged = true;
                     }
                 }
@@ -195,7 +193,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
                     //Check if signature is still valid
                     try {
                         await tryWithRetries(
-                            () => this.contract.swapContract.isValidInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce, swap.feeRate),
+                            () => this.contract.swapContract.isValidInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.feeRate),
                             null,
                             e => e instanceof SignatureVerificationError
                         );

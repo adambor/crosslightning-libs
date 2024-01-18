@@ -2,7 +2,6 @@ import * as BN from "bn.js";
 import * as lncli from "ln-service";
 import {Express} from "express";
 import {FromBtcSwapAbs, FromBtcSwapState} from "./FromBtcSwapAbs";
-import {SwapNonce} from "../SwapNonce";
 import {SwapHandler, SwapHandlerType} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
 import {
@@ -59,13 +58,12 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
         path: string,
         swapContract: SwapContract<T, any>,
         chainEvents: ChainEvents<T>,
-        swapNonce: SwapNonce,
         allowedTokens: TokenAddress[],
         lnd: AuthenticatedLnd,
         swapPricing: ISwapPrice,
         config: FromBtcConfig
     ) {
-        super(storageDirectory, path, swapContract, chainEvents, swapNonce, allowedTokens, lnd, swapPricing);
+        super(storageDirectory, path, swapContract, chainEvents, allowedTokens, lnd, swapPricing);
         const anyConfig = config as any;
         anyConfig.swapTsCsvDelta = new BN(config.swapCsvDelta).mul(config.bitcoinBlocktime.div(config.safetyFactor));
         this.config = anyConfig;
@@ -193,17 +191,19 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
         for(let event of eventData) {
 
             if(event instanceof InitializeEvent) {
-                if (!this.swapContract.areWeOfferer(event.swapData)) {
+                if (event.swapType !== ChainSwapType.CHAIN) {
+                    //Only process on-chain requests
                     continue;
                 }
 
-                if (event.swapData.isPayIn()) {
+                const swapData = await event.swapData();
+
+                if (!this.swapContract.areWeOfferer(swapData)) {
+                    continue;
+                }
+
+                if (swapData.isPayIn()) {
                     //Only process requests that don't pay in from the program
-                    continue;
-                }
-
-                if (event.swapData.getType() !== ChainSwapType.CHAIN) {
-                    //Only process nonced on-chain requests
                     continue;
                 }
 
@@ -215,18 +215,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 if (isSwapFound) {
                     if(savedSwap.metadata!=null) savedSwap.metadata.times.initTxReceived = Date.now();
                     await savedSwap.setState(FromBtcSwapState.COMMITED);
-                }
 
-                const usedNonce = event.signatureNonce;
-                const tokenAdress = event.swapData.getToken().toString();
-
-                const hasHigherNonce = usedNonce > this.nonce.getNonce(tokenAdress);
-                if (hasHigherNonce) {
-                    await this.nonce.saveNonce(tokenAdress, usedNonce);
-                }
-
-                if (isSwapFound) {
-                    savedSwap.data = event.swapData;
+                    savedSwap.data = swapData;
                     await this.storageManager.saveData(paymentHashBuffer.toString("hex"), event.sequence, savedSwap);
                 }
 
@@ -561,7 +551,6 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
             const feeRate = req.body.feeRate!=null && typeof(req.body.feeRate)==="string" ? req.body.feeRate : null;
             const sigData = await this.swapContract.getInitSignature(
                 data,
-                this.nonce,
                 this.config.authorizationTimeout,
                 signDataPrefetchPromise==null ? null : await signDataPrefetchPromise,
                 feeRate
@@ -585,7 +574,6 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                     swapFee: swapFeeInToken.toString(10),
                     total: total.toString(10),
                     data: data.serialize(),
-                    nonce: sigData.nonce,
                     prefix: sigData.prefix,
                     timeout: sigData.timeout,
                     signature: sigData.signature

@@ -1,7 +1,17 @@
+import {ChainSwapType} from "crosslightning-base";
 
 export class SwapTypeEnum {
 
-    static toNumber(data: SwapTypeEnum): number {
+    static toChainSwapType(data: any): number {
+        const text = Object.keys(data)[0];
+        if(text==="htlc") return ChainSwapType.HTLC;
+        if(text==="chain") return ChainSwapType.CHAIN;
+        if(text==="chainNonced") return ChainSwapType.CHAIN_NONCED;
+        if(text==="chainTxhash") return ChainSwapType.CHAIN_TXID;
+        return null;
+    }
+
+    static toNumber(data: any): number {
         const text = Object.keys(data)[0];
         if(text==="htlc") return 0;
         if(text==="chain") return 1;

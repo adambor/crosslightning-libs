@@ -1,6 +1,6 @@
 {
   "name": "crosslightning-solana",
-  "version": "4.0.12",
+  "version": "5.0.0",
   "description": "Solana specific base implementation",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",
@@ -26,7 +26,7 @@
     "@solana/spl-token": "0.3.9",
     "@solana/web3.js": "1.89.0",
     "bn.js": "5.2.1",
-    "crosslightning-base": "5.0.1",
+    "crosslightning-base": "6.0.0",
     "tweetnacl": "1.0.3"
   },
   "devDependencies": {

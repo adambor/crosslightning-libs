@@ -42,7 +42,6 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
         prefix: string,
         timeout: string,
         signature: string,
-        nonce: number,
         feeRate: any,
         expiry: number,
         pricing: PriceInfoType
@@ -59,13 +58,12 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
         prefix?: string,
         timeout?: string,
         signature?: string,
-        nonce?: number,
         feeRate?: any,
         expiry?: number,
         pricing?: PriceInfoType
     ) {
         if(typeof(addressOrObject)==="string") {
-            super(wrapper, url, data, swapFee, prefix, timeout, signature, nonce, feeRate, expiry, pricing);
+            super(wrapper, url, data, swapFee, prefix, timeout, signature, feeRate, expiry, pricing);
             this.state = FromBTCSwapState.PR_CREATED;
 
             this.address = addressOrObject;
@@ -183,7 +181,7 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
 
         let txResult;
         try {
-            txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.nonce, this.getTxoHash(), !noWaitForConfirmation, false, abortSignal, this.feeRate);
+            txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.getTxoHash(), !noWaitForConfirmation, false, abortSignal, this.feeRate);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 throw new Error("Request timed out!");
@@ -231,7 +229,7 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
 
         let txs: any[];
         try {
-            txs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.nonce, this.getTxoHash(), false, this.feeRate);
+            txs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.getTxoHash(), false, this.feeRate);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 throw new Error("Request timed out!");

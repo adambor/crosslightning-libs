@@ -18,7 +18,6 @@ import {
     SwapEvent,
     TokenAddress
 } from "crosslightning-base";
-import {SwapNonce} from "../SwapNonce";
 import {AuthenticatedLnd} from "lightning";
 import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
@@ -68,13 +67,12 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         path: string,
         swapContract: SwapContract<T, any>,
         chainEvents: ChainEvents<T>,
-        swapNonce: SwapNonce,
         allowedTokens: TokenAddress[],
         lnd: AuthenticatedLnd,
         swapPricing: ISwapPrice,
         config: ToBtcLnConfig
     ) {
-        super(storageDirectory, path, swapContract, chainEvents, swapNonce, allowedTokens, lnd, swapPricing);
+        super(storageDirectory, path, swapContract, chainEvents, allowedTokens, lnd, swapPricing);
         const anyConfig = config as any;
         anyConfig.minTsSendCltv = config.gracePeriod.add(config.bitcoinBlocktime.mul(config.minSendCltv).mul(config.safetyFactor));
         this.config = anyConfig;
@@ -125,7 +123,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             }
 
             if (invoiceData.state === ToBtcLnSwapState.COMMITED || invoiceData.state === ToBtcLnSwapState.PAID) {
-                await this.processInitialized(invoiceData, invoiceData.data);
+                await this.processInitialized(invoiceData);
             }
 
             if (invoiceData.state === ToBtcLnSwapState.NON_PAYABLE) {
@@ -253,7 +251,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
      * @param invoiceData
      * @param data
      */
-    private async processInitialized(invoiceData: ToBtcLnSwapAbs<T>, data: T) {
+    private async processInitialized(invoiceData: ToBtcLnSwapAbs<T>) {
 
         const lnPr = invoiceData.pr;
         const decodedPR = bolt11.decode(lnPr);
@@ -269,7 +267,6 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         if(invoiceData.metadata!=null) invoiceData.metadata.times.payPaymentChecked = Date.now();
 
         const markAsNonPayable = async() => {
-            invoiceData.data = data;
             await invoiceData.setState(ToBtcLnSwapState.NON_PAYABLE);
             // await PluginManager.swapStateChange(invoiceData);
             await this.storageManager.saveData(decodedPR.tagsObject.payment_hash, invoiceData.data.getSequence(), invoiceData);
@@ -277,15 +274,15 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
         const paymentExists = lnPaymentStatus!=null;
         if(!paymentExists) {
-            if (!data.isToken(invoiceData.data.getToken())) {
+            if (!invoiceData.data.isToken(invoiceData.data.getToken())) {
                 console.error("[To BTC-LN: Solana.Initialize] Invalid token used");
                 return;
             }
 
-            console.log("[To BTC-LN: Solana.Initialize] Struct: ", data);
+            console.log("[To BTC-LN: Solana.Initialize] Struct: ", invoiceData.data);
 
             //const tokenAmount: BN = data.getAmount();
-            const expiryTimestamp: BN = data.getExpiry();
+            const expiryTimestamp: BN = invoiceData.data.getExpiry();
             const currentTimestamp: BN = new BN(Math.floor(Date.now()/1000));
 
             console.log("[To BTC-LN: Solana.Initialize] Expiry time: ", expiryTimestamp.toString(10));
@@ -334,7 +331,6 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 return;
             }
 
-            invoiceData.data = data;
             await invoiceData.setState(ToBtcLnSwapState.COMMITED);
             // await PluginManager.swapStateChange(invoiceData);
             await this.storageManager.saveData(decodedPR.tagsObject.payment_hash, invoiceData.data.getSequence(), invoiceData);
@@ -387,26 +383,9 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             if(event instanceof InitializeEvent) {
                 console.log("Initialize Event: ", event);
 
-                if(!this.swapContract.areWeClaimer(event.swapData)) {
-                    continue;
-                }
-
-                if(event.swapData.getType()!==ChainSwapType.HTLC) {
+                if(event.swapType!==ChainSwapType.HTLC) {
                     //Only process ln requests
                     continue;
-                }
-
-                if(event.swapData.isPayOut()) {
-                    //Only process requests that don't payout from the program
-                    continue;
-                }
-
-                if(event.swapData.isPayIn()) {
-                    const tokenAdress = event.swapData.getToken().toString();
-                    const usedNonce = event.signatureNonce;
-                    if (usedNonce > this.nonce.getClaimNonce(tokenAdress)) {
-                        await this.nonce.saveClaimNonce(tokenAdress, usedNonce);
-                    }
                 }
 
                 const paymentHash = event.paymentHash;
@@ -414,7 +393,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 const savedInvoice = await this.storageManager.getData(paymentHash, event.sequence);
 
                 if(savedInvoice==null) {
-                    console.error("[To BTC-LN: Solana.Initialize] No invoice submitted: ", paymentHash);
+                    // console.error("[To BTC-LN: Solana.Initialize] No invoice submitted: ", paymentHash);
                     continue;
                 }
 
@@ -425,7 +404,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 //Only process swaps in SAVED state
                 if(savedInvoice.state!==ToBtcLnSwapState.SAVED) continue;
 
-                await this.processInitialized(savedInvoice, event.swapData);
+                await this.processInitialized(savedInvoice);
 
                 continue;
             }
@@ -763,7 +742,6 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const feeRate = req.body.feeRate!=null && typeof(req.body.feeRate)==="string" ? req.body.feeRate : null;
             const sigData = await this.swapContract.getClaimInitSignature(
                 payObject,
-                this.nonce,
                 this.config.authorizationTimeout,
                 prefetchedSignData,
                 feeRate
@@ -793,7 +771,6 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
                     data: payObject.serialize(),
 
-                    nonce: sigData.nonce,
                     prefix: sigData.prefix,
                     timeout: sigData.timeout,
                     signature: sigData.signature

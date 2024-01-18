@@ -28,7 +28,7 @@
     "bn.js": "5.2.1",
     "bolt11": "1.4.1",
     "cross-fetch": "3.1.5",
-    "crosslightning-base": "5.0.1",
+    "crosslightning-base": "6.0.0",
     "crypto": "1.0.1",
     "express": "4.18.2",
     "lightning": "10.2.1",

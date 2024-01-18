@@ -335,7 +335,6 @@ export class ClientSwapContract<T extends SwapData> {
         prefix: string,
         timeout: string,
         signature: string,
-        nonce: number,
         expiry: number,
         pricingInfo: PriceInfoType,
         feeRate?: any
@@ -506,7 +505,7 @@ export class ClientSwapContract<T extends SwapData> {
                 }
             })(),
             tryWithRetries(
-                () => this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce, feeRate),
+                () => this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, feeRate),
                 null,
                 e => e instanceof SignatureVerificationError,
                 abortController.signal
@@ -525,9 +524,8 @@ export class ClientSwapContract<T extends SwapData> {
             prefix: jsonBody.data.prefix,
             timeout: jsonBody.data.timeout,
             signature: jsonBody.data.signature,
-            nonce: jsonBody.data.nonce,
 
-            expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)),
+            expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature)),
 
             pricingInfo,
 
@@ -712,7 +710,6 @@ export class ClientSwapContract<T extends SwapData> {
         prefix: string,
         timeout: string,
         signature: string,
-        nonce: number,
 
         expiry: number,
 
@@ -857,7 +854,7 @@ export class ClientSwapContract<T extends SwapData> {
                 }
             })(),
             tryWithRetries(
-                () => this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce, feeRate),
+                () => this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, feeRate),
                 null,
                 e => e instanceof SignatureVerificationError,
                 abortController.signal
@@ -879,9 +876,8 @@ export class ClientSwapContract<T extends SwapData> {
             prefix: jsonBody.data.prefix,
             timeout: jsonBody.data.timeout,
             signature: jsonBody.data.signature,
-            nonce: jsonBody.data.nonce,
 
-            expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)),
+            expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature)),
 
             pricingInfo,
             feeRate
@@ -1031,7 +1027,6 @@ export class ClientSwapContract<T extends SwapData> {
         prefix: string,
         timeout: string,
         signature: string,
-        nonce: number,
         expiry: number,
         pricingInfo: PriceInfoType,
         feeRate?: any
@@ -1265,7 +1260,7 @@ export class ClientSwapContract<T extends SwapData> {
             })(),
             //Verify authorization
             tryWithRetries(
-                () => this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce, feeRate),
+                () => this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, feeRate),
                 null,
                 e => e instanceof SignatureVerificationError,
                 abortController.signal
@@ -1283,8 +1278,7 @@ export class ClientSwapContract<T extends SwapData> {
             prefix: jsonBody.data.prefix,
             timeout: jsonBody.data.timeout,
             signature: jsonBody.data.signature,
-            nonce: jsonBody.data.nonce,
-            expiry: await tryWithRetries(() => this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce)),
+            expiry: await tryWithRetries(() => this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature)),
             pricingInfo,
             feeRate
         };
@@ -1600,7 +1594,6 @@ export class ClientSwapContract<T extends SwapData> {
         prefix?: string,
         timeout?: string,
         signature?: string,
-        nonce?: number,
 
         expiry?: number,
 
@@ -1672,7 +1665,7 @@ export class ClientSwapContract<T extends SwapData> {
                     return null;
                 })(),
                 tryWithRetries(
-                    () => this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce, feeRate),
+                    () => this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, feeRate),
                     null,
                     (e) => e instanceof SignatureVerificationError
                 ),
@@ -1703,9 +1696,8 @@ export class ClientSwapContract<T extends SwapData> {
                 prefix: jsonBody.data.prefix,
                 timeout: jsonBody.data.timeout,
                 signature: jsonBody.data.signature,
-                nonce: jsonBody.data.nonce,
                 expiry: await tryWithRetries(
-                    () => this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, jsonBody.data.nonce),
+                    () => this.swapContract.getInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature),
                     null,
                     null,
                     abortSignal

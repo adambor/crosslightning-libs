@@ -4,7 +4,6 @@ import * as lncli from "ln-service";
 import {createHash} from "crypto";
 import * as bolt11 from "bolt11";
 import {FromBtcLnSwapAbs, FromBtcLnSwapState} from "./FromBtcLnSwapAbs";
-import {SwapNonce} from "../SwapNonce";
 import {SwapHandler, SwapHandlerType} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
 import {
@@ -60,13 +59,12 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
         path: string,
         swapContract: SwapContract<T, any>,
         chainEvents: ChainEvents<T>,
-        swapNonce: SwapNonce,
         allowedTokens: TokenAddress[],
         lnd: AuthenticatedLnd,
         swapPricing: ISwapPrice,
         config: FromBtcLnConfig
     ) {
-        super(storageDirectory, path, swapContract, chainEvents, swapNonce, allowedTokens, lnd, swapPricing);
+        super(storageDirectory, path, swapContract, chainEvents, allowedTokens, lnd, swapPricing);
         this.config = config;
         this.config.invoiceTimeoutSeconds = this.config.invoiceTimeoutSeconds || 90;
     }
@@ -129,7 +127,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 // console.log("[From BTC-LN: Swap received check] Swap in received state check for expiry: "+parsedPR.tagsObject.payment_hash);
                 // console.log("[From BTC-LN: Swap received check] Swap signature: "+swap.signature);
                 if(swap.signature!=null) {
-                    const isAuthorizationExpired = await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce);
+                    const isAuthorizationExpired = await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature);
                     console.log("[From BTC-LN: Swap received check] Swap auth expired: "+parsedPR.tagsObject.payment_hash);
                     if(isAuthorizationExpired) {
                         const isCommited = await this.swapContract.isCommited(swap.data);
@@ -234,16 +232,18 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
         for(let event of eventData) {
             if(event instanceof InitializeEvent) {
-                if (!this.swapContract.areWeOfferer(event.swapData)) {
-                    continue;
-                }
-
-                if (event.swapData.isPayIn()) {
-                    continue;
-                }
-
-                if (event.swapData.getType() !== ChainSwapType.HTLC) {
+                if (event.swapType !== ChainSwapType.HTLC) {
                     //Only process HTLC requests
+                    continue;
+                }
+
+                const swapData = await event.swapData();
+
+                if (!this.swapContract.areWeOfferer(swapData)) {
+                    continue;
+                }
+
+                if (swapData.isPayIn()) {
                     continue;
                 }
 
@@ -258,17 +258,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     if(savedSwap.metadata!=null) savedSwap.metadata.times.initTxReceived = Date.now();
                     await savedSwap.setState(FromBtcLnSwapState.COMMITED);
                     // await PluginManager.swapStateChange(savedSwap);
-                }
-
-                const usedNonce = event.signatureNonce;
-                const tokenAdress = event.swapData.getToken().toString();
-                const shouldUpdateNonce = usedNonce > this.nonce.getNonce(tokenAdress);
-                if (shouldUpdateNonce) {
-                    await this.nonce.saveNonce(tokenAdress,usedNonce);
-                }
-
-                if (isSwapFound) {
-                    savedSwap.data = event.swapData;
+                    savedSwap.data = swapData;
                     await this.storageManager.saveData(paymentHashBuffer.toString("hex"), null, savedSwap);
                 }
 
@@ -457,7 +447,6 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
         const sigData = await this.swapContract.getInitSignature(
             payInvoiceObject,
-            this.nonce,
             this.config.authorizationTimeout,
             signDataPrefetchPromise==null ? null : await signDataPrefetchPromise,
             invoiceData.feeRate
@@ -469,7 +458,6 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
         if(invoiceData.state===FromBtcLnSwapState.CREATED) {
             invoiceData.data = payInvoiceObject;
 
-            invoiceData.nonce = sigData.nonce;
             invoiceData.prefix = sigData.prefix;
             invoiceData.timeout = sigData.timeout;
             invoiceData.signature = sigData.signature;
@@ -896,7 +884,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             }
 
             if (invoiceData.state === FromBtcLnSwapState.RECEIVED) {
-                if (invoiceData.signature!=null && await this.swapContract.isInitAuthorizationExpired(invoiceData.data, invoiceData.timeout, invoiceData.prefix, invoiceData.signature, invoiceData.nonce)) {
+                if (invoiceData.signature!=null && await this.swapContract.isInitAuthorizationExpired(invoiceData.data, invoiceData.timeout, invoiceData.prefix, invoiceData.signature)) {
                     res.status(200).json({
                         code: 10001,
                         msg: "Invoice expired/canceled"

@@ -81,16 +81,17 @@ export abstract class IToBTCWrapper<T extends SwapData> {
 
                 if(event instanceof InitializeEvent) {
                     if(swap.state===ToBTCSwapState.CREATED) {
+                        const swapData = await event.swapData();
                         if(swap.data!=null) {
                             try {
-                                if(!swap.data.equals(event.swapData)) throw new Error("Unexpected data in event, skipping!");
+                                if(!swap.data.equals(swapData)) throw new Error("Unexpected data in event, skipping!");
                             } catch (e) {
                                 console.error(e);
                                 continue;
                             }
                         }
                         swap.state = ToBTCSwapState.COMMITED;
-                        swap.data = event.swapData;
+                        swap.data = swapData;
                         swapChanged = true;
                     }
                 }
@@ -168,7 +169,7 @@ export abstract class IToBTCWrapper<T extends SwapData> {
                 //Not committed yet, check if still valid
                 try {
                     await tryWithRetries(
-                        () => this.contract.swapContract.isValidClaimInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce, swap.feeRate),
+                        () => this.contract.swapContract.isValidClaimInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.feeRate),
                         null,
                         e => e instanceof SignatureVerificationError
                     );
