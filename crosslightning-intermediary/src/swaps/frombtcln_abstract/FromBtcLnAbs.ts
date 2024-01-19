@@ -22,7 +22,6 @@ import {AuthenticatedLnd} from "lightning";
 import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
-import {ToBtcSwapState} from "../..";
 
 export type FromBtcLnConfig = {
     authorizationTimeout: number,
@@ -256,10 +255,13 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 const isSwapFound = savedSwap != null;
                 if (isSwapFound) {
                     if(savedSwap.metadata!=null) savedSwap.metadata.times.initTxReceived = Date.now();
-                    await savedSwap.setState(FromBtcLnSwapState.COMMITED);
-                    // await PluginManager.swapStateChange(savedSwap);
-                    savedSwap.data = swapData;
-                    await this.storageManager.saveData(paymentHashBuffer.toString("hex"), null, savedSwap);
+
+                    if(savedSwap.state===FromBtcLnSwapState.CREATED) {
+                        await savedSwap.setState(FromBtcLnSwapState.COMMITED);
+                        // await PluginManager.swapStateChange(savedSwap);
+                        savedSwap.data = swapData;
+                        await this.storageManager.saveData(paymentHashBuffer.toString("hex"), null, savedSwap);
+                    }
                 }
 
             }

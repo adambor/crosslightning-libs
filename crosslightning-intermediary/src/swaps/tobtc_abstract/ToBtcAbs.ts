@@ -478,6 +478,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             if(coinselectResult==null) {
                 console.error("[To BTC: Solana.Initialize] Failed to run coinselect algorithm (not enough funds?)");
+                await setNonPayableAndSave();
                 unlock();
                 return;
             }

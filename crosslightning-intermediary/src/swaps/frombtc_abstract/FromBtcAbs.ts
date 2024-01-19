@@ -214,10 +214,12 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 const isSwapFound = savedSwap != null;
                 if (isSwapFound) {
                     if(savedSwap.metadata!=null) savedSwap.metadata.times.initTxReceived = Date.now();
-                    await savedSwap.setState(FromBtcSwapState.COMMITED);
 
-                    savedSwap.data = swapData;
-                    await this.storageManager.saveData(paymentHashBuffer.toString("hex"), event.sequence, savedSwap);
+                    if(savedSwap.state===FromBtcSwapState.CREATED) {
+                        await savedSwap.setState(FromBtcSwapState.COMMITED);
+                        savedSwap.data = swapData;
+                        await this.storageManager.saveData(paymentHashBuffer.toString("hex"), event.sequence, savedSwap);
+                    }
                 }
 
                 continue;
