@@ -245,7 +245,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
     }
 
     private setupWebsocket() {
-        const eventCallback = (event, slotNumber, signature) => {
+        const eventCallback = (name: "InitializeEvent" | "RefundEvent" | "ClaimEvent") => (data, slotNumber, signature) => {
             if(this.signaturesProcessing[signature]!=null) return;
 
             console.log("[Solana Events WebSocket] Process signature: ", signature);
@@ -259,7 +259,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
             };
 
             obj.promise = this.processEvent({
-                events: [event],
+                events: [{name, data}],
                 instructions: null,
                 blockTime: Math.floor(Date.now()/1000),
                 signature
@@ -269,9 +269,9 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
 
         };
 
-        this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("InitializeEvent", eventCallback));
-        this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("ClaimEvent", eventCallback));
-        this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("RefundEvent", eventCallback));
+        this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("InitializeEvent", eventCallback("InitializeEvent")));
+        this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("ClaimEvent", eventCallback("ClaimEvent")));
+        this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("RefundEvent", eventCallback("RefundEvent")));
 
     }
 
