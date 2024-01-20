@@ -13,6 +13,8 @@ export type BinanceCoinsMapType = {
     }
 };
 
+const CACHE_DURATION = 10000;
+
 export class BinanceSwapPrice extends ISwapPrice {
 
     static createCoinsMap(wbtcAdress?: string, usdcAddress?: string, usdtAddress?: string): BinanceCoinsMapType {
@@ -114,13 +116,22 @@ export class BinanceSwapPrice extends ISwapPrice {
 
     httpRequestTimeout?: number;
 
-    constructor(maxAllowedFeeDiffPPM: BN, coinsMap?: BinanceCoinsMapType, url?: string, httpRequestTimeout?: number) {
+    cache: {
+        [pair: string]: {
+            price: number,
+            expiry: number
+        }
+    } = {};
+    cacheTimeout: number;
+
+    constructor(maxAllowedFeeDiffPPM: BN, coinsMap?: BinanceCoinsMapType, url?: string, httpRequestTimeout?: number, cacheTimeout?: number) {
         super(maxAllowedFeeDiffPPM);
         this.url = url || "https://api.binance.us/api/v3";
         if(coinsMap!=null) {
             this.COINS_MAP = coinsMap;
         }
         this.httpRequestTimeout = httpRequestTimeout;
+        this.cacheTimeout = cacheTimeout || CACHE_DURATION
     }
 
     /**
@@ -136,30 +147,42 @@ export class BinanceSwapPrice extends ISwapPrice {
             return new BN(Math.floor(amt*1000));
         }
 
-        const response: Response = await tryWithRetries(() => fetchWithTimeout(this.url+"/ticker/price?symbol="+pair, {
-            method: "GET",
-            timeout: this.httpRequestTimeout,
-            signal: abortSignal
-        }), null ,null, abortSignal);
+        const cachedValue = this.cache[pair];
+        if(cachedValue==null || cachedValue.expiry<Date.now()) {
+            const response: Response = await tryWithRetries(() => fetchWithTimeout(this.url+"/ticker/price?symbol="+pair, {
+                method: "GET",
+                timeout: this.httpRequestTimeout,
+                signal: abortSignal
+            }), null ,null, abortSignal);
 
-        if(response.status!==200) {
-            let resp: string;
-            try {
-                resp = await response.text();
-            } catch (e) {
-                throw new Error(response.statusText);
+            if(response.status!==200) {
+                let resp: string;
+                try {
+                    resp = await response.text();
+                } catch (e) {
+                    throw new Error(response.statusText);
+                }
+                throw new Error(resp);
             }
-            throw new Error(resp);
+
+            let jsonBody: any = await response.json();
+
+            const price: number = parseFloat(jsonBody.price);
+
+            this.cache[pair] = {
+                price,
+                expiry: Date.now()+this.cacheTimeout
+            };
         }
 
-        let jsonBody: any = await response.json();
-
-        const amt: number = parseFloat(jsonBody.price);
-
+        let result: BN;
         if(invert) {
-            return new BN(Math.floor((1/amt)*100000000000));
+            result = new BN(Math.floor((1/this.cache[pair].price)*100000000000));
+        } else {
+            result = new BN(Math.floor(this.cache[pair].price*100000000000));
         }
-        return new BN(Math.floor(amt*100000000000));
+
+        return result;
 
     }
 

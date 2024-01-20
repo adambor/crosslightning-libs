@@ -20,6 +20,8 @@ import {RequestError} from "../errors/RequestError";
 import {AbortError} from "../errors/AbortError";
 import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 import {PriceInfoType} from "./ISwap";
+import {PaymentRequestObject} from "bolt11";
+import {TagsObject} from "bolt11";
 
 export class PaymentAuthError extends Error {
 
@@ -533,72 +535,15 @@ export class ClientSwapContract<T extends SwapData> {
         };
     }
 
-    async payLightningLNURL(
-        lnurl: string | LNURLPayParamsWithUrl,
+    private async getAndVerifyPrFromLNURL(
+        payRequest: LNURLPayParamsWithUrl,
         amount: BN,
-        comment: string,
-        expirySeconds: number,
-        maxFee: BN,
-        url: string,
-        requiredToken?: TokenAddress,
-        requiredClaimerKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN
+        comment?: string
     ): Promise<{
-        confidence: string,
-        maxFee: BN,
-        swapFee: BN,
-
-        routingFeeSats: BN,
-
-        data: T,
-
-        prefix: string,
-        timeout: string,
-        signature: string,
-        nonce: number,
-
         invoice: string,
-        successAction: LNURLPaySuccessAction,
-
-        expiry: number,
-
-        pricingInfo: PriceInfoType,
-        feeRate?: any
+        parsedPR: PaymentRequestObject & { tagsObject: TagsObject; },
+        successAction: LNURLPaySuccessAction
     }> {
-
-        let payRequest: LNURLPayParamsWithUrl;
-        if(typeof(lnurl)==="string") {
-            let res: any = await this.getLNURL(lnurl);
-            if(res==null) {
-                throw new UserError("Invalid LNURL");
-            }
-            if(res.tag!=="payRequest") {
-                throw new UserError("Not a lnurl-pay");
-            }
-            payRequest = res;
-        } else {
-            payRequest = lnurl;
-        }
-
-
-        const min = new BN(payRequest.minSendable).div(new BN(1000));
-        const max = new BN(payRequest.maxSendable).div(new BN(1000));
-
-        if(amount.lt(min)) {
-            throw new UserError("Amount less than minimum");
-        }
-
-        if(amount.gt(max)) {
-            throw new UserError("Amount more than maximum");
-        }
-
-        if(comment!=null) {
-            if(payRequest.commentAllowed==null || comment.length>payRequest.commentAllowed) {
-                throw new UserError("Comment not allowed or too long");
-            }
-        }
-
         const params = [
             "amount="+amount.mul(new BN(1000)).toString(10)
         ];
@@ -672,6 +617,112 @@ export class ClientSwapContract<T extends SwapData> {
             throw new RequestError("Invalid lightning invoice received!", response.status);
         }
 
+        return {
+            invoice,
+            parsedPR,
+            successAction
+        }
+    }
+
+    private async payLightningLNURLExactIn(
+        payRequest: LNURLPayParamsWithUrl,
+        amount: BN,
+        comment: string,
+        expirySeconds: number,
+        maxFeePromise: Promise<BN>,
+        url: string,
+        requiredToken?: TokenAddress,
+        requiredClaimerKey?: string,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN,
+        preFetchedPrice?: Promise<BN>
+    ): Promise<{
+        confidence: string,
+        maxFee: BN,
+        swapFee: BN,
+
+        routingFeeSats: BN,
+
+        data: T,
+
+        prefix: string,
+        timeout: string,
+        signature: string,
+        nonce: number,
+
+        invoice: string,
+        successAction: LNURLPaySuccessAction,
+
+        expiry: number,
+
+        pricingInfo: PriceInfoType,
+        feeRate?: any
+    }> {
+
+        const feeRatePromise = this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
+            ? null
+            : tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, null), null, null);
+
+        const {invoice: dummyInvoice, parsedPR: parsedDummyPR} = await this.getAndVerifyPrFromLNURL(payRequest, new BN(payRequest.minSendable).div(new BN(1000)));
+
+        const expiryTimestamp = new BN(Math.floor(Date.now()/1000)+expirySeconds);
+
+        const maxFee = await maxFeePromise;
+
+        const responseInitial: Response = await tryWithRetries(() => fetchWithTimeout(url+"/payInvoice", {
+            method: "POST",
+            body: JSON.stringify({
+                pr: dummyInvoice,
+                maxFee: maxFee.toString(),
+                expiryTimestamp: expiryTimestamp.toString(10),
+                token: requiredToken==null ? null : requiredToken.toString(),
+                offerer: this.swapContract.getAddress(),
+                exactIn: true,
+                amount: amount.toString(10)
+            }),
+            headers: {'Content-Type': 'application/json'},
+            timeout: this.options.postRequestTimeout
+        }), null, null);
+
+        if(responseInitial.status!==200) {
+            let resp: string;
+            try {
+                resp = await responseInitial.text();
+            } catch (e) {
+                throw new RequestError(responseInitial.statusText, responseInitial.status);
+            }
+            throw RequestError.parse(resp, responseInitial.status);
+        }
+
+        const initResp = await responseInitial.json();
+
+        if(initResp.data.reqId==null) {
+            throw new IntermediaryError("Invalid reqId returned");
+        }
+
+        if(initResp.data.amount==null) {
+            throw new IntermediaryError("Invalid amount returned");
+        }
+
+        const amountSats = new BN(initResp.data.amount);
+
+        if(amountSats.isZero() || amountSats.isNeg()) {
+            throw new IntermediaryError("Invalid amount returned (zero or negative)");
+        }
+
+        const min = new BN(payRequest.minSendable).div(new BN(1000));
+        const max = new BN(payRequest.maxSendable).div(new BN(1000));
+
+        if(amountSats.lt(min)) {
+            throw new UserError("Amount less than minimum");
+        }
+
+        if(amountSats.gt(max)) {
+            throw new UserError("Amount more than maximum");
+        }
+
+        const {invoice, successAction} = await this.getAndVerifyPrFromLNURL(payRequest, amountSats, comment);
+
         const resp: any = await this.payLightning(
             invoice,
             expirySeconds,
@@ -680,7 +731,114 @@ export class ClientSwapContract<T extends SwapData> {
             requiredToken,
             requiredClaimerKey,
             requiredBaseFee,
-            requiredFeePPM
+            requiredFeePPM,
+            true,
+            initResp.data.reqId,
+            amount,
+            expiryTimestamp,
+            feeRatePromise,
+            preFetchedPrice
+        );
+
+        resp.invoice = invoice;
+        resp.successAction = successAction;
+
+        return resp;
+
+    }
+
+    async payLightningLNURL(
+        lnurl: string | LNURLPayParamsWithUrl,
+        amount: BN,
+        comment: string,
+        expirySeconds: number,
+        maxFee: Promise<BN>,
+        url: string,
+        requiredToken?: TokenAddress,
+        requiredClaimerKey?: string,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN,
+        preFetchedPrice?: Promise<BN>,
+        exactIn?: boolean
+    ): Promise<{
+        confidence: string,
+        maxFee: BN,
+        swapFee: BN,
+
+        routingFeeSats: BN,
+
+        data: T,
+
+        prefix: string,
+        timeout: string,
+        signature: string,
+        nonce: number,
+
+        invoice: string,
+        successAction: LNURLPaySuccessAction,
+
+        expiry: number,
+
+        pricingInfo: PriceInfoType,
+        feeRate?: any
+    }> {
+
+        let payRequest: LNURLPayParamsWithUrl;
+        if(typeof(lnurl)==="string") {
+            let res: any = await this.getLNURL(lnurl);
+            if(res==null) {
+                throw new UserError("Invalid LNURL");
+            }
+            if(res.tag!=="payRequest") {
+                throw new UserError("Not a lnurl-pay");
+            }
+            payRequest = res;
+        } else {
+            payRequest = lnurl;
+        }
+
+        if(comment!=null) {
+            if(payRequest.commentAllowed==null || comment.length>payRequest.commentAllowed) {
+                throw new UserError("Comment not allowed or too long");
+            }
+        }
+
+        if(exactIn) {
+            return await this.payLightningLNURLExactIn(payRequest, amount, comment, expirySeconds, maxFee, url, requiredToken, requiredClaimerKey, requiredBaseFee, requiredFeePPM, preFetchedPrice);
+        }
+
+        const min = new BN(payRequest.minSendable).div(new BN(1000));
+        const max = new BN(payRequest.maxSendable).div(new BN(1000));
+
+        if(amount.lt(min)) {
+            throw new UserError("Amount less than minimum");
+        }
+
+        if(amount.gt(max)) {
+            throw new UserError("Amount more than maximum");
+        }
+
+        const feeRatePromise = this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
+            ? null
+            : tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, null), null, null);
+
+        const {invoice, successAction} = await this.getAndVerifyPrFromLNURL(payRequest, amount, comment);
+
+        const resp: any = await this.payLightning(
+            invoice,
+            expirySeconds,
+            await maxFee,
+            url,
+            requiredToken,
+            requiredClaimerKey,
+            requiredBaseFee,
+            requiredFeePPM,
+            false,
+            null,
+            null,
+            null,
+            feeRatePromise,
+            preFetchedPrice
         );
 
         resp.invoice = invoice;
@@ -697,7 +855,13 @@ export class ClientSwapContract<T extends SwapData> {
         requiredToken?: TokenAddress,
         requiredClaimerKey?: string,
         requiredBaseFee?: BN,
-        requiredFeePPM?: BN
+        requiredFeePPM?: BN,
+        exactIn?: boolean,
+        reqId?: string,
+        requiredTotal?: BN,
+        expiryTimestamp?: BN,
+        feeRatePromise?: Promise<any>,
+        pricePreFetchPromise?: Promise<BN>
     ): Promise<{
         confidence: string,
         maxFee: BN,
@@ -723,11 +887,11 @@ export class ClientSwapContract<T extends SwapData> {
         }
 
         const sats: BN = new BN(parsedPR.satoshis);
-        const expiryTimestamp = (Math.floor(Date.now()/1000)+expirySeconds).toString();
+        if(expiryTimestamp==null) expiryTimestamp = new BN(Math.floor(Date.now()/1000)+expirySeconds);
 
         const abortController = new AbortController();
 
-        const pricePreFetchPromise = this.swapPrice.preFetchPrice==null || requiredToken==null ? null : this.swapPrice.preFetchPrice(requiredToken, abortController.signal);
+        if(pricePreFetchPromise==null) pricePreFetchPromise = this.swapPrice.preFetchPrice==null || requiredToken==null ? null : this.swapPrice.preFetchPrice(requiredToken, abortController.signal);
 
         let feeRate: any;
 
@@ -740,16 +904,19 @@ export class ClientSwapContract<T extends SwapData> {
                 }
             })(),
             (async () => {
-                feeRate = this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
+                if(feeRatePromise==null) feeRatePromise = this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
                     ? null
-                    : await tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, parsedPR.tagsObject.payment_hash), null, null, abortController.signal);
+                    : tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, parsedPR.tagsObject.payment_hash), null, null, abortController.signal);
 
-                const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/payInvoice", {
+                feeRate = await feeRatePromise;
+
+                const response: Response = await tryWithRetries(() => fetchWithTimeout(url+(exactIn ? "/payInvoiceExactIn" : "/payInvoice"), {
                     method: "POST",
                     body: JSON.stringify({
+                        reqId,
                         pr: bolt11PayReq,
                         maxFee: maxFee.toString(),
-                        expiryTimestamp,
+                        expiryTimestamp: expiryTimestamp.toString(10),
                         token: requiredToken==null ? null : requiredToken.toString(),
                         offerer: this.swapContract.getAddress(),
                         feeRate: feeRate==null ? null : feeRate.toString()
@@ -793,6 +960,13 @@ export class ClientSwapContract<T extends SwapData> {
 
         console.log("Parsed data: ", data);
 
+        if(requiredTotal!=null) {
+            if(!total.eq(requiredTotal)) {
+                abortController.abort();
+                throw new IntermediaryError("Invalid data returned - total amount");
+            }
+        }
+
         if(!data.getAmount().eq(total)) {
             abortController.abort();
             throw new IntermediaryError("Invalid data returned - amount");
@@ -813,7 +987,7 @@ export class ClientSwapContract<T extends SwapData> {
             throw new IntermediaryError("Invalid data returned - confirmations");
         }
 
-        if(!data.getExpiry().eq(new BN(expiryTimestamp))) {
+        if(!data.getExpiry().eq(expiryTimestamp)) {
             abortController.abort();
             throw new IntermediaryError("Invalid data returned - expiry");
         }
