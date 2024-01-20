@@ -44,12 +44,84 @@ export type ToBtcLnConfig = {
     allowShortExpiry: boolean,
 
     minLnRoutingFeePPM?: BN,
-    minLnBaseFee?: BN
+    minLnBaseFee?: BN,
+
+    exactInExpiry?: number
 };
 
 const SNOWFLAKE_LIST: Set<string> = new Set([
     "038f8f113c580048d847d6949371726653e02b928196bad310e3eda39ff61723f6"
 ]);
+
+type LNRoutes = {
+    public_key: string,
+    fee_rate?: number,
+    cltv_delta?: number,
+    channel?: string,
+    base_fee_mtokens?: string
+}[][];
+
+function routesMatch(routesA: LNRoutes, routesB: LNRoutes) {
+    if(routesA===routesB) return true;
+    if(routesA==null || routesB==null) {
+        return false;
+    }
+    if(routesA.length!==routesB.length) return false;
+    for(let i=0;i<routesA.length;i++) {
+        if(routesA[i]===routesB[i]) continue;
+        if(routesA[i]==null || routesB[i]==null) {
+            return false;
+        }
+        if(routesA[i].length!==routesB[i].length) return false;
+        for(let e=0;e<routesA[i].length;e++) {
+            if(routesA[i][e]===routesB[i][e]) continue;
+            if(routesA[i][e]==null || routesB[i][e]==null) {
+                return false;
+            }
+            if(
+                routesA[i][e].public_key!==routesB[i][e].public_key ||
+                routesA[i][e].base_fee_mtokens!==routesB[i][e].base_fee_mtokens ||
+                routesA[i][e].channel!==routesB[i][e].channel ||
+                routesA[i][e].cltv_delta!==routesB[i][e].cltv_delta ||
+                routesA[i][e].fee_rate!==routesB[i][e].fee_rate
+            ) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+type ExactInAuthorization = {
+    reqId: string,
+    expiry: number,
+
+    amount: BN,
+    destination: string,
+    cltvDelta: number,
+    routes: LNRoutes,
+
+    maxFee: BN,
+    swapFee: BN,
+    total: BN,
+    confidence: number,
+    routingFeeSats: BN,
+    swapFeeSats: BN,
+
+    token: TokenAddress,
+    swapExpiry: BN,
+    offerer: string,
+
+    preFetchSignData: any,
+    metadata: {
+        request: any,
+        probeRequest?: any,
+        probeResponse?: any,
+        routeResponse?: any,
+        times: {[key: string]: number}
+    }
+}
 
 /**
  * Swap handler handling to BTCLN swaps using submarine swaps
@@ -61,6 +133,10 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
     readonly type = SwapHandlerType.TO_BTCLN;
 
     readonly config: ToBtcLnConfig & {minTsSendCltv: BN};
+
+    readonly exactInAuths: {
+        [reqId: string]: ExactInAuthorization
+    } = {};
 
     constructor(
         storageDirectory: IIntermediaryStorage<ToBtcLnSwapAbs<T>>,
@@ -78,12 +154,20 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         this.config = anyConfig;
         this.config.minLnRoutingFeePPM = this.config.minLnRoutingFeePPM || new BN(1000);
         this.config.minLnBaseFee = this.config.minLnBaseFee || new BN(5);
+        this.config.exactInExpiry = this.config.exactInExpiry || 10*1000;
     }
 
     /**
      * Checks past swaps, deletes ones that are already expired, and tries to process ones that are committed.
      */
     private async checkPastInvoices() {
+
+        for(let key in this.exactInAuths) {
+            const obj = this.exactInAuths[key];
+            if(obj.expiry<Date.now()) {
+                delete this.exactInAuths[key];
+            }
+        }
 
         const queriedData = await this.storageManager.query([
             {
@@ -450,6 +534,165 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
     }
 
     startRestServer(restServer: Express) {
+
+        restServer.post(this.path+"/payInvoiceExactIn", expressHandlerWrapper(async (req, res) => {
+            /**
+             * pr: string                   bolt11 lightning invoice
+             * reqId: string                Identifier of the swap
+             * feeRate: string              Fee rate to use for the init tx
+             */
+            const parsedBody = verifySchema(req.body, {
+                pr: FieldTypeEnum.String,
+                reqId: FieldTypeEnum.String,
+                feeRate: FieldTypeEnum.String
+            });
+
+            if (parsedBody==null) {
+                res.status(400).json({
+                    msg: "Invalid request body"
+                });
+                return;
+            }
+
+            const parsedAuth = this.exactInAuths[parsedBody.reqId];
+
+            if (parsedAuth==null) {
+                res.status(400).json({
+                    msg: "Invalid reqId"
+                });
+                return;
+            }
+
+            delete this.exactInAuths[parsedBody.reqId];
+
+            if(parsedAuth.expiry<Date.now()) {
+                res.status(400).json({
+                    code: 20100,
+                    msg: "Authorization already expired!"
+                });
+                return;
+            }
+
+            let parsedPR: bolt11.PaymentRequestObject & { tagsObject: bolt11.TagsObject };
+
+            try {
+                parsedPR = bolt11.decode(parsedBody.pr);
+            } catch (e) {
+                console.error(e);
+                res.status(400).json({
+                    msg: "Invalid request body (pr - cannot be parsed)"
+                });
+                return;
+            }
+
+            let halfConfidence = false;
+            if(parsedPR.timeExpireDate < ((Date.now()/1000)+(this.config.authorizationTimeout+(2*60)))) {
+                if(!this.config.allowShortExpiry) {
+                    res.status(400).json({
+                        msg: "Invalid request body (pr - expired)"
+                    });
+                    return;
+                } else if(parsedPR.timeExpireDate < Date.now()/1000) {
+                    res.status(400).json({
+                        msg: "Invalid request body (pr - expired)"
+                    });
+                    return;
+                }
+                halfConfidence = true;
+            }
+
+            const parsedRequest = await lncli.parsePaymentRequest({
+                request: parsedBody.pr
+            });
+            console.log("[To BTC-LN: REST.payInvoice] Parsed PR: ", JSON.stringify(parsedRequest, null, 4));
+
+            if(
+                parsedPR.payeeNodeKey!==parsedAuth.destination ||
+                parsedPR.tagsObject.min_final_cltv_expiry!==parsedAuth.cltvDelta ||
+                !new BN(parsedPR.millisatoshis).div(new BN(1000)).eq(parsedAuth.amount)
+            ) {
+                res.status(400).json({
+                    code: 20102,
+                    msg: "Provided PR doesn't match initial!"
+                });
+                return;
+            }
+
+            if(!routesMatch(parsedRequest.routes, parsedAuth.routes)) {
+                res.status(400).json({
+                    code: 20102,
+                    msg: "Provided PR doesn't match initial (routes)!"
+                });
+                return;
+            }
+
+            const metadata = parsedAuth.metadata;
+
+            const sequence = new BN(randomBytes(8));
+
+            const payObject: T = await this.swapContract.createSwapData(
+                ChainSwapType.HTLC,
+                parsedAuth.offerer,
+                this.swapContract.getAddress(),
+                this.swapContract.toTokenAddress(parsedAuth.token),
+                parsedAuth.total,
+                parsedPR.tagsObject.payment_hash,
+                sequence,
+                parsedAuth.swapExpiry,
+                new BN(0),
+                0,
+                true,
+                false,
+                new BN(0),
+                new BN(0)
+            );
+
+            metadata.times.swapCreated = Date.now();
+
+            const prefetchedSignData = parsedAuth.preFetchSignData;
+
+            if(prefetchedSignData!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetched signature data: ", prefetchedSignData);
+
+            const feeRate = parsedBody.feeRate;
+            const sigData = await this.swapContract.getClaimInitSignature(
+                payObject,
+                this.config.authorizationTimeout,
+                prefetchedSignData,
+                feeRate
+            );
+
+            metadata.times.swapSigned = Date.now();
+
+            const createdSwap = new ToBtcLnSwapAbs<T>(parsedBody.pr, parsedAuth.swapFee, parsedAuth.routingFeeSats, new BN(sigData.timeout));
+            createdSwap.data = payObject;
+            createdSwap.metadata = metadata;
+
+            await PluginManager.swapCreate(createdSwap);
+
+            await this.storageManager.saveData(parsedPR.tagsObject.payment_hash, sequence, createdSwap);
+
+            res.status(200).json({
+                code: 20000,
+                msg: "Success",
+                data: {
+                    maxFee: parsedAuth.maxFee.toString(10),
+                    swapFee: parsedAuth.swapFee.toString(10),
+                    total: parsedAuth.total.toString(10),
+                    confidence: halfConfidence ? parsedAuth.confidence/2000000 : parsedAuth.confidence/1000000,
+                    address: this.swapContract.getAddress(),
+
+                    routingFeeSats: parsedAuth.routingFeeSats.toString(10),
+
+                    data: payObject.serialize(),
+
+                    prefix: sigData.prefix,
+                    timeout: sigData.timeout,
+                    signature: sigData.signature
+                }
+            });
+
+        }));
+
         restServer.post(this.path+"/payInvoice", expressHandlerWrapper(async (req, res) => {
             const metadata: {
                 request: any,
@@ -467,6 +710,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
              * token: string                Desired token to use
              * offerer: string              Address of the caller
              * feeRate: string              Fee rate to use for the init signature
+             * exactIn: boolean             Whether to do an exact in swap instead of exact out
+             * amount: string
              */
             const parsedBody = verifySchema(req.body, {
                 pr: FieldTypeEnum.String,
@@ -485,6 +730,19 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     msg: "Invalid request body"
                 });
                 return;
+            }
+
+            let requestAmount: BN;
+            if(req.body.exactIn) {
+                try {
+                    requestAmount = new BN(req.body.amount);
+                } catch (e) {}
+                if(requestAmount==null) {
+                    res.status(400).json({
+                        msg: "Invalid request body (amount not specified)!"
+                    });
+                    return;
+                }
             }
 
             if(parsedBody.maxFee.isNeg() || parsedBody.maxFee.isZero()) {
@@ -533,30 +791,62 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 return;
             }
 
-            const amountBD = new BN(parsedPR.satoshis);
+            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
-            if(amountBD.lt(this.config.min)) {
-                res.status(400).json({
-                    code: 20003,
-                    msg: "Amount too low!",
-                    data: {
-                        min: this.config.min.toString(10),
-                        max: this.config.max.toString(10)
-                    }
-                });
-                return;
-            }
+            const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken).catch(e => {
+                console.error("To BTC-LN: REST.pricePrefetch", e);
+                throw e;
+            }) : null;
+            const signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
+                console.error("To BTC-LN: REST.signDataPrefetch", e);
+                throw e;
+            }) : null;
 
-            if(amountBD.gt(this.config.max)) {
-                res.status(400).json({
-                    code: 20004,
-                    msg: "Amount too high!",
-                    data: {
-                        min: this.config.min.toString(10),
-                        max: this.config.max.toString(10)
-                    }
-                });
-                return;
+            if(pricePrefetchPromise!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetching swap price!");
+            if(signDataPrefetchPromise!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetching signature data!");
+
+            let amountBD;
+            let tooLow = false;
+
+            if(req.body.exactIn) {
+                amountBD = await this.swapPricing.getToBtcSwapAmount(requestAmount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+
+                //Decrease by base fee
+                amountBD = amountBD.sub(this.config.baseFee);
+
+                //If it's already smaller than minimum, set it to minimum so we can calculate the network fee
+                if(amountBD.lt(this.config.min)) {
+                    amountBD = this.config.min;
+                    tooLow = true;
+                }
+
+                parsedBody.maxFee = await this.swapPricing.getToBtcSwapAmount(parsedBody.maxFee, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+            } else {
+                amountBD = new BN(parsedPR.satoshis);
+
+                if(amountBD.lt(this.config.min)) {
+                    res.status(400).json({
+                        code: 20003,
+                        msg: "Amount too low!",
+                        data: {
+                            min: this.config.min.toString(10),
+                            max: this.config.max.toString(10)
+                        }
+                    });
+                    return;
+                }
+
+                if(amountBD.gt(this.config.max)) {
+                    res.status(400).json({
+                        code: 20004,
+                        msg: "Amount too high!",
+                        data: {
+                            min: this.config.min.toString(10),
+                            max: this.config.max.toString(10)
+                        }
+                    });
+                    return;
+                }
             }
 
             metadata.times.requestChecked = Date.now();
@@ -605,11 +895,11 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const probeReq: any = {
                 destination: parsedPR.payeeNodeKey,
                 cltv_delta: parsedPR.tagsObject.min_final_cltv_expiry,
-                mtokens: parsedPR.millisatoshis,
+                mtokens: amountBD.mul(new BN(1000)).toString(10),
                 max_fee_mtokens: parsedBody.maxFee.mul(new BN(1000)).toString(10),
                 max_timeout_height: new BN(current_block_height).add(maxUsableCLTV).toString(10),
                 payment: parsedRequest.payment,
-                total_mtokens: parsedPR.millisatoshis,
+                total_mtokens: amountBD.mul(new BN(1000)).toString(10),
                 routes: parsedRequest.routes
             };
             metadata.probeRequest = {...probeReq};
@@ -626,19 +916,6 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     }
                 }
             }
-
-            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
-            const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken).catch(e => {
-                console.error("To BTC-LN: REST.pricePrefetch", e);
-                throw e;
-            }) : null;
-            const signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
-                console.error("To BTC-LN: REST.signDataPrefetch", e);
-                throw e;
-            }) : null;
-
-            if(pricePrefetchPromise!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetching swap price!");
-            if(signDataPrefetchPromise!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetching signature data!");
 
             let obj;
             if(!is_snowflake) try {
@@ -701,6 +978,50 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 actualRoutingFee = parsedBody.maxFee;
             }
 
+            if(req.body.exactIn) {
+                //Decrease by network fee
+                amountBD = amountBD.sub(actualRoutingFee);
+
+                //Decrease by percentage fee
+                amountBD = amountBD.mul(new BN(1000000)).div(this.config.feePPM.add(new BN(1000000)));
+
+                if(tooLow || amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)))) {
+                    //Compute min/max
+                    let adjustedMin = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    let adjustedMax = this.config.max.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    adjustedMin = adjustedMin.add(this.config.baseFee).add(actualRoutingFee);
+                    adjustedMax = adjustedMax.add(this.config.baseFee).add(actualRoutingFee);
+                    const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+                    const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+                    res.status(400).json({
+                        code: 20003,
+                        msg: "Amount too low!",
+                        data: {
+                            min: minIn.toString(10),
+                            max: maxIn.toString(10)
+                        }
+                    });
+                    return;
+                }
+                if(amountBD.gt(this.config.max.mul(new BN(105)).div(new BN(100)))) {
+                    let adjustedMin = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    let adjustedMax = this.config.max.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    adjustedMin = adjustedMin.add(this.config.baseFee).add(actualRoutingFee);
+                    adjustedMax = adjustedMax.add(this.config.baseFee).add(actualRoutingFee);
+                    const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+                    const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+                    res.status(400).json({
+                        code: 20004,
+                        msg: "Amount too high!",
+                        data: {
+                            min: minIn.toString(10),
+                            max: maxIn.toString(10)
+                        }
+                    });
+                    return;
+                }
+            }
+
             const swapFee = amountBD.mul(this.config.feePPM).div(new BN(1000000)).add(this.config.baseFee);
 
             const prefetchedPrice = pricePrefetchPromise!=null ? await pricePrefetchPromise : null;
@@ -708,9 +1029,53 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             const routingFeeInToken = await this.swapPricing.getFromBtcSwapAmount(actualRoutingFee, useToken, true, prefetchedPrice);
             const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, prefetchedPrice);
-            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(amountBD, useToken, true, prefetchedPrice);
 
-            const total = amountInToken.add(routingFeeInToken).add(swapFeeInToken);
+            let amountInToken: BN;
+            let total: BN;
+            if(req.body.exactIn) {
+                amountInToken = requestAmount.sub(swapFeeInToken).sub(routingFeeInToken);
+                total = requestAmount;
+
+                const reqId = randomBytes(32).toString("hex");
+                this.exactInAuths[reqId] = {
+                    reqId,
+                    expiry: Date.now()+this.config.exactInExpiry,
+
+                    amount: amountBD,
+                    destination: parsedPR.payeeNodeKey,
+                    cltvDelta: parsedPR.tagsObject.min_final_cltv_expiry,
+                    routes: parsedRequest.routes,
+
+                    maxFee: routingFeeInToken,
+                    swapFee: swapFeeInToken,
+                    total: total,
+                    confidence: obj.route.confidence,
+                    routingFeeSats: actualRoutingFee,
+                    swapFeeSats: swapFee,
+
+                    token: useToken,
+                    swapExpiry: parsedBody.expiryTimestamp,
+                    offerer: parsedBody.offerer,
+
+                    preFetchSignData: signDataPrefetchPromise!=null ? await signDataPrefetchPromise : null,
+                    metadata
+                };
+
+                metadata.times.priceCalculated = Date.now();
+
+                res.status(200).json({
+                    code: 20000,
+                    msg: "Success",
+                    data: {
+                        amount: amountBD.toString(10),
+                        reqId
+                    }
+                });
+                return;
+            } else {
+                amountInToken = await this.swapPricing.getFromBtcSwapAmount(amountBD, useToken, true, prefetchedPrice);
+                total = amountInToken.add(routingFeeInToken).add(swapFeeInToken);
+            }
 
             metadata.times.priceCalculated = Date.now();
 
