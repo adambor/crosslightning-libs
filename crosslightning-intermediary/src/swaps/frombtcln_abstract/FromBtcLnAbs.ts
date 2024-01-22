@@ -19,9 +19,10 @@ import {
     TokenAddress
 } from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
-import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
+import {expressHandlerWrapper, HEX_REGEX} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
+import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
 
 export type FromBtcLnConfig = {
     authorizationTimeout: number,

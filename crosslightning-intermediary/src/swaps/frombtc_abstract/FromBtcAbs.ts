@@ -19,9 +19,10 @@ import {
 import {AuthenticatedLnd} from "lightning";
 import * as bitcoin from "bitcoinjs-lib";
 import {createHash} from "crypto";
-import {expressHandlerWrapper, FieldTypeEnum, verifySchema} from "../../utils/Utils";
+import {expressHandlerWrapper} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
+import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
 
 export type FromBtcConfig = {
     authorizationTimeout: number,

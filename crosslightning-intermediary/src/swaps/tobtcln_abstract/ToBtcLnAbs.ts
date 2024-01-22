@@ -19,10 +19,14 @@ import {
     TokenAddress
 } from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
-import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
+import {expressHandlerWrapper, HEX_REGEX} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
 import {randomBytes} from "crypto";
+import {serverParamDecoder} from "../../utils/paramcoders/server/ServerParamDecoder";
+import {IParamReader} from "../../utils/paramcoders/IParamReader";
+import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
+import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
 
 export type ToBtcLnConfig = {
     authorizationTimeout: number,
@@ -549,6 +553,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             if (parsedBody==null) {
                 res.status(400).json({
+                    code: 20100,
                     msg: "Invalid request body"
                 });
                 return;
@@ -558,6 +563,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             if (parsedAuth==null) {
                 res.status(400).json({
+                    code: 20070,
                     msg: "Invalid reqId"
                 });
                 return;
@@ -567,7 +573,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             if(parsedAuth.expiry<Date.now()) {
                 res.status(400).json({
-                    code: 20100,
+                    code: 20200,
                     msg: "Authorization already expired!"
                 });
                 return;
@@ -580,6 +586,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             } catch (e) {
                 console.error(e);
                 res.status(400).json({
+                    code: 20021,
                     msg: "Invalid request body (pr - cannot be parsed)"
                 });
                 return;
@@ -589,11 +596,13 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             if(parsedPR.timeExpireDate < ((Date.now()/1000)+(this.config.authorizationTimeout+(2*60)))) {
                 if(!this.config.allowShortExpiry) {
                     res.status(400).json({
+                        code: 20020,
                         msg: "Invalid request body (pr - expired)"
                     });
                     return;
                 } else if(parsedPR.timeExpireDate < Date.now()/1000) {
                     res.status(400).json({
+                        code: 20020,
                         msg: "Invalid request body (pr - expired)"
                     });
                     return;
@@ -693,14 +702,15 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
         }));
 
-        restServer.post(this.path+"/payInvoice", expressHandlerWrapper(async (req, res) => {
+        restServer.use(this.path+"/payInvoice", serverParamDecoder(10*1000));
+        restServer.post(this.path+"/payInvoice", expressHandlerWrapper(async (req: Request & {paramReader: IParamReader}, res) => {
             const metadata: {
                 request: any,
                 probeRequest?: any,
                 probeResponse?: any,
                 routeResponse?: any,
                 times: {[key: string]: number}
-            } = {request: req.body, times: {}};
+            } = {request: {}, times: {}};
 
             metadata.times.requestReceived = Date.now();
             /**
@@ -713,7 +723,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
              * exactIn: boolean             Whether to do an exact in swap instead of exact out
              * amount: string
              */
-            const parsedBody = verifySchema(req.body, {
+            const parsedBody = await req.paramReader.getParams({
                 pr: FieldTypeEnum.String,
                 maxFee: FieldTypeEnum.BN,
                 expiryTimestamp: FieldTypeEnum.BN,
@@ -722,23 +732,30 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                         this.allowedTokens.has(val) ? val : null,
                 offerer: (val: string) => val!=null &&
                         typeof(val)==="string" &&
-                        this.swapContract.isValidAddress(val) ? val : null
+                        this.swapContract.isValidAddress(val) ? val : null,
+                exactIn: FieldTypeEnum.BooleanOptional,
+                amount: FieldTypeEnum.BNOptional
             });
 
+            metadata.request = parsedBody;
+
+            const responseStream = new ServerParamEncoder(res, 200);
+
+            console.log("Parsed body: ", parsedBody);
+
             if (parsedBody==null) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
+                    code: 20100,
                     msg: "Invalid request body"
                 });
                 return;
             }
 
-            let requestAmount: BN;
-            if(req.body.exactIn) {
-                try {
-                    requestAmount = new BN(req.body.amount);
-                } catch (e) {}
+            let requestAmount: BN = parsedBody.amount;
+            if(parsedBody.exactIn) {
                 if(requestAmount==null) {
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
+                        code: 20040,
                         msg: "Invalid request body (amount not specified)!"
                     });
                     return;
@@ -746,7 +763,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             }
 
             if(parsedBody.maxFee.isNeg() || parsedBody.maxFee.isZero()) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
+                    code: 20030,
                     msg: "Invalid request body (maxFee too low)!"
                 });
                 return;
@@ -758,7 +776,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 parsedPR = bolt11.decode(parsedBody.pr);
             } catch (e) {
                 console.error(e);
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
+                    code: 20021,
                     msg: "Invalid request body (pr - cannot be parsed)"
                 });
                 return;
@@ -767,12 +786,14 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             let halfConfidence = false;
             if(parsedPR.timeExpireDate < ((Date.now()/1000)+(this.config.authorizationTimeout+(2*60)))) {
                 if(!this.config.allowShortExpiry) {
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
+                        code: 20020,
                         msg: "Invalid request body (pr - expired)"
                     });
                     return;
                 } else if(parsedPR.timeExpireDate < Date.now()/1000) {
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
+                        code: 20020,
                         msg: "Invalid request body (pr - expired)"
                     });
                     return;
@@ -784,7 +805,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             const expiresTooSoon = parsedBody.expiryTimestamp.sub(currentTimestamp).lt(this.config.minTsSendCltv);
             if(expiresTooSoon) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
                     code: 20001,
                     msg: "Expiry time too low!"
                 });
@@ -797,18 +818,23 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 console.error("To BTC-LN: REST.pricePrefetch", e);
                 throw e;
             }) : null;
-            const signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
+            let signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
                 console.error("To BTC-LN: REST.signDataPrefetch", e);
                 throw e;
             }) : null;
 
             if(pricePrefetchPromise!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetching swap price!");
-            if(signDataPrefetchPromise!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetching signature data!");
+            if(signDataPrefetchPromise!=null) {
+                signDataPrefetchPromise = signDataPrefetchPromise.then(val => responseStream.writeParams({
+                    signDataPrefetch: val
+                }).then(() => val));
+                console.log("[To BTC-LN: REST.payInvoice] Pre-fetching signature data!");
+            }
 
             let amountBD;
             let tooLow = false;
 
-            if(req.body.exactIn) {
+            if(parsedBody.exactIn) {
                 amountBD = await this.swapPricing.getToBtcSwapAmount(requestAmount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
 
                 //Decrease by base fee
@@ -825,7 +851,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 amountBD = new BN(parsedPR.satoshis);
 
                 if(amountBD.lt(this.config.min)) {
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20003,
                         msg: "Amount too low!",
                         data: {
@@ -837,7 +863,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 }
 
                 if(amountBD.gt(this.config.max)) {
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20004,
                         msg: "Amount too high!",
                         data: {
@@ -859,7 +885,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 });
 
                 if(payment!=null) {
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20010,
                         msg: "Already processed"
                     });
@@ -869,7 +895,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             // const existingSwap = await this.storageManager.getData(parsedPR.tagsObject.payment_hash);
             // if(existingSwap!=null && existingSwap.state!=ToBtcLnSwapState.SAVED) {
-            //     res.status(400).json({
+            //     await responseStream.writeParamsAndEnd({
             //         code: 20010,
             //         msg: "Already processed"
             //     });
@@ -931,7 +957,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             if(obj==null || obj.route==null) {
                 if(!this.config.allowProbeFailedSwaps) {
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20002,
                         msg: "Cannot route the payment!"
                     });
@@ -950,7 +976,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 console.log("[To BTC-LN: REST.payInvoice] Routing result: ", routingObj);
 
                 if(routingObj==null || routingObj.route==null) {
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20002,
                         msg: "Cannot route the payment!"
                     });
@@ -978,7 +1004,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 actualRoutingFee = parsedBody.maxFee;
             }
 
-            if(req.body.exactIn) {
+            if(parsedBody.exactIn) {
                 //Decrease by network fee
                 amountBD = amountBD.sub(actualRoutingFee);
 
@@ -993,7 +1019,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     adjustedMax = adjustedMax.add(this.config.baseFee).add(actualRoutingFee);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20003,
                         msg: "Amount too low!",
                         data: {
@@ -1010,7 +1036,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     adjustedMax = adjustedMax.add(this.config.baseFee).add(actualRoutingFee);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20004,
                         msg: "Amount too high!",
                         data: {
@@ -1032,7 +1058,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             let amountInToken: BN;
             let total: BN;
-            if(req.body.exactIn) {
+            if(parsedBody.exactIn) {
                 amountInToken = requestAmount.sub(swapFeeInToken).sub(routingFeeInToken);
                 total = requestAmount;
 
@@ -1063,7 +1089,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
                 metadata.times.priceCalculated = Date.now();
 
-                res.status(200).json({
+                await responseStream.writeParamsAndEnd({
                     code: 20000,
                     msg: "Success",
                     data: {
@@ -1104,7 +1130,11 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             if(prefetchedSignData!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetched signature data: ", prefetchedSignData);
 
-            const feeRate = req.body.feeRate!=null && typeof(req.body.feeRate)==="string" ? req.body.feeRate : null;
+            const feeRateObj = await req.paramReader.getParams({
+                feeRate: FieldTypeEnum.String
+            }).catch(e => null);
+
+            const feeRate = feeRateObj?.feeRate!=null && typeof(feeRateObj.feeRate)==="string" ? feeRateObj.feeRate : null;
             const sigData = await this.swapContract.getClaimInitSignature(
                 payObject,
                 this.config.authorizationTimeout,
@@ -1122,7 +1152,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             await this.storageManager.saveData(parsedPR.tagsObject.payment_hash, sequence, createdSwap);
 
-            res.status(200).json({
+            await responseStream.writeParamsAndEnd({
                 code: 20000,
                 msg: "Success",
                 data: {
@@ -1158,6 +1188,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             if (parsedBody==null) {
                 res.status(400).json({
+                    code: 20100,
                     msg: "Invalid request body (paymentHash)"
                 });
                 return;
@@ -1165,6 +1196,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             if(parsedBody.sequence.isNeg() || parsedBody.sequence.gte(new BN(2).pow(new BN(64)))) {
                 res.status(400).json({
+                    code: 20060,
                     msg: "Invalid sequence"
                 });
                 return;
