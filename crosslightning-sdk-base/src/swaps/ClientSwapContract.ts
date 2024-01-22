@@ -18,10 +18,12 @@ import {
 } from "js-lnurl/lib";
 import {RequestError} from "../errors/RequestError";
 import {AbortError} from "../errors/AbortError";
-import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
+import {fetchStreamingWithTimeout, fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 import {PriceInfoType} from "./ISwap";
 import {PaymentRequestObject} from "bolt11";
 import {TagsObject} from "bolt11";
+import {IParamReader} from "../utils/paramcoders/IParamReader";
+import {FieldTypeEnum} from "../utils/paramcoders/SchemaVerifier";
 
 export class PaymentAuthError extends Error {
 
@@ -893,9 +895,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         if(pricePreFetchPromise==null) pricePreFetchPromise = this.swapPrice.preFetchPrice==null || requiredToken==null ? null : this.swapPrice.preFetchPrice(requiredToken, abortController.signal);
 
-        let feeRate: any;
-
-        const [_, jsonBody] = await Promise.all([
+        const [_, inputReader] = await Promise.all([
             (async () => {
                 const payStatus = await tryWithRetries(() => this.swapContract.getPaymentHashStatus(parsedPR.tagsObject.payment_hash), null, null, abortController.signal);
 
@@ -908,23 +908,37 @@ export class ClientSwapContract<T extends SwapData> {
                     ? null
                     : tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, parsedPR.tagsObject.payment_hash), null, null, abortController.signal);
 
-                feeRate = await feeRatePromise;
+                const response: Response & {inputStream: IParamReader} = await tryWithRetries(() => {
+                    const {response, outputStream} = fetchStreamingWithTimeout(url+(exactIn ? "/payInvoiceExactIn" : "/payInvoice"), {
+                        method: "POST",
+                        signal: abortController.signal,
+                        timeout: this.options.postRequestTimeout
+                    });
 
-                const response: Response = await tryWithRetries(() => fetchWithTimeout(url+(exactIn ? "/payInvoiceExactIn" : "/payInvoice"), {
-                    method: "POST",
-                    body: JSON.stringify({
+                    outputStream.writeParams({
                         reqId,
                         pr: bolt11PayReq,
                         maxFee: maxFee.toString(),
                         expiryTimestamp: expiryTimestamp.toString(10),
                         token: requiredToken==null ? null : requiredToken.toString(),
                         offerer: this.swapContract.getAddress(),
-                        feeRate: feeRate==null ? null : feeRate.toString()
-                    }),
-                    headers: {'Content-Type': 'application/json'},
-                    signal: abortController.signal,
-                    timeout: this.options.postRequestTimeout
-                }), null, null, abortController.signal);
+                        amount: null,
+                        exactIn: !!exactIn
+                    }).then(() => {
+                        console.log("[ClientSwapContract.payLightning] Initial params sent!");
+                        return feeRatePromise;
+                    }).then(feeRate => {
+                        console.log("[ClientSwapContract.payLightning] Fee rate fetched!");
+                        return outputStream.writeParams({
+                            feeRate: feeRate==null ? null : feeRate.toString()
+                        })
+                    }).then(() => {
+                        console.log("[ClientSwapContract.payLightning] Fee rate sent!");
+                        outputStream.end();
+                    });
+
+                    return response;
+                }, null, null, abortController.signal);
 
                 if(response.status!==200) {
                     let resp: string;
@@ -936,24 +950,66 @@ export class ClientSwapContract<T extends SwapData> {
                     throw new RequestError(resp, response.status);
                 }
 
-                return await response.json();
+                return response.inputStream;
             })()
         ]).catch(e => {
             abortController.abort();
             throw e;
         });
 
-        const routingFeeSats = new BN(jsonBody.data.routingFeeSats);
+        let preFetchSignatureVerificationData: Promise<any>;
+        if((this.swapContract as any).preFetchForInitSignatureVerification!=null) {
+            preFetchSignatureVerificationData = inputReader.getParams({
+                signDataPrefetch: FieldTypeEnum.Any
+            }).then(obj => {
+                if(obj==null) return null;
+                return (this.swapContract as any).preFetchForInitSignatureVerification(obj.signDataPrefetch).catch(e => {
+                    console.error(e);
+                    return null;
+                });
+            }).catch(e => {
+                console.error(e);
+                return null;
+            });
+        } else {
+            preFetchSignatureVerificationData = Promise.resolve(null);
+        }
+
+        const jsonBody = await inputReader.getParams({
+            code: FieldTypeEnum.Number,
+            msg: FieldTypeEnum.String,
+            data: {
+                maxFee: FieldTypeEnum.BN,
+                swapFee: FieldTypeEnum.BN,
+                total: FieldTypeEnum.BN,
+                confidence: FieldTypeEnum.Number,
+                address: FieldTypeEnum.String,
+
+                routingFeeSats: FieldTypeEnum.BN,
+
+                data: FieldTypeEnum.Any,
+
+                prefix: FieldTypeEnum.String,
+                timeout: FieldTypeEnum.String,
+                signature: FieldTypeEnum.String
+            }
+        });
+
+        if(jsonBody.code!==20000) {
+            throw RequestError.parse(JSON.stringify(jsonBody), 400);
+        }
+
+        const routingFeeSats = jsonBody.data.routingFeeSats;
 
         if(routingFeeSats.gt(maxFee)) {
             throw new IntermediaryError("Invalid max fee sats returned");
         }
 
-        const maxFeeInToken = new BN(jsonBody.data.maxFee);
-        const swapFee = new BN(jsonBody.data.swapFee);
+        const maxFeeInToken = jsonBody.data.maxFee;
+        const swapFee = jsonBody.data.swapFee;
         const totalFee = swapFee.add(maxFeeInToken);
 
-        const total = new BN(jsonBody.data.total);
+        const total = jsonBody.data.total;
 
         const data: T = new this.swapDataDeserializer(jsonBody.data.data);
         this.swapContract.setUsAsOfferer(data);
@@ -1028,7 +1084,7 @@ export class ClientSwapContract<T extends SwapData> {
                 }
             })(),
             tryWithRetries(
-                () => this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, feeRate),
+                () => Promise.all([feeRatePromise, preFetchSignatureVerificationData]).then(([feeRate, preFetchedData]) => (this.swapContract as any).isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, feeRate, preFetchedData)),
                 null,
                 e => e instanceof SignatureVerificationError,
                 abortController.signal
@@ -1039,7 +1095,7 @@ export class ClientSwapContract<T extends SwapData> {
         });
 
         return {
-            confidence: jsonBody.data.confidence,
+            confidence: jsonBody.data.confidence.toString(),
             maxFee: maxFeeInToken,
             swapFee: swapFee,
 
@@ -1054,7 +1110,7 @@ export class ClientSwapContract<T extends SwapData> {
             expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature)),
 
             pricingInfo,
-            feeRate
+            feeRate: await feeRatePromise
         }
     }
 
