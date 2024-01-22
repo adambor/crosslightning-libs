@@ -18,6 +18,7 @@ export * from "./intermediaries/Intermediary";
 export * from "./intermediaries/IntermediaryDiscovery";
 
 export * from "./prices/BinanceSwapPrice";
+export * from "./prices/OKXSwapPrice";
 export * from "./prices/CoinGeckoSwapPrice";
 export * from "./prices/PricesTypes";
 
