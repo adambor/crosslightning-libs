@@ -10,7 +10,10 @@ export const serverParamDecoder = (timeoutMillis: number) => (req: Request, res:
     if(req.headers['content-type']!=="application/x-multiple-json") {
 
         const dataBuffers: Buffer[] = [];
-        req.on("data", (data: Buffer) => dataBuffers.push(data));
+        req.on("data", (data: Buffer) => {
+            console.log("Normal data read: ", data);
+            dataBuffers.push(data)
+        });
         req.on("end", () => {
             console.log("Request end, buffers: ", dataBuffers);
             const body = JSON.parse(Buffer.concat(dataBuffers).toString());

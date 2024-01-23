@@ -23,6 +23,7 @@ import {expressHandlerWrapper} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
 import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
+import * as express from "express";
 
 export type FromBtcConfig = {
     authorizationTimeout: number,
@@ -275,6 +276,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
      */
     startRestServer(restServer: Express) {
 
+        restServer.use(this.path+"/getAddress", express.json());
         restServer.post(this.path+"/getAddress", expressHandlerWrapper(async (req, res) => {
             const metadata: {
                 request: any,

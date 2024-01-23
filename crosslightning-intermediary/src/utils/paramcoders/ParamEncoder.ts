@@ -1,6 +1,7 @@
+import {IParamWriter} from "./IParamWriter";
 
 
-export class ParamEncoder {
+export class ParamEncoder implements IParamWriter {
 
     private readonly writeFN: (data: Buffer) => Promise<void>;
     private readonly endFN: () => Promise<void>;

@@ -27,6 +27,7 @@ import {serverParamDecoder} from "../../utils/paramcoders/server/ServerParamDeco
 import {IParamReader} from "../../utils/paramcoders/IParamReader";
 import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
 import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
+import * as express from "express";
 
 export type ToBtcLnConfig = {
     authorizationTimeout: number,
@@ -539,13 +540,14 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
     startRestServer(restServer: Express) {
 
-        restServer.post(this.path+"/payInvoiceExactIn", expressHandlerWrapper(async (req, res) => {
+        restServer.use(this.path+"/payInvoiceExactIn", serverParamDecoder(10*1000));
+        restServer.post(this.path+"/payInvoiceExactIn", expressHandlerWrapper(async (req: Request & {paramReader: IParamReader}, res) => {
             /**
              * pr: string                   bolt11 lightning invoice
              * reqId: string                Identifier of the swap
              * feeRate: string              Fee rate to use for the init tx
              */
-            const parsedBody = verifySchema(req.body, {
+            const parsedBody = await req.paramReader.getParams({
                 pr: FieldTypeEnum.String,
                 reqId: FieldTypeEnum.String,
                 feeRate: FieldTypeEnum.String
@@ -714,14 +716,17 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             metadata.times.requestReceived = Date.now();
             /**
+             *Sent initially:
              * pr: string                   bolt11 lightning invoice
              * maxFee: string               maximum routing fee
              * expiryTimestamp: string      expiry timestamp of the to be created HTLC, determines how many LN paths can be considered
              * token: string                Desired token to use
              * offerer: string              Address of the caller
-             * feeRate: string              Fee rate to use for the init signature
              * exactIn: boolean             Whether to do an exact in swap instead of exact out
-             * amount: string
+             * amount: string               Input amount for exactIn swaps
+             *
+             *Sent later:
+             * feeRate: string              Fee rate to use for the init signature
              */
             const parsedBody = await req.paramReader.getParams({
                 pr: FieldTypeEnum.String,
@@ -739,7 +744,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             metadata.request = parsedBody;
 
-            const responseStream = new ServerParamEncoder(res, 200);
+            const responseStream = new ServerParamEncoder(res, 200, req);
 
             console.log("Parsed body: ", parsedBody);
 

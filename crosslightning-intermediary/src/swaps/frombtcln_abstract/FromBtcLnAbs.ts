@@ -23,6 +23,7 @@ import {expressHandlerWrapper, HEX_REGEX} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
 import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
+import * as express from "express";
 
 export type FromBtcLnConfig = {
     authorizationTimeout: number,
@@ -475,6 +476,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
     startRestServer(restServer: Express) {
 
+        restServer.use(this.path+"/createInvoice", express.json());
         restServer.post(this.path+"/createInvoice", expressHandlerWrapper(async (req, res) => {
             const metadata: {
                 request: any,

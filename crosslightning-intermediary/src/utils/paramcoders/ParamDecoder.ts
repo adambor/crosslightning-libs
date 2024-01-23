@@ -8,6 +8,8 @@ export class ParamDecoder implements IParamReader {
     frameData: Buffer[] = [];
     frameDataLength: number = 0;
 
+    closed: boolean = false;
+
     params: {
         [key: string]: {
             promise: Promise<any>,
@@ -95,6 +97,7 @@ export class ParamDecoder implements IParamReader {
                 this.params[key].reject(new Error("EOF before field seen!"));
             }
         }
+        this.closed = true;
     }
 
     onError(e: any): void {
@@ -103,10 +106,12 @@ export class ParamDecoder implements IParamReader {
                 this.params[key].reject(e);
             }
         }
+        this.closed = true;
     }
 
     getParam(key: string): Promise<any> {
         if(this.params[key]==null) {
+            if(this.closed) return Promise.reject(new Error("Stream already closed without param received!"));
             let resolve: (data: any) => void;
             let reject: (err: any) => void;
             const promise = new Promise((_resolve, _reject) => {

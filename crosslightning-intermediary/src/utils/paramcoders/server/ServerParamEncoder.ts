@@ -1,28 +1,56 @@
 import {Response} from "express";
+import {IParamWriter} from "../IParamWriter";
 import {ParamEncoder} from "../ParamEncoder";
+import {LegacyParamEncoder} from "../LegacyParamEncoder";
 
-
-export class ServerParamEncoder extends ParamEncoder {
+export class ServerParamEncoder {
 
     private response: Response;
     private controller: AbortController;
 
-    constructor(response: Response, statusCode: number) {
-        response.header("Content-Type", "application/x-multiple-json");
+    private paramWriter: IParamWriter;
+
+    constructor(response: Response, statusCode: number, request: Request) {
+        const legacy = !request.headers['accept'].includes("application/x-multiple-json");
+
         let firstWrite = false;
-        super((data: Buffer) => {
-            if(firstWrite) {
-                response.writeHead(statusCode);
-                firstWrite = false;
-            }
-            if(!response.write(data)) {
-                return Promise.reject(Error("Write failed"));
-            }
-            return Promise.resolve();
-        }, () => new Promise<void>(resolve => response.end(resolve)));
+        if(legacy) {
+            response.header("Content-Type", "application/json");
+            this.paramWriter = new LegacyParamEncoder((data: Buffer) => {
+                if(firstWrite) {
+                    response.writeHead(statusCode);
+                    firstWrite = false;
+                }
+                if(!response.write(data)) {
+                    return Promise.reject(Error("Write failed"));
+                }
+                return Promise.resolve();
+            }, () => new Promise<void>(resolve => response.end(resolve)));
+        } else {
+            response.header("Content-Type", "application/x-multiple-json");
+            this.paramWriter = new ParamEncoder((data: Buffer) => {
+                if(firstWrite) {
+                    response.writeHead(statusCode);
+                    firstWrite = false;
+                }
+                if(!response.write(data)) {
+                    return Promise.reject(Error("Write failed"));
+                }
+                return Promise.resolve();
+            }, () => new Promise<void>(resolve => response.end(resolve)));
+        }
+
         this.response = response;
         this.controller = new AbortController();
         this.response.on("close", () => this.controller.abort(new Error("Response stream closed!")));
+    }
+
+    writeParams(params: any): Promise<void> {
+        return this.paramWriter.writeParams(params);
+    }
+
+    end(): Promise<void> {
+        return this.paramWriter.end();
     }
 
     async writeParamsAndEnd(params: any): Promise<void> {

@@ -28,6 +28,7 @@ import {coinSelect} from "../../utils/coinselect2";
 import {CoinselectAddressTypes, CoinselectTxInput, CoinselectTxOutput, utils} from "../../utils/coinselect2/utils";
 import {randomBytes} from "crypto";
 import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
+import * as express from "express";
 
 const OUTPUT_SCRIPT_MAX_LENGTH = 200;
 
@@ -730,6 +731,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
     }
 
     startRestServer(restServer: Express) {
+        restServer.use(this.path+"/payInvoice", express.json());
         restServer.post(this.path+"/payInvoice", expressHandlerWrapper(async (req, res) => {
             const metadata: {
                 request: any,

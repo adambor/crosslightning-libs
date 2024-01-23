@@ -1,6 +1,7 @@
 import {SwapContract, SwapData} from "crosslightning-base";
 import {Express} from "express";
 import {SwapHandler, SwapHandlerInfoType, SwapHandlerType} from "../swaps/SwapHandler";
+import * as express from "express";
 
 const HEX_REGEX = /[0-9a-f]+/i;
 
@@ -40,6 +41,7 @@ export class InfoHandler<T extends SwapData> {
      */
     startRestServer(restServer: Express) {
 
+        restServer.use(this.path+"/info", express.json());
         restServer.post(this.path+"/info", async (req, res) => {
             if (
                 req.body == null ||
