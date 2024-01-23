@@ -47,8 +47,50 @@ export type RequestSchemaResult<T extends RequestSchema> = {
     [key in keyof T]: FieldType<T[key]>
 }
 
+export type RequestSchemaResultPromise<T extends RequestSchema> = {
+    [key in keyof T]: Promise<FieldType<T[key]>>
+}
+
 export type RequestSchema = {
     [fieldName: string]: FieldTypeEnum | RequestSchema | ((val: any) => any)
+}
+
+export function verifyField<T extends FieldTypeEnum | RequestSchema | ((val: any) => (string | boolean | number | BN | any))>(fieldType: T, val: any): FieldType<T> {
+
+    const type: FieldTypeEnum | RequestSchema | ((val: any) => (string | boolean | number | BN | any)) = fieldType;
+    if(typeof(type)==="function") {
+        const result = type(val);
+        if(result==null) return;
+        return result;
+    }
+
+    if(val==null && type>=100) {
+        return null;
+    }
+
+    if(type===FieldTypeEnum.Any || type===FieldTypeEnum.AnyOptional) {
+        return val;
+    } else if(type===FieldTypeEnum.Boolean || type===FieldTypeEnum.BooleanOptional) {
+        if(typeof(val)!=="boolean") return;
+        return val as any;
+    } else if(type===FieldTypeEnum.Number || type===FieldTypeEnum.NumberOptional) {
+        if(typeof(val)!=="number") return;
+        if(isNaN(val as number)) return;
+        return val as any;
+    } else if(type===FieldTypeEnum.BN || type===FieldTypeEnum.BNOptional) {
+        const result = parseBN(val);
+        if(result==null) return;
+        return result as any;
+    } else if(type===FieldTypeEnum.String || type===FieldTypeEnum.StringOptional) {
+        if(typeof(val)!=="string") return;
+        return val as any;
+    } else {
+        //Probably another request schema
+        const result = verifySchema(val, type as RequestSchema);
+        if(result==null) return;
+        return result as any;
+    }
+
 }
 
 export function verifySchema<T extends RequestSchema>(req: any, schema: T): RequestSchemaResult<T> {

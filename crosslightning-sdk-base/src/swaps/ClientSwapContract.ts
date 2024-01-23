@@ -381,16 +381,20 @@ export class ClientSwapContract<T extends SwapData> {
 
         const pricePreFetchPromise = this.swapPrice.preFetchPrice==null || requiredToken==null ? null : this.swapPrice.preFetchPrice(requiredToken, abortController.signal);
 
-        const feeRate: any = this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
+        const feeRatePromise: Promise<any> = this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
             ? null
-            : await tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, hash)).catch(e => {
+            : tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, hash)).catch(e => {
                 abortController.abort();
                 throw e;
             });
 
-        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/payInvoice", {
-            method: "POST",
-            body: JSON.stringify({
+        const {response, jsonBody, preFetchSignatureVerificationData} = await tryWithRetries(async () => {
+            const {response, outputStream} = fetchStreamingWithTimeout(url+"/payInvoice", {
+                method: "POST",
+                timeout: this.options.postRequestTimeout
+            });
+
+            await outputStream.writeParams({
                 address,
                 amount: amountOrTokens.toString(10),
                 confirmationTarget,
@@ -399,39 +403,98 @@ export class ClientSwapContract<T extends SwapData> {
                 token: requiredToken==null ? null : requiredToken.toString(),
                 offerer: this.swapContract.getAddress(),
                 exactIn,
-                feeRate: feeRate==null ? null : feeRate.toString()
-            }),
-            headers: {'Content-Type': 'application/json'},
-            timeout: this.options.postRequestTimeout
-        })).catch(e => {
+            });
+            console.log("[ClientSwapContract.payOnchain] Initial params sent!");
+            if(feeRatePromise!=null) {
+                const feeRate = await feeRatePromise;
+                console.log("[ClientSwapContract.payOnchain] Fee rate fetched!");
+                await outputStream.writeParams({
+                    feeRate: feeRate==null ? null : feeRate.toString()
+                });
+                console.log("[ClientSwapContract.payOnchain] Fee rate sent!");
+            }
+            await outputStream.end();
+
+            const resolvedResponse = await response;
+            if(resolvedResponse.status!==200) return {
+                response: resolvedResponse
+            };
+
+            const inputReader = resolvedResponse.inputStream;
+
+            let _preFetchSignatureVerificationData: Promise<any>;
+            if((this.swapContract as any).preFetchForInitSignatureVerification!=null) {
+                _preFetchSignatureVerificationData = inputReader.getParams({
+                    signDataPrefetch: FieldTypeEnum.Any
+                }).then(obj => {
+                    if(obj==null || obj.signDataPrefetch==null) return null;
+                    return (this.swapContract as any).preFetchForInitSignatureVerification(obj.signDataPrefetch);
+                }).catch(e => {
+                    console.error(e);
+                    return null;
+                });
+            } else {
+                _preFetchSignatureVerificationData = Promise.resolve(null);
+            }
+
+            const jsonBody = await inputReader.getParams({
+                code: FieldTypeEnum.Number,
+                msg: FieldTypeEnum.String,
+                data: {
+                    amount: FieldTypeEnum.BN,
+                    address: FieldTypeEnum.String,
+                    satsPervByte: FieldTypeEnum.BN,
+                    networkFee: FieldTypeEnum.BN,
+                    swapFee: FieldTypeEnum.BN,
+                    totalFee: FieldTypeEnum.BN,
+                    total: FieldTypeEnum.BN,
+                    minRequiredExpiry: FieldTypeEnum.BN,
+
+                    data: FieldTypeEnum.Any,
+
+                    prefix: FieldTypeEnum.String,
+                    timeout: FieldTypeEnum.String,
+                    signature: FieldTypeEnum.String
+                }
+            });
+
+            return {
+                response: resolvedResponse,
+                jsonBody,
+                preFetchSignatureVerificationData: _preFetchSignatureVerificationData
+            }
+        }).catch(e => {
             abortController.abort();
             throw e;
         });
 
         if(response.status!==200) {
-            abortController.abort();
             let resp: string;
             try {
                 resp = await response.text();
             } catch (e) {
                 throw new RequestError(response.statusText, response.status);
             }
-            throw RequestError.parse(resp, response.status);
+            throw new RequestError(resp, response.status);
         }
 
-        let jsonBody: any = await response.json().catch(e => {
-            abortController.abort();
-            throw e;
-        });
+        if(jsonBody.code!==20000) {
+            throw RequestError.parse(JSON.stringify(jsonBody), 400);
+        }
 
-        const total = new BN(jsonBody.data.total);
+        // let jsonBody: any = await response.json().catch(e => {
+        //     abortController.abort();
+        //     throw e;
+        // });
+
+        const total = jsonBody.data.total;
 
         if(exactIn) {
             if(!total.eq(amountOrTokens)) {
                 abortController.abort();
                 throw new IntermediaryError("Invalid total returned");
             }
-            amount = new BN(jsonBody.data.amount);
+            amount = jsonBody.data.amount;
 
             hash = this.swapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
 
@@ -445,9 +508,9 @@ export class ClientSwapContract<T extends SwapData> {
             // }
         }
 
-        const swapFee = new BN(jsonBody.data.swapFee);
-        const networkFee = new BN(jsonBody.data.networkFee);
-        const totalFee = new BN(jsonBody.data.totalFee);
+        const swapFee = jsonBody.data.swapFee;
+        const networkFee = jsonBody.data.networkFee;
+        const totalFee = jsonBody.data.totalFee;
 
         if(!totalFee.eq(swapFee.add(networkFee))){
             abortController.abort();
@@ -509,7 +572,7 @@ export class ClientSwapContract<T extends SwapData> {
                 }
             })(),
             tryWithRetries(
-                () => this.swapContract.isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, feeRate),
+                () => Promise.all([feeRatePromise, preFetchSignatureVerificationData]).then(([feeRate, preFetchedData]) => (this.swapContract as any).isValidClaimInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, feeRate, preFetchedData)),
                 null,
                 e => e instanceof SignatureVerificationError,
                 abortController.signal
@@ -521,9 +584,9 @@ export class ClientSwapContract<T extends SwapData> {
 
         return {
             amount,
-            networkFee: new BN(jsonBody.data.networkFee),
-            swapFee: new BN(jsonBody.data.swapFee),
-            totalFee: new BN(jsonBody.data.totalFee),
+            networkFee: jsonBody.data.networkFee,
+            swapFee: jsonBody.data.swapFee,
+            totalFee: jsonBody.data.totalFee,
             data,
             prefix: jsonBody.data.prefix,
             timeout: jsonBody.data.timeout,
@@ -532,8 +595,7 @@ export class ClientSwapContract<T extends SwapData> {
             expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature)),
 
             pricingInfo,
-
-            feeRate
+            feeRate: feeRatePromise==null ? null : await feeRatePromise
         };
     }
 
@@ -723,6 +785,16 @@ export class ClientSwapContract<T extends SwapData> {
             throw new UserError("Amount more than maximum");
         }
 
+        let preFetchSignatureVerificationData: Promise<any>;
+        if(initResp.signDataPrefetch!=null) {
+            if((this.swapContract as any).preFetchForInitSignatureVerification!=null) {
+                preFetchSignatureVerificationData = (this.swapContract as any).preFetchForInitSignatureVerification(initResp.signDataPrefetch).catch(e => {
+                    console.error(e);
+                    return null;
+                });
+            }
+        }
+
         const {invoice, successAction} = await this.getAndVerifyPrFromLNURL(payRequest, amountSats, comment);
 
         const resp: any = await this.payLightning(
@@ -739,7 +811,8 @@ export class ClientSwapContract<T extends SwapData> {
             amount,
             expiryTimestamp,
             feeRatePromise,
-            preFetchedPrice
+            preFetchedPrice,
+            preFetchSignatureVerificationData
         );
 
         resp.invoice = invoice;
@@ -863,7 +936,8 @@ export class ClientSwapContract<T extends SwapData> {
         requiredTotal?: BN,
         expiryTimestamp?: BN,
         feeRatePromise?: Promise<any>,
-        pricePreFetchPromise?: Promise<BN>
+        pricePreFetchPromise?: Promise<BN>,
+        preFetchSignatureVerificationData?: Promise<any>
     ): Promise<{
         confidence: string,
         maxFee: BN,
@@ -895,7 +969,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         if(pricePreFetchPromise==null) pricePreFetchPromise = this.swapPrice.preFetchPrice==null || requiredToken==null ? null : this.swapPrice.preFetchPrice(requiredToken, abortController.signal);
 
-        const [_, inputReader] = await Promise.all([
+        const [_, jsonBody] = await Promise.all([
             (async () => {
                 const payStatus = await tryWithRetries(() => this.swapContract.getPaymentHashStatus(parsedPR.tagsObject.payment_hash), null, null, abortController.signal);
 
@@ -908,14 +982,14 @@ export class ClientSwapContract<T extends SwapData> {
                     ? null
                     : tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, parsedPR.tagsObject.payment_hash), null, null, abortController.signal);
 
-                const response: Response & {inputStream: IParamReader} = await tryWithRetries(() => {
+                const {response, jsonBody, _preFetchSignatureVerificationData} = await tryWithRetries(async () => {
                     const {response, outputStream} = fetchStreamingWithTimeout(url+(exactIn ? "/payInvoiceExactIn" : "/payInvoice"), {
                         method: "POST",
                         signal: abortController.signal,
                         timeout: this.options.postRequestTimeout
                     });
 
-                    outputStream.writeParams({
+                    await outputStream.writeParams({
                         reqId,
                         pr: bolt11PayReq,
                         maxFee: maxFee.toString(),
@@ -924,20 +998,68 @@ export class ClientSwapContract<T extends SwapData> {
                         offerer: this.swapContract.getAddress(),
                         amount: null,
                         exactIn: !!exactIn
-                    }).then(() => {
-                        console.log("[ClientSwapContract.payLightning] Initial params sent!");
-                        return feeRatePromise;
-                    }).then(feeRate => {
+                    });
+                    console.log("[ClientSwapContract.payLightning] Initial params sent!");
+                    if(feeRatePromise!=null) {
+                        const feeRate = await feeRatePromise;
                         console.log("[ClientSwapContract.payLightning] Fee rate fetched!");
-                        return outputStream.writeParams({
+                        await outputStream.writeParams({
                             feeRate: feeRate==null ? null : feeRate.toString()
-                        })
-                    }).then(() => {
+                        });
                         console.log("[ClientSwapContract.payLightning] Fee rate sent!");
-                        outputStream.end();
+                    }
+                    await outputStream.end();
+
+                    const resolvedResponse = await response;
+
+                    if(resolvedResponse.status!==200) return {
+                        response: resolvedResponse
+                    };
+
+                    const inputReader = resolvedResponse.inputStream;
+
+                    let _preFetchSignatureVerificationData;
+                    if(preFetchSignatureVerificationData==null) {
+                        if((this.swapContract as any).preFetchForInitSignatureVerification!=null) {
+                            _preFetchSignatureVerificationData = inputReader.getParams({
+                                signDataPrefetch: FieldTypeEnum.Any
+                            }).then(obj => {
+                                if(obj==null || obj.signDataPrefetch==null) return null;
+                                return (this.swapContract as any).preFetchForInitSignatureVerification(obj.signDataPrefetch);
+                            }).catch(e => {
+                                console.error(e);
+                                return null;
+                            });
+                        } else {
+                            _preFetchSignatureVerificationData = Promise.resolve(null);
+                        }
+                    }
+
+                    const jsonBody = await inputReader.getParams({
+                        code: FieldTypeEnum.Number,
+                        msg: FieldTypeEnum.String,
+                        data: {
+                            maxFee: FieldTypeEnum.BN,
+                            swapFee: FieldTypeEnum.BN,
+                            total: FieldTypeEnum.BN,
+                            confidence: FieldTypeEnum.Number,
+                            address: FieldTypeEnum.String,
+
+                            routingFeeSats: FieldTypeEnum.BN,
+
+                            data: FieldTypeEnum.Any,
+
+                            prefix: FieldTypeEnum.String,
+                            timeout: FieldTypeEnum.String,
+                            signature: FieldTypeEnum.String
+                        }
                     });
 
-                    return response;
+                    return {
+                        response: resolvedResponse,
+                        jsonBody,
+                        _preFetchSignatureVerificationData
+                    }
                 }, null, null, abortController.signal);
 
                 if(response.status!==200) {
@@ -950,54 +1072,18 @@ export class ClientSwapContract<T extends SwapData> {
                     throw new RequestError(resp, response.status);
                 }
 
-                return response.inputStream;
+                if(jsonBody.code!==20000) {
+                    throw RequestError.parse(JSON.stringify(jsonBody), 400);
+                }
+
+                if(_preFetchSignatureVerificationData!=null) preFetchSignatureVerificationData = _preFetchSignatureVerificationData;
+
+                return jsonBody;
             })()
         ]).catch(e => {
             abortController.abort();
             throw e;
         });
-
-        let preFetchSignatureVerificationData: Promise<any>;
-        if((this.swapContract as any).preFetchForInitSignatureVerification!=null) {
-            preFetchSignatureVerificationData = inputReader.getParams({
-                signDataPrefetch: FieldTypeEnum.Any
-            }).then(obj => {
-                if(obj==null) return null;
-                return (this.swapContract as any).preFetchForInitSignatureVerification(obj.signDataPrefetch).catch(e => {
-                    console.error(e);
-                    return null;
-                });
-            }).catch(e => {
-                console.error(e);
-                return null;
-            });
-        } else {
-            preFetchSignatureVerificationData = Promise.resolve(null);
-        }
-
-        const jsonBody = await inputReader.getParams({
-            code: FieldTypeEnum.Number,
-            msg: FieldTypeEnum.String,
-            data: {
-                maxFee: FieldTypeEnum.BN,
-                swapFee: FieldTypeEnum.BN,
-                total: FieldTypeEnum.BN,
-                confidence: FieldTypeEnum.Number,
-                address: FieldTypeEnum.String,
-
-                routingFeeSats: FieldTypeEnum.BN,
-
-                data: FieldTypeEnum.Any,
-
-                prefix: FieldTypeEnum.String,
-                timeout: FieldTypeEnum.String,
-                signature: FieldTypeEnum.String
-            }
-        });
-
-        if(jsonBody.code!==20000) {
-            throw RequestError.parse(JSON.stringify(jsonBody), 400);
-        }
 
         const routingFeeSats = jsonBody.data.routingFeeSats;
 
@@ -1110,7 +1196,7 @@ export class ClientSwapContract<T extends SwapData> {
             expiry: await tryWithRetries(() => this.swapContract.getClaimInitAuthorizationExpiry(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature)),
 
             pricingInfo,
-            feeRate: await feeRatePromise
+            feeRate: feeRatePromise==null ? null : await feeRatePromise
         }
     }
 
@@ -1289,13 +1375,7 @@ export class ClientSwapContract<T extends SwapData> {
             null
         );
 
-        const [
-            feePerBlock,
-            btcRelayData,
-            currentBtcBlock,
-            addFee,
-            feeRate
-        ] = await Promise.all([
+        const initData = Promise.all([
             tryWithRetries<BN>(() => this.btcRelay.getFeePerBlock().then(val => val.mul(feeSafetyFactor || new BN(2))), null, null, abortController.signal),
 
             tryWithRetries<{
@@ -1323,30 +1403,48 @@ export class ClientSwapContract<T extends SwapData> {
             throw e;
         });
 
-        // const feePerBlock: BN = await tryWithRetries(() => this.btcRelay.getFeePerBlock().then(val => val.mul(feeSafetyFactor || new BN(2))));
-        // const btcRelayData = await tryWithRetries(() => this.btcRelay.getTipData());
-        // const currentBtcBlock = await tryWithRetries(() => this.btcRpc.getTipHeight());
-        // const addFee: BN = await tryWithRetries<BN>(() => {
-        //     if((this.swapContract as any).getRawClaimFee!=null) {
-        //         //Workaround for sol
-        //         return (this.swapContract as any).getRawClaimFee();
-        //     } else {
-        //         return this.swapContract.getClaimFee().then(value => value.mul(feeSafetyFactor || new BN(2)));
-        //     }
-        // });
-
         blockSafetyFactor = blockSafetyFactor || 2;
         const startTimestamp = new BN(Math.floor(Date.now()/1000));
-        const currentBtcRelayBlock = btcRelayData.blockheight;
-        const addBlock = Math.max(currentBtcBlock-currentBtcRelayBlock, 0);
 
-        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/getAddress", {
-            method: "POST",
-            body: JSON.stringify({
+        const {
+            response,
+            jsonBody,
+            preFetchSignatureVerificationData,
+            addBlock,
+            feePerBlock,
+            addFee,
+            feeRate
+        } = await tryWithRetries(async () => {
+            const {response, outputStream} = fetchStreamingWithTimeout(url+"/getAddress", {
+                method: "POST",
+                signal: abortController.signal,
+                timeout: this.options.postRequestTimeout
+            });
+
+            await outputStream.writeParams({
                 address: this.swapContract.getAddress(),
                 amount: amountOrTokens.toString(),
                 token: requiredToken==null ? null : requiredToken.toString(),
 
+                exactOut,
+                sequence: sequence.toString(10)
+            });
+
+            console.log("[ClientSwapContract.payLightning] Initial params sent!");
+
+            const [
+                feePerBlock,
+                btcRelayData,
+                currentBtcBlock,
+                addFee,
+                feeRate
+            ] = await initData;
+
+            const currentBtcRelayBlock = btcRelayData.blockheight;
+            const addBlock = Math.max(currentBtcBlock-currentBtcRelayBlock, 0);
+
+            console.log("[ClientSwapContract.payLightning] Init data fetched!");
+            await outputStream.writeParams({
                 claimerBounty: {
                     feePerBlock: feePerBlock.toString(10),
                     safetyFactor: blockSafetyFactor,
@@ -1354,34 +1452,93 @@ export class ClientSwapContract<T extends SwapData> {
                     addBlock,
                     addFee: addFee.toString(10)
                 },
-
-                exactOut,
                 feeRate: feeRate==null ? null : feeRate.toString(),
-                sequence: sequence.toString(10)
-            }),
-            headers: {'Content-Type': 'application/json'},
-            timeout: this.options.postRequestTimeout,
-            signal: abortController.signal
-        }), null, null, abortController.signal).catch(e => {
-            abortController.abort();
-            throw e;
-        });
+            });
+            console.log("[ClientSwapContract.payLightning] Init data sent!");
+            await outputStream.end();
+
+            const resolvedResponse = await response;
+
+            if(resolvedResponse.status!==200) return {
+                response: resolvedResponse
+            };
+
+            const inputReader = resolvedResponse.inputStream;
+
+            let _preFetchSignatureVerificationData: Promise<any>;
+            if((this.swapContract as any).preFetchForInitSignatureVerification!=null) {
+                _preFetchSignatureVerificationData = inputReader.getParams({
+                    signDataPrefetch: FieldTypeEnum.Any
+                }).then(obj => {
+                    if(obj==null || obj.signDataPrefetch==null) return null;
+                    return (this.swapContract as any).preFetchForInitSignatureVerification(obj.signDataPrefetch);
+                }).catch(e => {
+                    console.error(e);
+                    return null;
+                });
+            } else {
+                _preFetchSignatureVerificationData = Promise.resolve(null);
+            }
+
+            const jsonHeader = await inputReader.getParams({
+                code: FieldTypeEnum.Number,
+                msg: FieldTypeEnum.String
+            });
+
+            if(jsonHeader.code!==20000) {
+                return {
+                    response: resolvedResponse,
+                    jsonBody: {
+                        ...jsonHeader,
+                        data: await inputReader.getParams({
+                            data: FieldTypeEnum.AnyOptional
+                        }).catch(e => null)
+                    }
+                }
+            }
+
+            const jsonBody = await inputReader.getParams({
+                code: FieldTypeEnum.Number,
+                msg: FieldTypeEnum.String,
+                data: {
+                    amount: FieldTypeEnum.BN,
+                    btcAddress: FieldTypeEnum.String,
+                    address: FieldTypeEnum.String,
+                    swapFee: FieldTypeEnum.BN,
+                    total: FieldTypeEnum.BN,
+
+                    data: FieldTypeEnum.Any,
+
+                    prefix: FieldTypeEnum.String,
+                    timeout: FieldTypeEnum.String,
+                    signature: FieldTypeEnum.String
+                }
+            });
+
+            return {
+                response: resolvedResponse,
+                jsonBody,
+                preFetchSignatureVerificationData: _preFetchSignatureVerificationData,
+                addBlock,
+                feePerBlock,
+                addFee,
+                feeRate
+            }
+        }, null, null, abortController.signal);
 
         if(response.status!==200) {
-            abortController.abort();
             let resp: string;
             try {
                 resp = await response.text();
             } catch (e) {
                 throw new RequestError(response.statusText, response.status);
             }
-            throw RequestError.parse(resp, response.status);
+            throw new RequestError(resp, response.status);
         }
 
-        let jsonBody: any = await response.json().catch(e => {
-            abortController.abort();
-            throw e;
-        });
+        if(jsonBody.code!==20000) {
+            throw RequestError.parse(JSON.stringify(jsonBody), 400);
+        }
 
         const data: T = new this.swapDataDeserializer(jsonBody.data.data);
         this.swapContract.setUsAsClaimer(data);
@@ -1399,9 +1556,9 @@ export class ClientSwapContract<T extends SwapData> {
                 abortController.abort();
                 throw new IntermediaryError("Invalid amount returned");
             }
-            amount = new BN(jsonBody.data.amount);
+            amount = jsonBody.data.amount;
         } else {
-            if(!new BN(jsonBody.data.amount).eq(amountOrTokens)) {
+            if(!jsonBody.data.amount.eq(amountOrTokens)) {
                 abortController.abort();
                 throw new IntermediaryError("Invalid amount returned");
             }
@@ -1455,7 +1612,7 @@ export class ClientSwapContract<T extends SwapData> {
             }
         }
 
-        const swapFee = new BN(jsonBody.data.swapFee);
+        const swapFee = jsonBody.data.swapFee;
 
         const [_, pricingInfo] = await Promise.all([
             //Get intermediary's liquidity
@@ -1490,7 +1647,7 @@ export class ClientSwapContract<T extends SwapData> {
             })(),
             //Verify authorization
             tryWithRetries(
-                () => this.swapContract.isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, feeRate),
+                () => preFetchSignatureVerificationData.then(preFetchData => (this.swapContract as any).isValidInitAuthorization(data, jsonBody.data.timeout, jsonBody.data.prefix, jsonBody.data.signature, feeRate, preFetchData)),
                 null,
                 e => e instanceof SignatureVerificationError,
                 abortController.signal

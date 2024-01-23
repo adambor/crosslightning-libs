@@ -35,6 +35,9 @@ export function streamingFetch(input: RequestInfo | URL, init?: RequestInit): {
         });
     }
 
+    if(init.headers==null) init.headers = {};
+    init.headers['accept'] = "application/x-multiple-json";
+
     return {
         response: fetch(input, init).then(resp => {
             if(resp.status!==200) {
@@ -45,6 +48,9 @@ export function streamingFetch(input: RequestInfo | URL, init?: RequestInit): {
                 return resp.json().then(body => {
                     (resp as any).inputStream = {
                         getParams: <T extends RequestSchema>(schema: T) => {
+                            for(let key in schema) {
+                                if(body[key]===undefined) return Promise.reject(new Error("EOF before field seen!"));
+                            }
                             return Promise.resolve(verifySchema(body, schema));
                         }
                     };

@@ -8,6 +8,8 @@ export class ParamDecoder implements IParamReader {
     frameData: Buffer[] = [];
     frameDataLength: number = 0;
 
+    closed: boolean = false;
+
     params: {
         [key: string]: {
             promise: Promise<any>,
@@ -95,10 +97,21 @@ export class ParamDecoder implements IParamReader {
                 this.params[key].reject(new Error("EOF before field seen!"));
             }
         }
+        this.closed = true;
+    }
+
+    onError(e: any): void {
+        for(let key in this.params) {
+            if(this.params[key].reject!=null) {
+                this.params[key].reject(e);
+            }
+        }
+        this.closed = true;
     }
 
     getParam(key: string): Promise<any> {
         if(this.params[key]==null) {
+            if(this.closed) return Promise.reject(new Error("Stream already closed without param received!"));
             let resolve: (data: any) => void;
             let reject: (err: any) => void;
             const promise = new Promise((_resolve, _reject) => {
@@ -118,7 +131,6 @@ export class ParamDecoder implements IParamReader {
         const resultSchema: any = {};
         for(let fieldName in schema) {
             const val: any = await this.getParam(fieldName);
-            console.log("param got "+fieldName+": ", val);
             const type: FieldTypeEnum | RequestSchema | ((val: any) => boolean) = schema[fieldName];
             if(typeof(type)==="function") {
                 const result = type(val);
