@@ -21,11 +21,14 @@ export class ServerParamEncoder {
                     response.writeHead(statusCode);
                     firstWrite = false;
                 }
-                if(!response.write(data)) {
-                    return Promise.reject(Error("Write failed"));
-                }
-                return Promise.resolve();
-            }, () => new Promise<void>(resolve => response.end(resolve)));
+                return new Promise((resolve, reject) => response.write(data, (error: any) => {
+                    if(error!=null) {
+                        reject(error);
+                        return;
+                    }
+                    resolve();
+                }));
+            }, () => new Promise<void>(resolve => response.end(() => resolve())));
         } else {
             response.header("Content-Type", "application/x-multiple-json");
             this.paramWriter = new ParamEncoder((data: Buffer) => {
@@ -33,16 +36,20 @@ export class ServerParamEncoder {
                     response.writeHead(statusCode);
                     firstWrite = false;
                 }
-                if(!response.write(data)) {
-                    return Promise.reject(Error("Write failed"));
-                }
-                return Promise.resolve();
-            }, () => new Promise<void>(resolve => response.end(resolve)));
+                return new Promise((resolve, reject) => response.write(data, (error: any) => {
+                    if(error!=null) {
+                        reject(error);
+                        return;
+                    }
+                    resolve();
+                }));
+            }, () => new Promise<void>(resolve => response.end(() => resolve())));
         }
 
         this.response = response;
         this.controller = new AbortController();
         this.response.on("close", () => this.controller.abort(new Error("Response stream closed!")));
+        this.response.on("error", (err: any) => this.controller.abort(err));
     }
 
     writeParams(params: any): Promise<void> {

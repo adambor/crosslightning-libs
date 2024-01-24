@@ -1,11 +1,15 @@
 import {Request, Response} from "express";
 import {RequestSchema, verifySchema} from "../SchemaVerifier";
 import {ParamDecoder} from "../ParamDecoder";
+import {ServerParamEncoder} from "./ServerParamEncoder";
+import {ServerResponse} from "http";
 
 
 export const serverParamDecoder = (timeoutMillis: number) => (req: Request, res: Response, next: () => void) => {
 
     let timeout;
+
+    (res as any).responseStream = new ServerParamEncoder(res, 200, req);
 
     if(req.headers['content-type']!=="application/x-multiple-json") {
 

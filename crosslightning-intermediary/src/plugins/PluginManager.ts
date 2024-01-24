@@ -21,7 +21,7 @@ export class PluginManager {
     }
 
     static async enable<T extends SwapData>(
-        swapContract: SwapContract<T, any>,
+        swapContract: SwapContract<T, any, any, any>,
         btcRelay: BtcRelay<any, any, any>,
         chainEvents: ChainEvents<T>,
         lnd: AuthenticatedLnd

@@ -146,7 +146,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
     constructor(
         storageDirectory: IIntermediaryStorage<ToBtcLnSwapAbs<T>>,
         path: string,
-        swapContract: SwapContract<T, any>,
+        swapContract: SwapContract<T, any, any, any>,
         chainEvents: ChainEvents<T>,
         allowedTokens: TokenAddress[],
         lnd: AuthenticatedLnd,
@@ -541,7 +541,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
     startRestServer(restServer: Express) {
 
         restServer.use(this.path+"/payInvoiceExactIn", serverParamDecoder(10*1000));
-        restServer.post(this.path+"/payInvoiceExactIn", expressHandlerWrapper(async (req: Request & {paramReader: IParamReader}, res) => {
+        restServer.post(this.path+"/payInvoiceExactIn", expressHandlerWrapper(async (req: Request & {paramReader: IParamReader}, res: Response & {responseStream: ServerParamEncoder}) => {
             /**
              * pr: string                   bolt11 lightning invoice
              * reqId: string                Identifier of the swap
@@ -553,8 +553,10 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 feeRate: FieldTypeEnum.String
             });
 
+            const responseStream = res.responseStream;
+
             if (parsedBody==null) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
                     code: 20100,
                     msg: "Invalid request body"
                 });
@@ -564,7 +566,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const parsedAuth = this.exactInAuths[parsedBody.reqId];
 
             if (parsedAuth==null) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
                     code: 20070,
                     msg: "Invalid reqId"
                 });
@@ -574,7 +576,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             delete this.exactInAuths[parsedBody.reqId];
 
             if(parsedAuth.expiry<Date.now()) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
                     code: 20200,
                     msg: "Authorization already expired!"
                 });
@@ -587,7 +589,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 parsedPR = bolt11.decode(parsedBody.pr);
             } catch (e) {
                 console.error(e);
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
                     code: 20021,
                     msg: "Invalid request body (pr - cannot be parsed)"
                 });
@@ -597,13 +599,13 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             let halfConfidence = false;
             if(parsedPR.timeExpireDate < ((Date.now()/1000)+(this.config.authorizationTimeout+(2*60)))) {
                 if(!this.config.allowShortExpiry) {
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20020,
                         msg: "Invalid request body (pr - expired)"
                     });
                     return;
                 } else if(parsedPR.timeExpireDate < Date.now()/1000) {
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20020,
                         msg: "Invalid request body (pr - expired)"
                     });
@@ -622,7 +624,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 parsedPR.tagsObject.min_final_cltv_expiry!==parsedAuth.cltvDelta ||
                 !new BN(parsedPR.millisatoshis).div(new BN(1000)).eq(parsedAuth.amount)
             ) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
                     code: 20102,
                     msg: "Provided PR doesn't match initial!"
                 });
@@ -630,7 +632,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             }
 
             if(!routesMatch(parsedRequest.routes, parsedAuth.routes)) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
                     code: 20102,
                     msg: "Provided PR doesn't match initial (routes)!"
                 });
@@ -682,7 +684,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             await this.storageManager.saveData(parsedPR.tagsObject.payment_hash, sequence, createdSwap);
 
-            res.status(200).json({
+            await responseStream.writeParamsAndEnd({
                 code: 20000,
                 msg: "Success",
                 data: {
@@ -705,7 +707,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         }));
 
         restServer.use(this.path+"/payInvoice", serverParamDecoder(10*1000));
-        restServer.post(this.path+"/payInvoice", expressHandlerWrapper(async (req: Request & {paramReader: IParamReader}, res) => {
+        restServer.post(this.path+"/payInvoice", expressHandlerWrapper(async (req: Request & {paramReader: IParamReader}, res: Response & {responseStream: ServerParamEncoder}) => {
             const metadata: {
                 request: any,
                 probeRequest?: any,
@@ -744,7 +746,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             metadata.request = parsedBody;
 
-            const responseStream = new ServerParamEncoder(res, 200, req);
+            const responseStream = res.responseStream;
 
             console.log("Parsed body: ", parsedBody);
 
@@ -819,20 +821,30 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
+            const abortController = new AbortController();
+            const responseStreamAbortController = responseStream.getAbortSignal();
+            responseStreamAbortController.addEventListener("abort", () => abortController.abort(responseStreamAbortController.reason));
+
             const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken).catch(e => {
                 console.error("To BTC-LN: REST.pricePrefetch", e);
-                throw e;
+                abortController.abort(e);
+                return null;
             }) : null;
             let signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
                 console.error("To BTC-LN: REST.signDataPrefetch", e);
-                throw e;
+                abortController.abort(e);
+                return null;
             }) : null;
 
             if(pricePrefetchPromise!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetching swap price!");
             if(signDataPrefetchPromise!=null) {
-                signDataPrefetchPromise = signDataPrefetchPromise.then(val => responseStream.writeParams({
+                signDataPrefetchPromise = signDataPrefetchPromise.then(val => val==null ? null : responseStream.writeParams({
                     signDataPrefetch: val
-                }).then(() => val));
+                }).then(() => val)).catch(e => {
+                    console.error("[To BTC-LN: REST.payInvoice] Send signDataPreFetch error: ", e);
+                    abortController.abort(e);
+                    return null;
+                });
                 console.log("[To BTC-LN: REST.payInvoice] Pre-fetching signature data!");
             }
 
@@ -852,6 +864,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 }
 
                 parsedBody.maxFee = await this.swapPricing.getToBtcSwapAmount(parsedBody.maxFee, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+
+                abortController.signal.throwIfAborted();
             } else {
                 amountBD = new BN(parsedPR.satoshis);
 
@@ -898,6 +912,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 }
             } catch (e) {}
 
+            abortController.signal.throwIfAborted();
+
             // const existingSwap = await this.storageManager.getData(parsedPR.tagsObject.payment_hash);
             // if(existingSwap!=null && existingSwap.state!=ToBtcLnSwapState.SAVED) {
             //     await responseStream.writeParamsAndEnd({
@@ -912,6 +928,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const maxUsableCLTV: BN = parsedBody.expiryTimestamp.sub(currentTimestamp).sub(this.config.gracePeriod).div(this.config.bitcoinBlocktime.mul(this.config.safetyFactor));
 
             const { current_block_height } = await lncli.getHeight({lnd: this.LND});
+
+            abortController.signal.throwIfAborted();
 
             metadata.times.blockheightFetched = Date.now();
 
@@ -955,6 +973,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 console.error(e);
             }
 
+            abortController.signal.throwIfAborted();
+
             metadata.times.probeResult = Date.now();
             metadata.probeResponse = {...obj};
 
@@ -977,6 +997,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 } catch (e) {
                     console.error(e);
                 }
+
+                abortController.signal.throwIfAborted();
 
                 console.log("[To BTC-LN: REST.payInvoice] Routing result: ", routingObj);
 
@@ -1058,8 +1080,12 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const prefetchedPrice = pricePrefetchPromise!=null ? await pricePrefetchPromise : null;
             if(prefetchedPrice!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetched price: ", prefetchedPrice.toString(10));
 
+            abortController.signal.throwIfAborted();
+
             const routingFeeInToken = await this.swapPricing.getFromBtcSwapAmount(actualRoutingFee, useToken, true, prefetchedPrice);
             const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, prefetchedPrice);
+
+            abortController.signal.throwIfAborted();
 
             let amountInToken: BN;
             let total: BN;
@@ -1106,6 +1132,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             } else {
                 amountInToken = await this.swapPricing.getFromBtcSwapAmount(amountBD, useToken, true, prefetchedPrice);
                 total = amountInToken.add(routingFeeInToken).add(swapFeeInToken);
+
+                abortController.signal.throwIfAborted();
             }
 
             metadata.times.priceCalculated = Date.now();
@@ -1129,15 +1157,20 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 new BN(0)
             );
 
+            abortController.signal.throwIfAborted();
+
             metadata.times.swapCreated = Date.now();
 
             const prefetchedSignData = signDataPrefetchPromise!=null ? await signDataPrefetchPromise : null;
-
             if(prefetchedSignData!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetched signature data: ", prefetchedSignData);
+
+            abortController.signal.throwIfAborted();
 
             const feeRateObj = await req.paramReader.getParams({
                 feeRate: FieldTypeEnum.String
             }).catch(e => null);
+
+            abortController.signal.throwIfAborted();
 
             const feeRate = feeRateObj?.feeRate!=null && typeof(feeRateObj.feeRate)==="string" ? feeRateObj.feeRate : null;
             const sigData = await this.swapContract.getClaimInitSignature(
@@ -1147,6 +1180,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 feeRate
             );
 
+            abortController.signal.throwIfAborted();
+
             metadata.times.swapSigned = Date.now();
 
             const createdSwap = new ToBtcLnSwapAbs<T>(parsedBody.pr, swapFee, actualRoutingFee, new BN(sigData.timeout));
@@ -1154,7 +1189,6 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             createdSwap.metadata = metadata;
 
             await PluginManager.swapCreate(createdSwap);
-
             await this.storageManager.saveData(parsedPR.tagsObject.payment_hash, sequence, createdSwap);
 
             await responseStream.writeParamsAndEnd({

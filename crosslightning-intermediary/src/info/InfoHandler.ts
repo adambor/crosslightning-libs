@@ -23,12 +23,12 @@ type InfoHandlerResponse = {
  */
 export class InfoHandler<T extends SwapData> {
 
-    readonly swapContract: SwapContract<T, any>;
+    readonly swapContract: SwapContract<T, any, any, any>;
     readonly path: string;
 
     readonly swapHandlers: SwapHandler<any, any>[];
 
-    constructor(swapContract: SwapContract<T, any>, path: string, swapHandlers: SwapHandler<any, any>[]) {
+    constructor(swapContract: SwapContract<T, any, any, any>, path: string, swapHandlers: SwapHandler<any, any>[]) {
         this.swapContract = swapContract;
         this.path = path;
         this.swapHandlers = swapHandlers;
