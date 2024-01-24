@@ -78,14 +78,14 @@ export class IntermediaryDiscovery<T extends SwapData> {
 
     intermediaries: Intermediary[];
 
-    swapContract: SwapContract<T, any>;
+    swapContract: SwapContract<T, any, any, any>;
     registryUrl: string;
 
     httpRequestTimeout?: number;
 
     private overrideNodeUrls?: string[];
 
-    constructor(swapContract: SwapContract<T, any>, registryUrl?: string, nodeUrls?: string[], httpRequestTimeout?: number) {
+    constructor(swapContract: SwapContract<T, any, any, any>, registryUrl?: string, nodeUrls?: string[], httpRequestTimeout?: number) {
         this.swapContract = swapContract;
         this.registryUrl = registryUrl || REGISTRY_URL;
         this.overrideNodeUrls = nodeUrls;
