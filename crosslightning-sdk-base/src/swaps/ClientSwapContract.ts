@@ -235,7 +235,9 @@ export class ClientSwapContract<T extends SwapData> {
                 code: FieldTypeEnum.Number,
                 msg: FieldTypeEnum.String,
                 data: FieldTypeEnum.AnyOptional,
-                ...(doPrefetchData ? {signDataPrefetch: FieldTypeEnum.AnyOptional} : {})
+
+                ...(doPrefetchData && this.swapContract.preFetchForInitSignatureVerification!=null ?
+                    {signDataPrefetch: FieldTypeEnum.AnyOptional} :{})
             }, this.options.postRequestTimeout, signal);
 
             if(response.status!==200) return {
@@ -244,7 +246,7 @@ export class ClientSwapContract<T extends SwapData> {
 
             let _preFetchSignatureVerificationData: Promise<any> = null;
             if(doPrefetchData) {
-                if((this.swapContract as any).preFetchForInitSignatureVerification!=null) {
+                if(this.swapContract.preFetchForInitSignatureVerification!=null) {
                     _preFetchSignatureVerificationData = responseBody.signDataPrefetch.then(obj => {
                         if(obj==null) return null;
                         return (this.swapContract as any).preFetchForInitSignatureVerification(obj);
@@ -257,10 +259,20 @@ export class ClientSwapContract<T extends SwapData> {
                 }
             }
 
+            const [
+                code,
+                msg,
+                data
+            ] = await Promise.all([
+                responseBody.code,
+                responseBody.msg,
+                responseBody.data.catch(e => null)
+            ]);
+
             const jsonBody = {
-                code: await responseBody.code,
-                msg: await responseBody.msg,
-                data: await responseBody.data.catch(e => null)
+                code,
+                msg,
+                data
             };
 
             return {
@@ -1501,7 +1513,7 @@ export class ClientSwapContract<T extends SwapData> {
                     throw new IntermediaryError("Intermediary doesn't have enough liquidity");
                 }
             }),
-            this.verifyReturnedPrice(true, data, amount, parsedData, requiredToken, requiredBaseFee, requiredFeePPM, pricePrefetchPromise, abortController.signal),
+            this.verifyReturnedPrice(false, data, amount, parsedData, requiredToken, requiredBaseFee, requiredFeePPM, pricePrefetchPromise, abortController.signal),
             this.verifyReturnedSignature(data, parsedData, feeRatePromise, preFetchSignatureVerificationData, abortController.signal)
         ]).catch(e => {
             abortController.abort(e);
