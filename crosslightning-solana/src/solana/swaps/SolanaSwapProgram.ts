@@ -465,14 +465,20 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         const escrowStateKey = this.SwapEscrowState(Buffer.from(paymentHash, "hex"));
 
         //Parallelize signature fetching
+        const abortController = new AbortController();
         const signaturesPromise = this.signer.connection.getSignaturesForAddress(escrowStateKey, {
             limit: 500
+        }).catch(e => {
+            abortController.abort(e)
+            return null;
         });
 
         const escrowState = await this.program.account.escrowState.fetchNullable(escrowStateKey);
         if(escrowState!=null) {
             return SwapCommitStatus.COMMITED;
         }
+
+        abortController.signal.throwIfAborted();
 
         //Check if paid or what
         const signatures = await signaturesPromise;
