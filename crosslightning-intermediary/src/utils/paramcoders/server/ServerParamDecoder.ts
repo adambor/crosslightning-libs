@@ -4,6 +4,15 @@ import {ParamDecoder} from "../ParamDecoder";
 import {ServerParamEncoder} from "./ServerParamEncoder";
 import {ServerResponse} from "http";
 
+export class RequestTimeoutError extends Error {
+
+    constructor() {
+        super("Request timed out");
+        // Set the prototype explicitly.
+        Object.setPrototypeOf(this, RequestTimeoutError.prototype);
+    }
+
+}
 
 export const serverParamDecoder = (timeoutMillis: number) => (req: Request, res: Response, next: () => void) => {
 
@@ -34,7 +43,8 @@ export const serverParamDecoder = (timeoutMillis: number) => (req: Request, res:
         });
 
         timeout = setTimeout(() => {
-            req.destroy(new Error("Timed out"));
+            req.destroy(new RequestTimeoutError());
+            res.destroy(new RequestTimeoutError());
         }, timeoutMillis);
 
         return;
@@ -54,7 +64,8 @@ export const serverParamDecoder = (timeoutMillis: number) => (req: Request, res:
 
     timeout = setTimeout(() => {
         decoder.onEnd();
-        req.destroy(new Error("Timed out"));
+        req.destroy(new RequestTimeoutError());
+        res.destroy(new RequestTimeoutError());
     }, timeoutMillis);
 
     (req as any).paramReader = decoder;
