@@ -4,6 +4,7 @@ import {Response} from "cross-fetch";
 import {TokenAddress} from "crosslightning-base";
 import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 import {CoinAddresses} from "./PricesTypes";
+import {HttpResponseError} from "../errors/HttpResponseError";
 
 export type OKXCoinsMapType = {
     [address: string]: {
@@ -146,9 +147,9 @@ export class OKXSwapPrice extends ISwapPrice {
             try {
                 resp = await response.text();
             } catch (e) {
-                throw new Error(response.statusText);
+                throw new HttpResponseError(response.statusText);
             }
-            throw new Error(resp);
+            throw new HttpResponseError(resp);
         }
 
         let jsonBody: any = await response.json();

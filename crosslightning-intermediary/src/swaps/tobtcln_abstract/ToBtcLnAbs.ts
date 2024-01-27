@@ -273,11 +273,14 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             const success = await this.swapContract.claimWithSecret(invoiceData.data, lnPaymentStatus.payment.secret, false, false, true);
 
-            if(success) {
-                await invoiceData.setState(ToBtcLnSwapState.CLAIMED);
-                // await PluginManager.swapStateChange(invoiceData);
-                await this.removeSwapData(decodedPR.tagsObject.payment_hash, invoiceData.data.getSequence());
-            }
+            if(invoiceData.metadata!=null) invoiceData.metadata.times.txClaimed = Date.now();
+
+            // if(success) {
+            //     if(invoiceData.state!==ToBtcLnSwapState.CLAIMED) {
+            //         await invoiceData.setState(ToBtcLnSwapState.CLAIMED);
+            //         await this.removeSwapData(decodedPR.tagsObject.payment_hash, invoiceData.data.getSequence());
+            //     }
+            // }
             unlock();
 
             return;
@@ -512,7 +515,6 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
                 await savedInvoice.setState(ToBtcLnSwapState.CLAIMED);
                 await this.removeSwapData(paymentHash, event.sequence);
-
                 continue;
             }
             if(event instanceof RefundEvent) {

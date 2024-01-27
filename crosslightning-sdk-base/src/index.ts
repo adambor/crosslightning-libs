@@ -17,10 +17,14 @@ export * from "./errors/NetworkError";
 export * from "./intermediaries/Intermediary";
 export * from "./intermediaries/IntermediaryDiscovery";
 
+export * from "./prices/BinancePriceProvider";
+export * from "./prices/OKXPriceProvider";
 export * from "./prices/BinanceSwapPrice";
 export * from "./prices/OKXSwapPrice";
 export * from "./prices/CoinGeckoSwapPrice";
 export * from "./prices/PricesTypes";
+export * from "./prices/IPriceProvider";
+export * from "./prices/RedundantSwapPrice";
 
 export * from "./storage/IWrapperStorage";
 export * from "./storage/LocalStorageManager";

@@ -4,6 +4,7 @@ import {Response} from "cross-fetch";
 import {TokenAddress} from "crosslightning-base";
 import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 import {CoinAddresses} from "./PricesTypes";
+import {HttpResponseError} from "../errors/HttpResponseError";
 
 export type BinanceCoinsMapType = {
     [address: string]: {
@@ -126,7 +127,7 @@ export class BinanceSwapPrice extends ISwapPrice {
 
     constructor(maxAllowedFeeDiffPPM: BN, coinsMap?: BinanceCoinsMapType, url?: string, httpRequestTimeout?: number, cacheTimeout?: number) {
         super(maxAllowedFeeDiffPPM);
-        this.url = url || "https://api.binance.us/api/v3";
+        this.url = url || "https://api.binance.com/api/v3";
         if(coinsMap!=null) {
             this.COINS_MAP = coinsMap;
         }
@@ -160,9 +161,9 @@ export class BinanceSwapPrice extends ISwapPrice {
                 try {
                     resp = await response.text();
                 } catch (e) {
-                    throw new Error(response.statusText);
+                    throw new HttpResponseError(response.statusText);
                 }
-                throw new Error(resp);
+                throw new HttpResponseError(resp);
             }
 
             let jsonBody: any = await response.json();
