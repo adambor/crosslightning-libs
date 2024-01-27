@@ -380,20 +380,24 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             return new BN(tokenAccount.amount.toString(10));
         } else {
             const ata: PublicKey = getAssociatedTokenAddressSync(token, this.signer.publicKey);
-            let ataExists: boolean = false;
-            let sum: BN = new BN(0);
-            try {
-                const account = await getAccount(this.signer.connection, ata);
-                ataExists = true;
-                sum = sum.add(new BN(account.amount.toString()));
-            } catch (e) {
-                if(!(e instanceof TokenAccountNotFoundError)) {
+            const [ataAccount, balance] = await Promise.all<[Promise<Account>, Promise<number>]>([
+                getAccount(this.signer.connection, ata).catch(e => {
+                    if(e instanceof TokenAccountNotFoundError) {
+                        return null;
+                    }
                     throw e;
-                }
+                }),
+                (token!=null && token.equals(WSOL_ADDRESS)) ? this.signer.connection.getBalance(this.signer.publicKey) : Promise.resolve(null)
+            ]);
+
+            let ataExists: boolean = ataAccount!=null;
+            let sum: BN = new BN(0);
+            if(ataExists) {
+                sum = sum.add(new BN(ataAccount.amount.toString()));
             }
 
-            if(token!=null && token.equals(WSOL_ADDRESS)) {
-                let balanceLamports: BN = new BN(await this.signer.connection.getBalance(this.signer.publicKey));
+            if(balance!=null) {
+                let balanceLamports: BN = new BN(balance);
                 if(!ataExists) balanceLamports = balanceLamports.sub(await this.getATARentExemptLamports());
                 balanceLamports = balanceLamports.sub(await this.getCommitFee(null)); //Discount commit fee
                 balanceLamports = balanceLamports.sub(new BN(5000)); //Discount refund fee
