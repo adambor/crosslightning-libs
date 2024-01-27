@@ -1,13 +1,15 @@
 import {SolanaSwapData} from "../swaps/SolanaSwapData";
-import {Message, PublicKey} from "@solana/web3.js";
+import {Message, PublicKey, TransactionResponse} from "@solana/web3.js";
 import {AnchorProvider, Event} from "@coral-xyz/anchor";
 import * as fs from "fs/promises";
 import {SolanaSwapProgram} from "../swaps/SolanaSwapProgram";
-import {programIdl} from "../swaps/programIdl";
-import {IdlEvent} from "@coral-xyz/anchor/dist/esm/idl";
+import * as programIdl from "../swaps/programIdl.json";
 import {ChainEvents, SwapEvent, EventListener, ClaimEvent, RefundEvent, InitializeEvent} from "crosslightning-base";
 import * as BN from "bn.js";
-
+import {InitializeIxType, InitializePayInIxType, onceAsync} from "../swaps/Utils";
+import {SwapProgram} from "../swaps/programTypes";
+import {SwapTypeEnum} from "../swaps/SwapTypeEnum";
+import {tryWithRetries} from "../../utils/RetryUtils";
 
 const BLOCKHEIGHT_FILENAME = "/blockheight.txt";
 const LOG_FETCH_INTERVAL = 5*1000;
@@ -20,9 +22,9 @@ for(let ix of programIdl.instructions) {
     nameMappedInstructions[ix.name] = ix;
 }
 
-export type IxWithAccounts = ({name: string, data: any, accounts: {[key: string]: PublicKey}});
+export type IxWithAccounts = InitializeIxType | InitializePayInIxType;
 export type EventObject = {
-    events: Event<IdlEvent, Record<string, any>>[],
+    events: Event<SwapProgram["events"][number], Record<string, any>>[],
     instructions: IxWithAccounts[],
     blockTime: number,
     signature: string
@@ -94,15 +96,12 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
     private async processEvent(eventObject : EventObject) {
         let parsedEvents: SwapEvent<SolanaSwapData>[] = [];
 
-        const initEvents = {};
-
         for(let event of eventObject.events) {
             if(event==null) continue;
             if(event.name==="ClaimEvent") {
                 const secret: Buffer = Buffer.from(event.data.secret);
                 const paymentHash: Buffer = Buffer.from(event.data.hash);
-
-                const parsedEvent = new ClaimEvent<SolanaSwapData>(paymentHash.toString("hex"), secret.toString("hex"));
+                const parsedEvent = new ClaimEvent<SolanaSwapData>(paymentHash.toString("hex"), event.data.sequence, secret.toString("hex"));
                 (parsedEvent as any).meta = {
                     timestamp: eventObject.blockTime,
                     txId: eventObject.signature
@@ -112,8 +111,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
             if(event.name==="RefundEvent") {
                 const paymentHash: Buffer = Buffer.from(event.data.hash);
 
-
-                const parsedEvent = new RefundEvent<SolanaSwapData>(paymentHash.toString("hex"));
+                const parsedEvent = new RefundEvent<SolanaSwapData>(paymentHash.toString("hex"), event.data.sequence);
                 (parsedEvent as any).meta = {
                     timestamp: eventObject.blockTime,
                     txId: eventObject.signature
@@ -122,61 +120,70 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
             }
             if(event.name==="InitializeEvent") {
                 const paymentHash: Buffer = Buffer.from(event.data.hash);
-                initEvents[paymentHash.toString("hex")] = event;
-            }
-        }
-
-        for(let ix of eventObject.instructions) {
-            if (ix == null) continue;
-
-            if (
-                (ix.name === "offererInitializePayIn" || ix.name === "offererInitialize")
-            ) {
-                const paymentHash: Buffer = Buffer.from(ix.data.hash);
-
-                const associatedEvent = initEvents[paymentHash.toString("hex")];
-
-                if(associatedEvent==null) continue;
-
-                const txoHash: Buffer = Buffer.from(associatedEvent.data.txoHash);
-
-                let securityDeposit: BN = new BN(0);
-                let claimerBounty: BN = new BN(0);
-                let payIn: boolean;
-                if(ix.name === "offererInitializePayIn") {
-                    payIn = true;
-                } else {
-                    payIn = false;
-                    securityDeposit = ix.data.securityDeposit;
-                    claimerBounty = ix.data.claimerBounty;
-                }
-
-                const swapData: SolanaSwapData = new SolanaSwapData(
-                    ix.accounts.offerer, //32 bytes
-                    ix.accounts.claimer, //32 bytes
-                    ix.accounts.mint,    //32 bytes
-                    ix.data.initializerAmount, //8 bytes
-                    paymentHash.toString("hex"), //32 bytes
-                    ix.data.expiry, //8 bytes
-                    ix.data.escrowNonce, //8 bytes
-                    ix.data.confirmations, //2 bytes
-                    ix.data.payOut, //1 byte
-                    ix.data.kind, //1 byte
-                    payIn, //1 byte
-                    ix.accounts.initializerDepositTokenAccount, //32 bytes
-                    ix.accounts.claimerTokenAccount, //32 bytes
-                    securityDeposit,
-                    claimerBounty,
-                    Buffer.from(ix.data.txoHash).toString('hex')
-                );
-
-                //const usedNonce = ix.data.nonce.toNumber();
+                // initEvents[paymentHash.toString("hex")] = event;
 
                 const parsedEvent = new InitializeEvent<SolanaSwapData>(
                     paymentHash.toString("hex"),
-                    txoHash.toString("hex"),
-                    0,
-                    swapData
+                    event.data.sequence,
+                    Buffer.from(event.data.txoHash).toString("hex"),
+                    SwapTypeEnum.toChainSwapType(event.data.kind),
+                    onceAsync<SolanaSwapData>(async () => {
+                        if(eventObject.instructions==null) {
+                            const transaction = await tryWithRetries<TransactionResponse>(async () => {
+                                const res = await this.signer.connection.getTransaction(eventObject.signature, {
+                                    commitment: "confirmed"
+                                });
+                                if(res==null) throw new Error("Transaction not found!");
+                                return res;
+                            });
+                            if(transaction==null) return null;
+                            if(transaction.meta.err==null) {
+                                //console.log("Process tx: ", transaction.transaction);
+                                //console.log("Decoded ix: ", decodeInstructions(transaction.transaction.message));
+                                eventObject.instructions = this.decodeInstructions(transaction.transaction.message);
+                            }
+                        }
+                        if(eventObject.instructions!=null) for(let parsedIx of eventObject.instructions) {
+                            if (parsedIx == null) continue;
+
+                            if (
+                                (parsedIx.name === "offererInitializePayIn" || parsedIx.name === "offererInitialize")
+                            ) {
+                                const paymentHash: Buffer = Buffer.from(parsedIx.data.swapData.hash);
+
+                                let securityDeposit: BN = new BN(0);
+                                let claimerBounty: BN = new BN(0);
+                                let payIn: boolean;
+                                if(parsedIx.name === "offererInitializePayIn") {
+                                    payIn = true;
+                                } else {
+                                    payIn = false;
+                                    securityDeposit = parsedIx.data.securityDeposit;
+                                    claimerBounty = parsedIx.data.claimerBounty;
+                                }
+
+                                return new SolanaSwapData(
+                                    parsedIx.accounts.offerer,
+                                    parsedIx.accounts.claimer,
+                                    parsedIx.accounts.mint,
+                                    parsedIx.data.swapData.amount,
+                                    paymentHash.toString("hex"),
+                                    parsedIx.data.swapData.sequence,
+                                    parsedIx.data.swapData.expiry,
+                                    parsedIx.data.swapData.nonce,
+                                    parsedIx.data.swapData.confirmations,
+                                    parsedIx.data.swapData.payOut,
+                                    SwapTypeEnum.toNumber(parsedIx.data.swapData.kind),
+                                    payIn,
+                                    parsedIx.name === "offererInitializePayIn" ? parsedIx.accounts.offererAta : undefined, //32 bytes
+                                    parsedIx.data.swapData.payOut ? parsedIx.accounts.claimerAta : PublicKey.default,
+                                    securityDeposit,
+                                    claimerBounty,
+                                    Buffer.from(event.data.txoHash).toString("hex")
+                                );
+                            }
+                        }
+                    })
                 );
                 (parsedEvent as any).meta = {
                     timestamp: eventObject.blockTime,
@@ -185,6 +192,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                 parsedEvents.push(parsedEvent);
             }
         }
+
 
         for(let listener of this.listeners) {
             await listener(parsedEvents);
@@ -194,8 +202,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
     private eventListeners: number[] = [];
     private signaturesProcessing: {
         [signature: string]: {
-            promise: Promise<boolean>,
-            timeout: NodeJS.Timeout
+            promise: Promise<boolean>
         }
     } = {};
 
@@ -238,7 +245,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
     }
 
     private setupWebsocket() {
-        const eventCallback = (event, slotNumber, signature) => {
+        const eventCallback = (name: "InitializeEvent" | "RefundEvent" | "ClaimEvent") => (data, slotNumber, signature) => {
             if(this.signaturesProcessing[signature]!=null) return;
 
             console.log("[Solana Events WebSocket] Process signature: ", signature);
@@ -251,25 +258,20 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                 timeout: null
             };
 
-            obj.promise = this.fetchTxAndProcessEvent(signature).then(result => {
-                if(!result && this.wsTxFetchRetryTimeout!==0) {
-                    obj.promise = null;
-                    obj.timeout = setTimeout(() => {
-                        console.log("[Solana Events WebSocket] Tx not found, retry in "+this.wsTxFetchRetryTimeout+"ms: ", signature);
-                        obj.timeout = null;
-                        obj.promise = this.fetchTxAndProcessEvent(signature);
-                    }, this.wsTxFetchRetryTimeout);
-                }
-                return result;
-            });
+            obj.promise = this.processEvent({
+                events: [{name, data}],
+                instructions: null,
+                blockTime: Math.floor(Date.now()/1000),
+                signature
+            }).then(() => true);
 
             this.signaturesProcessing[signature] = obj;
 
         };
 
-        this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("InitializeEvent", eventCallback));
-        this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("ClaimEvent", eventCallback));
-        this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("RefundEvent", eventCallback));
+        this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("InitializeEvent", eventCallback("InitializeEvent")));
+        this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("ClaimEvent", eventCallback("ClaimEvent")));
+        this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("RefundEvent", eventCallback("RefundEvent")));
 
     }
 
@@ -316,8 +318,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                 const txSignature = signatures[i].signature;
 
                 const signatureHandlerObj: {
-                    promise: Promise<boolean>,
-                    timeout: NodeJS.Timeout
+                    promise: Promise<boolean>
                 } = this.signaturesProcessing[txSignature];
                 if(signatureHandlerObj!=null) {
                     if(signatureHandlerObj.promise!=null) {
@@ -327,9 +328,6 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                             continue;
                         }
                     }
-                    if(signatureHandlerObj.timeout!=null) {
-                        clearTimeout(signatureHandlerObj.timeout);
-                    }
                     delete this.signaturesProcessing[txSignature];
                 }
 
@@ -337,8 +335,7 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
 
                 const processPromise: Promise<boolean> = this.fetchTxAndProcessEvent(signatures[i].signature);
                 this.signaturesProcessing[txSignature] = {
-                    promise: processPromise,
-                    timeout: null
+                    promise: processPromise
                 };
                 const result = await processPromise;
                 if(!result) throw new Error("Failed to process signature: "+txSignature);

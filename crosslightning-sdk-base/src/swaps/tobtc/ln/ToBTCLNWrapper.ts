@@ -75,7 +75,6 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
             result.prefix,
             result.timeout,
             result.signature,
-            result.nonce,
             result.feeRate,
             url,
             result.confidence,
@@ -106,6 +105,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
      * @param requiredKey       Required key of the Intermediary
      * @param requiredBaseFee   Desired base fee reported by the swap intermediary
      * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
+     * @param exactIn           Whether to do an exactIn swap instead of exactOut
      */
     async createViaLNURL(
         lnurlPay: string | LNURLPay,
@@ -118,14 +118,39 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
         requiredToken?: TokenAddress,
         requiredKey?: string,
         requiredBaseFee?: BN,
-        requiredFeePPM?: BN
+        requiredFeePPM?: BN,
+        exactIn?: boolean
     ): Promise<ToBTCLNSwap<T>> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const fee = this.calculateFeeForAmount(amount, maxBaseFee, maxPPMFee);
+        let fee: Promise<BN>;
+        let pricePreFetch: Promise<BN>;
+        if(exactIn && maxBaseFee==null) {
+            pricePreFetch = this.contract.swapPrice.preFetchPrice(requiredToken);
+            fee = pricePreFetch.then(val => {
+                return this.contract.swapPrice.getFromBtcSwapAmount(new BN(this.contract.options.lightningBaseFee), requiredToken, null, val)
+            }).then(_maxBaseFee => {
+                return this.calculateFeeForAmount(amount, _maxBaseFee, maxPPMFee);
+            });
+        } else {
+            fee = Promise.resolve(this.calculateFeeForAmount(amount, maxBaseFee, maxPPMFee));
+        }
 
-        const result = await this.contract.payLightningLNURL(typeof(lnurlPay)==="string" ? lnurlPay : lnurlPay.params, amount, comment, expirySeconds, fee, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
+        const result = await this.contract.payLightningLNURL(
+            typeof(lnurlPay)==="string" ? lnurlPay : lnurlPay.params,
+            amount,
+            comment,
+            expirySeconds,
+            fee,
+            url,
+            requiredToken,
+            requiredKey,
+            requiredBaseFee,
+            requiredFeePPM,
+            pricePreFetch,
+            exactIn
+        );
 
         const swap = new ToBTCLNSwap(
             this,
@@ -136,7 +161,6 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
             result.prefix,
             result.timeout,
             result.signature,
-            result.nonce,
             result.feeRate,
             url,
             result.confidence,

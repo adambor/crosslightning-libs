@@ -1,12 +1,12 @@
 
 import {Express} from "express";
-import {SwapNonce} from "./SwapNonce";
 import {ISwapPrice} from "./ISwapPrice";
 import {ChainEvents, StorageObject, SwapContract, SwapData, TokenAddress, IStorageManager} from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
 import {SwapHandlerSwap} from "./SwapHandlerSwap";
 import {PluginManager} from "../plugins/PluginManager";
 import {IIntermediaryStorage} from "../storage/IIntermediaryStorage";
+import * as BN from "bn.js";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -36,16 +36,14 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
 
     readonly swapContract: SwapContract<T, any>;
     readonly chainEvents: ChainEvents<T>;
-    readonly nonce: SwapNonce;
     readonly allowedTokens: Set<string>;
     readonly swapPricing: ISwapPrice;
     readonly LND: AuthenticatedLnd;
 
-    protected constructor(storageDirectory: IIntermediaryStorage<V>, path: string, swapContract: SwapContract<T, any>, chainEvents: ChainEvents<T>, swapNonce: SwapNonce, allowedTokens: TokenAddress[], lnd: AuthenticatedLnd, swapPricing: ISwapPrice) {
+    protected constructor(storageDirectory: IIntermediaryStorage<V>, path: string, swapContract: SwapContract<T, any>, chainEvents: ChainEvents<T>, allowedTokens: TokenAddress[], lnd: AuthenticatedLnd, swapPricing: ISwapPrice) {
         this.storageManager = storageDirectory;
         this.swapContract = swapContract;
         this.chainEvents = chainEvents;
-        this.nonce = swapNonce;
         this.path = path;
         this.allowedTokens = new Set<string>(allowedTokens.map(e => e.toString()));
         this.LND = lnd;
@@ -74,10 +72,10 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
      */
     abstract getInfo(): SwapHandlerInfoType;
 
-    async removeSwapData(hash: string) {
-        const swap = await this.storageManager.getData(hash);
+    async removeSwapData(hash: string, sequence: BN) {
+        const swap = await this.storageManager.getData(hash, sequence);
         if(swap!=null) await PluginManager.swapRemove<T>(swap);
-        await this.storageManager.removeData(hash);
+        await this.storageManager.removeData(hash, sequence);
     }
 
 }

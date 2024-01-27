@@ -1,8 +1,32 @@
-import {BorshCoder} from "@coral-xyz/anchor";
+import {BorshCoder, DecodeType, IdlTypes} from "@coral-xyz/anchor";
+import {IdlField} from "@coral-xyz/anchor/dist/cjs/idl";
 import {Message, PublicKey, Transaction} from "@solana/web3.js";
-import {programIdl} from "./programIdl";
+import * as programIdl from "./programIdl.json";
+import {SwapProgram} from "./programTypes";
 
-const coder = new BorshCoder(programIdl);
+type DecodedFieldOrNull<D, Defined> = D extends IdlField ? DecodeType<D["type"], Defined> : unknown;
+
+type ArgsTuple<A extends IdlField[], Defined> = {
+    [K in A[number]["name"]]: DecodedFieldOrNull<Extract<A[number], { name: K }>, Defined>
+};
+
+export type InitializeIxType = {
+    name: "offererInitialize",
+    accounts: {
+        [key in SwapProgram["instructions"][3]["accounts"][number]["name"]]: PublicKey
+    },
+    data: ArgsTuple<SwapProgram["instructions"][3]["args"], IdlTypes<SwapProgram>>
+};
+
+export type InitializePayInIxType = {
+    name: "offererInitializePayIn",
+    accounts: {
+        [key in SwapProgram["instructions"][2]["accounts"][number]["name"]]: PublicKey
+    },
+    data: ArgsTuple<SwapProgram["instructions"][2]["args"], IdlTypes<SwapProgram>>
+};
+
+const coder = new BorshCoder(programIdl as any);
 
 const programPubKey = new PublicKey(programIdl.metadata.address);
 
@@ -22,6 +46,7 @@ class Utils {
             [key: string]: PublicKey
         }
     }[] {
+
 
         const instructions = [];
 
@@ -110,6 +135,19 @@ class Utils {
         return Utils.compactHeader(n) + n * size;
     }
 
+}
+
+export function onceAsync<T>(executor: () => Promise<T>): () => Promise<T> {
+    let promise: Promise<T>;
+
+    return () => {
+        if(promise==null) {
+            promise = executor();
+            return promise;
+        } else {
+            return promise.catch(() => promise = executor());
+        }
+    }
 }
 
 export default Utils;

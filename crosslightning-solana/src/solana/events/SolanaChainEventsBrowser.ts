@@ -1,12 +1,12 @@
-import {AnchorProvider, BorshCoder} from "@coral-xyz/anchor";
+import {AnchorProvider, BorshCoder, DecodeType, IdlTypes, InstructionFn} from "@coral-xyz/anchor";
 import {Message, PublicKey} from "@solana/web3.js";
 import {ChainEvents, ClaimEvent, EventListener, InitializeEvent, RefundEvent} from "crosslightning-base";
 import {IdlInstruction} from "@coral-xyz/anchor/dist/cjs/idl";
 import {SolanaSwapData} from "../swaps/SolanaSwapData";
 import {SolanaSwapProgram} from "../swaps/SolanaSwapProgram";
 import * as BN from "bn.js";
-
-export type IxWithAccounts = ({name: string, data: any, accounts: {[key: string]: PublicKey}});
+import {SwapTypeEnum} from "../swaps/SwapTypeEnum";
+import {InitializeIxType, InitializePayInIxType, onceAsync} from "../swaps/Utils";
 
 export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
 
@@ -70,68 +70,65 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
             const paymentHashBuffer = Buffer.from(event.hash);
             const paymentHashHex = paymentHashBuffer.toString("hex");
 
-            const tx = await this.provider.connection.getTransaction(signature);
+            const parsedEvent: InitializeEvent<SolanaSwapData> = new InitializeEvent<SolanaSwapData>(
+                paymentHashHex,
+                event.sequence,
+                Buffer.from(event.txoHash).toString("hex"),
+                SwapTypeEnum.toChainSwapType(event.kind),
+                onceAsync<SolanaSwapData>(async () => {
+                    const tx = await this.provider.connection.getTransaction(signature);
 
-            if(tx==null) return;
+                    if(tx==null) return null;
 
-            const ixs = this.decodeInstructions(tx.transaction.message);
+                    const ixs = this.decodeInstructions(tx.transaction.message);
 
-            let parsedEvent: InitializeEvent<SolanaSwapData>;
+                    for(let ix of ixs) {
+                        if (ix == null) continue;
 
-            for(let ix of ixs) {
-                if (ix == null) continue;
+                        if (
+                            (ix.name === "offererInitializePayIn" || ix.name === "offererInitialize")
+                        ) {
+                            const parsedIx: InitializePayInIxType | InitializeIxType = ix as any;
 
-                if (
-                    (ix.name === "offererInitializePayIn" || ix.name === "offererInitialize")
-                ) {
-                    const paymentHash: Buffer = Buffer.from(ix.data.hash);
+                            const paymentHash: Buffer = Buffer.from(parsedIx.data.swapData.hash);
 
-                    if(!paymentHashBuffer.equals(paymentHash)) continue;
+                            if(!paymentHashBuffer.equals(paymentHash)) continue;
 
-                    const txoHash: Buffer = Buffer.from(event.txoHash);
+                            let securityDeposit: BN = new BN(0);
+                            let claimerBounty: BN = new BN(0);
+                            let payIn: boolean;
+                            if(parsedIx.name === "offererInitializePayIn") {
+                                payIn = true;
 
-                    let securityDeposit: BN = new BN(0);
-                    let claimerBounty: BN = new BN(0);
-                    let payIn: boolean;
-                    if(ix.name === "offererInitializePayIn") {
-                        payIn = true;
-                    } else {
-                        payIn = false;
-                        securityDeposit = ix.data.securityDeposit;
-                        claimerBounty = ix.data.claimerBounty;
+                            } else {
+                                payIn = false;
+                                securityDeposit = parsedIx.data.securityDeposit;
+                                claimerBounty = parsedIx.data.claimerBounty;
+                            }
+
+                            return new SolanaSwapData(
+                                parsedIx.accounts.offerer,
+                                parsedIx.accounts.claimer,
+                                parsedIx.accounts.mint,
+                                parsedIx.data.swapData.amount,
+                                paymentHash.toString("hex"),
+                                parsedIx.data.swapData.sequence,
+                                parsedIx.data.swapData.expiry,
+                                parsedIx.data.swapData.nonce,
+                                parsedIx.data.swapData.confirmations,
+                                parsedIx.data.swapData.payOut,
+                                SwapTypeEnum.toNumber(parsedIx.data.swapData.kind),
+                                payIn,
+                                parsedIx.name === "offererInitializePayIn" ? parsedIx.accounts.offererAta : undefined, //32 bytes
+                                parsedIx.data.swapData.payOut ? parsedIx.accounts.claimerAta : PublicKey.default,
+                                securityDeposit,
+                                claimerBounty,
+                                Buffer.from(event.txoHash).toString("hex")
+                            );
+                        }
                     }
-
-                    const swapData: SolanaSwapData = new SolanaSwapData(
-                        ix.accounts.offerer,
-                        ix.accounts.claimer,
-                        ix.accounts.mint,
-                        ix.data.initializerAmount,
-                        paymentHash.toString("hex"),
-                        ix.data.expiry,
-                        ix.data.escrowNonce,
-                        ix.data.confirmations,
-                        ix.data.payOut,
-                        ix.data.kind,
-                        payIn,
-                        ix.accounts.initializerDepositTokenAccount, //32 bytes
-                        ix.accounts.claimerTokenAccount,
-                        securityDeposit,
-                        claimerBounty,
-                        Buffer.from(event.txoHash).toString("hex")
-                    );
-
-                    //const usedNonce = ix.data.nonce.toNumber();
-
-                    parsedEvent = new InitializeEvent<SolanaSwapData>(
-                        paymentHash.toString("hex"),
-                        txoHash.toString("hex"),
-                        0,
-                        swapData
-                    );
-                }
-            }
-
-            if(parsedEvent==null) return;
+                })
+            );
 
             for(let listener of this.listeners) {
                 await listener([parsedEvent]);
@@ -142,7 +139,7 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
             const paymentHash = Buffer.from(event.hash).toString("hex");
             const secret = Buffer.from(event.secret).toString("hex");
 
-            const parsedEvent = new ClaimEvent<SolanaSwapData>(paymentHash, secret);
+            const parsedEvent = new ClaimEvent<SolanaSwapData>(paymentHash, event.sequence, secret);
 
             for(let listener of this.listeners) {
                 await listener([parsedEvent]);
@@ -151,7 +148,7 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
         this.eventListeners.push(this.solanaSwapProgram.program.addEventListener("RefundEvent", async (event, slotNumber, signature) => {
             const paymentHash = Buffer.from(event.hash).toString("hex");
 
-            const parsedEvent = new RefundEvent<SolanaSwapData>(paymentHash);
+            const parsedEvent = new RefundEvent<SolanaSwapData>(paymentHash, event.sequence);
 
             for(let listener of this.listeners) {
                 await listener([parsedEvent]);

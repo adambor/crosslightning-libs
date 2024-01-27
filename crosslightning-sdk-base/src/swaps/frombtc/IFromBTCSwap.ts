@@ -18,7 +18,6 @@ export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
     prefix: string;
     timeout: string;
     signature: string;
-    nonce: number;
     feeRate: any;
 
     protected readonly wrapper: IFromBTCWrapper<T>;
@@ -42,7 +41,6 @@ export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
         prefix?: string,
         timeout?: string,
         signature?: string,
-        nonce?: number,
         feeRate?: any,
         expiry?: number,
         pricing?: PriceInfoType
@@ -56,7 +54,6 @@ export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
             this.prefix = prefix;
             this.timeout = timeout;
             this.signature = signature;
-            this.nonce = nonce;
             this.feeRate = feeRate;
             this.expiry = expiry;
         } else {
@@ -68,7 +65,6 @@ export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
             this.prefix = urlOrObject.prefix;
             this.timeout = urlOrObject.timeout;
             this.signature = urlOrObject.signature;
-            this.nonce = urlOrObject.nonce;
             this.feeRate = urlOrObject.feeRate;
             this.commitTxId = urlOrObject.commitTxId;
             this.claimTxId = urlOrObject.claimTxId;
@@ -220,7 +216,6 @@ export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
             prefix: this.prefix,
             timeout: this.timeout,
             signature: this.signature,
-            nonce: this.nonce,
             feeRate: this.feeRate==null ? null : this.feeRate,
             commitTxId: this.commitTxId,
             claimTxId: this.claimTxId,

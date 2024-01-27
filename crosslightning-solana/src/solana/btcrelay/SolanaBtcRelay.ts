@@ -2,10 +2,8 @@ import {AnchorProvider, BN, BorshCoder, EventParser, Program} from "@coral-xyz/a
 import {PublicKey, Signer, SystemProgram, Transaction, TransactionInstruction} from "@solana/web3.js";
 import {SolanaBtcStoredHeader} from "./headers/SolanaBtcStoredHeader";
 import {SolanaBtcHeader} from "./headers/SolanaBtcHeader";
-import {programIdl} from "./program/programIdl";
+import * as programIdl from "./program/programIdl.json";
 import {BitcoinRpc, BtcBlock, BtcRelay, StatePredictorUtils} from "crosslightning-base";
-import {fork} from "child_process";
-import {sign} from "tweetnacl";
 import {SolanaFeeEstimator} from "../..";
 
 const LOG_FETCH_LIMIT = 500;

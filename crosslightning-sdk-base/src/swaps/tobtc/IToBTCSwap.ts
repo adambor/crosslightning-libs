@@ -22,7 +22,6 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
     prefix: string;
     timeout: string;
     signature: string;
-    nonce: number;
     feeRate: any;
 
     secret: string;
@@ -48,13 +47,12 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
         prefix?: string,
         timeout?: string,
         signature?: string,
-        nonce?: number,
         feeRate?: any,
         url?: string,
         expiry?: number,
         pricing?: PriceInfoType
     ) {
-        if(prefix!=null || timeout!=null || signature!=null || nonce!=null || url!=null) {
+        if(prefix!=null || timeout!=null || signature!=null || url!=null) {
             super(pricing);
             this.state = ToBTCSwapState.CREATED;
 
@@ -67,7 +65,6 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
             this.prefix = prefix;
             this.timeout = timeout;
             this.signature = signature;
-            this.nonce = nonce;
             this.feeRate = feeRate;
             this.expiry = expiry;
         } else {
@@ -85,7 +82,6 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
             this.prefix = prOrObject.prefix;
             this.timeout = prOrObject.timeout;
             this.signature = prOrObject.signature;
-            this.nonce = prOrObject.nonce;
             this.feeRate = prOrObject.feeRate;
             this.commitTxId = prOrObject.commitTxId;
             this.refundTxId = prOrObject.refundTxId;
@@ -159,7 +155,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
 
         let txResult;
         try {
-            txResult = await this.wrapper.contract.swapContract.initPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce, !noWaitForConfirmation, skipChecks, abortSignal, this.feeRate);
+            txResult = await this.wrapper.contract.swapContract.initPayIn(this.data, this.timeout, this.prefix, this.signature, !noWaitForConfirmation, skipChecks, abortSignal, this.feeRate);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 console.error(e);
@@ -197,7 +193,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
 
         let result: any[];
         try {
-            result = await this.wrapper.contract.swapContract.txsInitPayIn(this.data, this.timeout, this.prefix, this.signature, this.nonce, skipChecks, this.feeRate);
+            result = await this.wrapper.contract.swapContract.txsInitPayIn(this.data, this.timeout, this.prefix, this.signature, skipChecks, this.feeRate);
         } catch (e) {
             if(e instanceof SignatureVerificationError) {
                 console.error(e);
@@ -472,7 +468,6 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
             prefix: this.prefix,
             timeout: this.timeout,
             signature: this.signature,
-            nonce: this.nonce,
             feeRate: this.feeRate==null ? null : this.feeRate.toString(),
             commitTxId: this.commitTxId,
             refundTxId: this.refundTxId,

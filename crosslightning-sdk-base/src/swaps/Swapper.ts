@@ -373,8 +373,9 @@ export class Swapper<
      * @param expirySeconds         For how long to lock your funds (higher expiry means higher probability of payment success)
      * @param maxRoutingBaseFee     Maximum routing fee to use - base fee (higher routing fee means higher probability of payment success)
      * @param maxRoutingPPM         Maximum routing fee to use - proportional fee in PPM (higher routing fee means higher probability of payment success)
+     * @param exactIn               Whether to do an exact in swap instead of exact out
      */
-    async createToBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurlPay: string | LNURLPay, amount: BN, comment: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN): Promise<ToBTCLNSwap<T>> {
+    async createToBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurlPay: string | LNURLPay, amount: BN, comment: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN, exactIn?: boolean): Promise<ToBTCLNSwap<T>> {
         return this.createSwap<ToBTCLNSwap<T>>(
             (candidate: Intermediary) => this.tobtcln.createViaLNURL(
                 lnurlPay,
@@ -387,11 +388,12 @@ export class Swapper<
                 tokenAddress,
                 candidate.address,
                 new BN(candidate.services[SwapType.TO_BTCLN].swapBaseFee),
-                new BN(candidate.services[SwapType.TO_BTCLN].swapFeePPM)
+                new BN(candidate.services[SwapType.TO_BTCLN].swapFeePPM),
+                exactIn
             ),
             amount,
             tokenAddress,
-            true,
+            !exactIn,
             SwapType.TO_BTCLN
         );
     }

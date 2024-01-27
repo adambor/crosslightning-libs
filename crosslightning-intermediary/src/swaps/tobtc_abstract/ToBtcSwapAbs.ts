@@ -28,7 +28,6 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
     readonly nonce: BN;
     readonly preferedConfirmationTarget: number;
     readonly signatureExpiry: BN;
-    refundAuthTimeout: BN;
 
     realNetworkFee: BN;
     txId: string;
@@ -59,7 +58,6 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
             this.nonce = new BN(prOrObj.nonce);
             this.preferedConfirmationTarget = prOrObj.preferedConfirmationTarget;
             this.signatureExpiry = prOrObj.signatureExpiry==null ? null : new BN(prOrObj.signatureExpiry);
-            this.refundAuthTimeout = prOrObj.refundAuthTimeout==null ? null : new BN(prOrObj.refundAuthTimeout);
 
             this.txId = prOrObj.txId;
         }
@@ -77,7 +75,6 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
         partialSerialized.nonce = this.nonce.toString(10);
         partialSerialized.preferedConfirmationTarget = this.preferedConfirmationTarget;
         partialSerialized.signatureExpiry = this.signatureExpiry==null ? null : this.signatureExpiry.toString(10);
-        partialSerialized.refundAuthTimeout = this.refundAuthTimeout==null ? null : this.refundAuthTimeout.toString(10);
         partialSerialized.txId = this.txId;
         return partialSerialized;
     }

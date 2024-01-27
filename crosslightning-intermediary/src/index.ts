@@ -23,7 +23,6 @@ export * from "./swaps/tobtcln_abstract/ToBtcLnSwapAbs";
 
 export * from "./swaps/ISwapPrice";
 export * from "./swaps/SwapHandler";
-export * from "./swaps/SwapNonce";
 export * from "./swaps/SwapHandlerSwap";
 
 export * from "./plugins/PluginManager";

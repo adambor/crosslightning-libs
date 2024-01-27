@@ -74,6 +74,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
             null,
             null,
             null,
+            null,
             false,
             true,
             result.securityDeposit,
@@ -145,6 +146,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
             null,
             null,
             null,
+            null,
             false,
             true,
             result.securityDeposit,
@@ -212,16 +214,17 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
                 if(event instanceof InitializeEvent) {
                     if(swap.state===FromBTCLNSwapState.PR_PAID) {
+                        const swapData = await event.swapData();
                         if(swap.data!=null) {
                             try {
-                                if(!swap.data.equals(event.swapData)) throw new Error("Unexpected data in event, skipping!");
+                                if(!swap.data.equals(swapData)) throw new Error("Unexpected data in event, skipping!");
                             } catch (e) {
                                 console.error(e);
                                 continue;
                             }
                         }
                         swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
-                        swap.data = event.swapData;
+                        swap.data = swapData;
                         swapChanged = true;
                     }
                 }
@@ -329,7 +332,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
                 try {
                     await tryWithRetries(
-                        () => this.contract.swapContract.isValidInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.nonce, swap.feeRate),
+                        () => this.contract.swapContract.isValidInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.feeRate),
                         null,
                         (e) => e instanceof SignatureVerificationError
                     );

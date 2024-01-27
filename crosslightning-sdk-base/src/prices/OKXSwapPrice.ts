@@ -6,7 +6,7 @@ import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 import {CoinAddresses} from "./PricesTypes";
 import {HttpResponseError} from "../errors/HttpResponseError";
 
-export type BinanceCoinsMapType = {
+export type OKXCoinsMapType = {
     [address: string]: {
         pair: string,
         decimals: number,
@@ -16,13 +16,13 @@ export type BinanceCoinsMapType = {
 
 const CACHE_DURATION = 10000;
 
-export class BinanceSwapPrice extends ISwapPrice {
+export class OKXSwapPrice extends ISwapPrice {
 
-    static createCoinsMap(wbtcAdress?: string, usdcAddress?: string, usdtAddress?: string): BinanceCoinsMapType {
+    static createCoinsMap(wbtcAdress?: string, usdcAddress?: string, usdtAddress?: string): OKXCoinsMapType {
 
         const coinMap = {
             "So11111111111111111111111111111111111111112": {
-                pair: "SOLBTC",
+                pair: "SOL-BTC",
                 decimals: 9,
                 invert: false
             }
@@ -30,21 +30,21 @@ export class BinanceSwapPrice extends ISwapPrice {
 
         if(wbtcAdress!=null) {
             coinMap[wbtcAdress] = {
-                pair: "WBTCBTC",
+                pair: "$fixed-1",
                 decimals: 8,
                 invert: false
             };
         }
         if(usdcAddress!=null) {
             coinMap[usdcAddress] = {
-                pair: "BTCUSDC",
+                pair: "BTC-USDC",
                 decimals: 6,
                 invert: true
             };
         }
         if(usdtAddress!=null) {
             coinMap[usdtAddress] = {
-                pair: "BTCUSDT",
+                pair: "BTC-USDT",
                 decimals: 6,
                 invert: true
             };
@@ -54,34 +54,34 @@ export class BinanceSwapPrice extends ISwapPrice {
 
     }
 
-    static createCoinsMapFromTokens(tokens: CoinAddresses, nativeTokenTicker?: string): BinanceCoinsMapType {
+    static createCoinsMapFromTokens(tokens: CoinAddresses, nativeTokenTicker?: string): OKXCoinsMapType {
 
-        const coinMap: BinanceCoinsMapType = {};
+        const coinMap: OKXCoinsMapType = {};
 
         if(tokens.WBTC!=null) {
             coinMap[tokens.WBTC] = {
-                pair: "WBTCBTC",
+                pair: "$fixed-1",
                 decimals: 8,
                 invert: false
             };
         }
         if(tokens.USDC!=null) {
             coinMap[tokens.USDC] = {
-                pair: "BTCUSDC",
+                pair: "BTC-USDC",
                 decimals: 6,
                 invert: true
             };
         }
         if(tokens.USDT!=null) {
             coinMap[tokens.USDT] = {
-                pair: "BTCUSDT",
+                pair: "BTC-USDT",
                 decimals: 6,
                 invert: true
             };
         }
         if(tokens.ETH!=null || nativeTokenTicker!=null) {
             coinMap[tokens.ETH] = {
-                pair: nativeTokenTicker+"BTC",
+                pair: nativeTokenTicker+"-BTC",
                 decimals: 18,
                 invert: false
             };
@@ -92,24 +92,24 @@ export class BinanceSwapPrice extends ISwapPrice {
     }
 
     url: string;
-    COINS_MAP: BinanceCoinsMapType = {
+    COINS_MAP: OKXCoinsMapType = {
         "6jrUSQHX8MTJbtWpdbx65TAwUv1rLyCF6fVjr9yELS75": {
-            pair: "BTCUSDC",
+            pair: "BTC-USDC",
             decimals: 6,
             invert: true
         },
         "Ar5yfeSyDNDHyq1GvtcrDKjNcoVTQiv7JaVvuMDbGNDT": {
-            pair: "BTCUSDT",
+            pair: "BTC-USDT",
             decimals: 6,
             invert: true
         },
         "So11111111111111111111111111111111111111112": {
-            pair: "SOLBTC",
+            pair: "SOL-BTC",
             decimals: 9,
             invert: false
         },
         "Ag6gw668H9PLQFyP482whvGDoAseBWfgs5AfXCAK3aMj": {
-            pair: "WBTCBTC",
+            pair: "$fixed-1",
             decimals: 8,
             invert: false
         }
@@ -119,20 +119,42 @@ export class BinanceSwapPrice extends ISwapPrice {
 
     cache: {
         [pair: string]: {
-            price: number,
+            price: Promise<number>,
             expiry: number
         }
     } = {};
     cacheTimeout: number;
 
-    constructor(maxAllowedFeeDiffPPM: BN, coinsMap?: BinanceCoinsMapType, url?: string, httpRequestTimeout?: number, cacheTimeout?: number) {
+    constructor(maxAllowedFeeDiffPPM: BN, coinsMap?: OKXCoinsMapType, url?: string, httpRequestTimeout?: number, cacheTimeout?: number) {
         super(maxAllowedFeeDiffPPM);
-        this.url = url || "https://api.binance.com/api/v3";
+        this.url = url || "https://www.okx.com/api/v5";
         if(coinsMap!=null) {
             this.COINS_MAP = coinsMap;
         }
         this.httpRequestTimeout = httpRequestTimeout;
         this.cacheTimeout = cacheTimeout || CACHE_DURATION
+    }
+
+    async fetchPrice(pair: string, abortSignal?: AbortSignal): Promise<number> {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(this.url+"/market/index-tickers?instId="+pair, {
+            method: "GET",
+            timeout: this.httpRequestTimeout,
+            signal: abortSignal
+        }), null ,null, abortSignal);
+
+        if(response.status!==200) {
+            let resp: string;
+            try {
+                resp = await response.text();
+            } catch (e) {
+                throw new HttpResponseError(response.statusText);
+            }
+            throw new HttpResponseError(resp);
+        }
+
+        let jsonBody: any = await response.json();
+
+        return parseFloat(jsonBody.data[0].idxPx);
     }
 
     /**
@@ -148,39 +170,28 @@ export class BinanceSwapPrice extends ISwapPrice {
             return new BN(Math.floor(amt*1000));
         }
 
+        let thisFetch: Promise<number>;
         const cachedValue = this.cache[pair];
         if(cachedValue==null || cachedValue.expiry<Date.now()) {
-            const response: Response = await tryWithRetries(() => fetchWithTimeout(this.url+"/ticker/price?symbol="+pair, {
-                method: "GET",
-                timeout: this.httpRequestTimeout,
-                signal: abortSignal
-            }), null ,null, abortSignal);
-
-            if(response.status!==200) {
-                let resp: string;
-                try {
-                    resp = await response.text();
-                } catch (e) {
-                    throw new HttpResponseError(response.statusText);
-                }
-                throw new HttpResponseError(resp);
-            }
-
-            let jsonBody: any = await response.json();
-
-            const price: number = parseFloat(jsonBody.price);
-
+            thisFetch = this.fetchPrice(pair, abortSignal);
             this.cache[pair] = {
-                price,
+                price: thisFetch,
                 expiry: Date.now()+this.cacheTimeout
             };
         }
 
+        let price: number;
+        if(thisFetch!=null) {
+            price = await thisFetch;
+        } else {
+            price = await this.cache[pair].price.catch(e => this.fetchPrice(pair, abortSignal));
+        }
+
         let result: BN;
         if(invert) {
-            result = new BN(Math.floor((1/this.cache[pair].price)*100000000000));
+            result = new BN(Math.floor((1/price)*100000000000));
         } else {
-            result = new BN(Math.floor(this.cache[pair].price*100000000000));
+            result = new BN(Math.floor(price*100000000000));
         }
 
         return result;

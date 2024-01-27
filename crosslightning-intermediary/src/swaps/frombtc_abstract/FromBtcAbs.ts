@@ -2,7 +2,6 @@ import * as BN from "bn.js";
 import * as lncli from "ln-service";
 import {Express} from "express";
 import {FromBtcSwapAbs, FromBtcSwapState} from "./FromBtcSwapAbs";
-import {SwapNonce} from "../SwapNonce";
 import {SwapHandler, SwapHandlerType} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
 import {
@@ -23,7 +22,6 @@ import {createHash} from "crypto";
 import {expressHandlerWrapper, FieldTypeEnum, verifySchema} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
-import {FromBtcLnSwapState} from "../..";
 
 export type FromBtcConfig = {
     authorizationTimeout: number,
@@ -60,13 +58,12 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
         path: string,
         swapContract: SwapContract<T, any>,
         chainEvents: ChainEvents<T>,
-        swapNonce: SwapNonce,
         allowedTokens: TokenAddress[],
         lnd: AuthenticatedLnd,
         swapPricing: ISwapPrice,
         config: FromBtcConfig
     ) {
-        super(storageDirectory, path, swapContract, chainEvents, swapNonce, allowedTokens, lnd, swapPricing);
+        super(storageDirectory, path, swapContract, chainEvents, allowedTokens, lnd, swapPricing);
         const anyConfig = config as any;
         anyConfig.swapTsCsvDelta = new BN(config.swapCsvDelta).mul(config.bitcoinBlocktime.div(config.safetyFactor));
         this.config = anyConfig;
@@ -147,11 +144,11 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                     const isCommited = await this.swapContract.isCommited(swap.data);
                     if(isCommited) {
                         await swap.setState(FromBtcSwapState.COMMITED);
-                        await this.storageManager.saveData(this.getChainHash(swap).toString("hex"), swap);
+                        await this.storageManager.saveData(this.getChainHash(swap).toString("hex"), swap.data.getSequence(), swap);
                         continue;
                     }
                     await swap.setState(FromBtcSwapState.CANCELED);
-                    await this.removeSwapData(this.getChainHash(swap).toString("hex"));
+                    await this.removeSwapData(this.getChainHash(swap).toString("hex"), swap.data.getSequence());
                 }
                 continue;
             }
@@ -169,7 +166,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                     }
 
                     await swap.setState(FromBtcSwapState.CANCELED);
-                    await this.removeSwapData(this.getChainHash(swap).toString("hex"));
+                    await this.removeSwapData(this.getChainHash(swap).toString("hex"), swap.data.getSequence());
                 }
             }
         }
@@ -194,41 +191,35 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
         for(let event of eventData) {
 
             if(event instanceof InitializeEvent) {
-                if (!this.swapContract.areWeOfferer(event.swapData)) {
+                if (event.swapType !== ChainSwapType.CHAIN) {
+                    //Only process on-chain requests
                     continue;
                 }
 
-                if (event.swapData.isPayIn()) {
+                const swapData = await event.swapData();
+
+                if (!this.swapContract.areWeOfferer(swapData)) {
+                    continue;
+                }
+
+                if (swapData.isPayIn()) {
                     //Only process requests that don't pay in from the program
-                    continue;
-                }
-
-                if (event.swapData.getType() !== ChainSwapType.CHAIN) {
-                    //Only process nonced on-chain requests
                     continue;
                 }
 
                 const paymentHash = event.paymentHash;
                 const paymentHashBuffer = Buffer.from(paymentHash, "hex");
-                const savedSwap = await this.storageManager.getData(paymentHash);
+                const savedSwap = await this.storageManager.getData(paymentHash, event.sequence);
 
                 const isSwapFound = savedSwap != null;
                 if (isSwapFound) {
                     if(savedSwap.metadata!=null) savedSwap.metadata.times.initTxReceived = Date.now();
-                    await savedSwap.setState(FromBtcSwapState.COMMITED);
-                }
 
-                const usedNonce = event.signatureNonce;
-                const tokenAdress = event.swapData.getToken().toString();
-
-                const hasHigherNonce = usedNonce > this.nonce.getNonce(tokenAdress);
-                if (hasHigherNonce) {
-                    await this.nonce.saveNonce(tokenAdress, usedNonce);
-                }
-
-                if (isSwapFound) {
-                    savedSwap.data = event.swapData;
-                    await this.storageManager.saveData(paymentHashBuffer.toString("hex"), savedSwap);
+                    if(savedSwap.state===FromBtcSwapState.CREATED) {
+                        await savedSwap.setState(FromBtcSwapState.COMMITED);
+                        savedSwap.data = swapData;
+                        await this.storageManager.saveData(paymentHashBuffer.toString("hex"), event.sequence, savedSwap);
+                    }
                 }
 
                 continue;
@@ -237,7 +228,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 const paymentHashHex = event.paymentHash;
                 const paymentHash: Buffer = Buffer.from(paymentHashHex, "hex");
 
-                const savedSwap = await this.storageManager.getData(paymentHashHex);
+                const savedSwap = await this.storageManager.getData(paymentHashHex, event.sequence);
 
                 const isSwapNotFound = savedSwap == null;
                 if (isSwapNotFound) {
@@ -250,7 +241,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 //await PluginManager.swapStateChange(savedSwap);
 
                 console.log("[From BTC: Solana.ClaimEvent] Swap claimed by claimer: ", paymentHashHex);
-                await this.removeSwapData(paymentHash.toString("hex"));
+                await this.removeSwapData(paymentHash.toString("hex"), event.sequence);
 
                 continue;
             }
@@ -259,7 +250,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                     continue;
                 }
 
-                const savedSwap = await this.storageManager.getData(event.paymentHash);
+                const savedSwap = await this.storageManager.getData(event.paymentHash, event.sequence);
 
                 const isSwapNotFound = savedSwap == null;
                 if (isSwapNotFound) {
@@ -267,7 +258,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 }
 
                 await savedSwap.setState(FromBtcSwapState.REFUNDED);
-                await this.removeSwapData(event.paymentHash);
+                await this.removeSwapData(event.paymentHash, event.sequence);
 
                 continue;
             }
@@ -302,6 +293,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
              *  - addFee: string                Additional fee to add to the final claimer bounty
              * exactOut: boolean             Whether the swap should be an exact out instead of exact in swap
              * feeRate: string              Fee rate to be used for init signature
+             * sequence: BN                 Unique sequence number for the swap
              */
 
             const parsedBody = verifySchema(req.body, {
@@ -318,12 +310,20 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                     startTimestamp: FieldTypeEnum.BN,
                     addBlock: FieldTypeEnum.BN,
                     addFee: FieldTypeEnum.BN,
-                }
+                },
+                sequence: FieldTypeEnum.BN
             });
 
             if(parsedBody==null) {
                 res.status(400).json({
                     msg: "Invalid request body"
+                });
+                return;
+            }
+
+            if(parsedBody.sequence.isNeg() || parsedBody.sequence.gte(new BN(2).pow(new BN(64)))) {
+                res.status(400).json({
+                    msg: "Invalid sequence"
                 });
                 return;
             }
@@ -352,6 +352,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 this.swapContract.getAddress(),
                 parsedBody.address,
                 useToken,
+                null,
                 null,
                 null,
                 null,
@@ -533,6 +534,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 useToken,
                 total,
                 paymentHash.toString("hex"),
+                parsedBody.sequence,
                 expiry,
                 new BN(0),
                 this.config.confirmations,
@@ -551,7 +553,6 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
             const feeRate = req.body.feeRate!=null && typeof(req.body.feeRate)==="string" ? req.body.feeRate : null;
             const sigData = await this.swapContract.getInitSignature(
                 data,
-                this.nonce,
                 this.config.authorizationTimeout,
                 signDataPrefetchPromise==null ? null : await signDataPrefetchPromise,
                 feeRate
@@ -563,7 +564,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
             await PluginManager.swapCreate(createdSwap);
 
-            await this.storageManager.saveData(this.getChainHash(createdSwap).toString("hex"), createdSwap);
+            await this.storageManager.saveData(this.getChainHash(createdSwap).toString("hex"), createdSwap.data.getSequence(), createdSwap);
 
             res.status(200).json({
                 code: 10000,
@@ -575,7 +576,6 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                     swapFee: swapFeeInToken.toString(10),
                     total: total.toString(10),
                     data: data.serialize(),
-                    nonce: sigData.nonce,
                     prefix: sigData.prefix,
                     timeout: sigData.timeout,
                     signature: sigData.signature

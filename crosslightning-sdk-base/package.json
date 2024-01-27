@@ -1,6 +1,6 @@
 {
   "name": "crosslightning-sdk-base",
-  "version": "7.11.3",
+  "version": "8.1.6",
   "description": "CrossLightning SDK chain-agnostic base",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",
@@ -22,18 +22,19 @@
   "author": "adambor",
   "license": "ISC",
   "dependencies": {
-    "@bitcoinerlab/secp256k1": "^1.0.5",
-    "bitcoinjs-lib": "^6.1.5",
-    "bn.js": "^5.2.1",
-    "bolt11": "^1.4.0",
-    "buffer": "^6.0.3",
-    "cross-fetch": "^3.1.5",
-    "crosslightning-base": "^4.4.0",
-    "crosslightning-sdk-base": "^7.9.0",
-    "crypto-browserify": "^3.12.0",
-    "js-lnurl": "^0.5.1"
+    "@bitcoinerlab/secp256k1": "1.0.5",
+    "@types/bn.js": "5.1.5",
+    "bitcoinjs-lib": "6.1.5",
+    "bn.js": "5.2.1",
+    "bolt11": "1.4.1",
+    "buffer": "6.0.3",
+    "cross-fetch": "3.1.5",
+    "crosslightning-base": "6.0.0",
+    "crosslightning-sdk-base": "7.9.0",
+    "crypto-browserify": "3.12.0",
+    "js-lnurl": "0.5.1"
   },
   "devDependencies": {
-    "typescript": "^4.9.5"
+    "typescript": "4.9.5"
   }
 }
