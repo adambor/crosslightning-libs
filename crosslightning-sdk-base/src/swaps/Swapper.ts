@@ -60,7 +60,7 @@ export type SwapperOptions = {
 export class Swapper<
     T extends SwapData,
     E extends ChainEvents<T>,
-    P extends SwapContract<T, any>,
+    P extends SwapContract<T, any, any, any>,
     TokenAddressType> {
 
     tobtcln: ToBTCLNWrapper<T>;

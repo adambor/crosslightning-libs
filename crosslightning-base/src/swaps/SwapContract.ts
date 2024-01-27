@@ -17,7 +17,7 @@ export type IntermediaryReputationType = {
     }
 };
 
-export interface SwapContract<T extends SwapData, TX> {
+export interface SwapContract<T extends SwapData, TX, PreFetchData, PreFetchVerification> {
 
     claimWithSecretTimeout: number;
     claimWithTxDataTimeout: number;
@@ -55,24 +55,25 @@ export interface SwapContract<T extends SwapData, TX> {
 
     isRequestRefundable(swapData: T): Promise<boolean>;
 
-    preFetchBlockDataForSignatures?(): Promise<any>;
+    preFetchBlockDataForSignatures?(): Promise<PreFetchData>;
+    preFetchForInitSignatureVerification?(data: PreFetchData): Promise<PreFetchVerification>;
 
-    getClaimInitSignature(swapData: T, authorizationTimeout: number, preFetchedBlockData?: any, feeRate?: any): Promise<{
+    getClaimInitSignature(swapData: T, authorizationTimeout: number, preFetchedBlockData?: PreFetchData, feeRate?: any): Promise<{
         prefix: string,
         timeout: string,
         signature: string
     }>;
-    isValidClaimInitAuthorization(swapData: T, timeout: string, prefix: string, signature: string, feeRate?: any): Promise<Buffer | null>;
-    getClaimInitAuthorizationExpiry(swapData: T, timeout: string, prefix: string, signature: string): Promise<number>;
+    isValidClaimInitAuthorization(swapData: T, timeout: string, prefix: string, signature: string, feeRate?: any, preFetchedVerificationData?: PreFetchVerification): Promise<Buffer | null>;
+    getClaimInitAuthorizationExpiry(swapData: T, timeout: string, prefix: string, signature: string, preFetchedVerificationData?: PreFetchVerification): Promise<number>;
     isClaimInitAuthorizationExpired(swapData: T, timeout: string, prefix: string, signature: string): Promise<boolean>;
 
-    getInitSignature(swapData: T, authorizationTimeout: number, preFetchedBlockData?: any, feeRate?: any): Promise<{
+    getInitSignature(swapData: T, authorizationTimeout: number, preFetchedBlockData?: PreFetchData, feeRate?: any): Promise<{
         prefix: string,
         timeout: string,
         signature: string
     }>;
-    isValidInitAuthorization(swapData: T, timeout: string, prefix: string, signature: string, feeRate?: any): Promise<Buffer | null>;
-    getInitAuthorizationExpiry(swapData: T, timeout: string, prefix: string, signature: string): Promise<number>;
+    isValidInitAuthorization(swapData: T, timeout: string, prefix: string, signature: string, feeRate?: any, preFetchedVerificationData?: PreFetchVerification): Promise<Buffer | null>;
+    getInitAuthorizationExpiry(swapData: T, timeout: string, prefix: string, signature: string, preFetchedVerificationData?: PreFetchVerification): Promise<number>;
     isInitAuthorizationExpired(swapData: T, timeout: string, prefix: string, signature: string): Promise<boolean>;
 
     getRefundSignature(swapData: T, authorizationTimeout: number): Promise<{
