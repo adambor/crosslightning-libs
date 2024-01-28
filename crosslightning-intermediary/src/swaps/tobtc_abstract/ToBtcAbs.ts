@@ -158,17 +158,21 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         });
     }
 
-    private async getChainFee(targetAddress: string, targetAmount: number): Promise<{
+    private async getChainFee(targetAddress: string, targetAmount: number, multiplier?: number): Promise<{
         satsPerVbyte: number,
         fee: number,
         inputs: CoinselectTxInput[],
         outputs: CoinselectTxOutput[]
     } | null> {
-        const satsPerVbyte: number | null = this.config.feeEstimator==null
+        let satsPerVbyte: number | null = this.config.feeEstimator==null
             ? await lncli.getChainFeeRate({lnd: this.LND}).then(res => res.tokens_per_vbyte).catch(e => console.error(e))
             : await this.config.feeEstimator.estimateFee();
 
         if(satsPerVbyte==null) return null;
+
+        if(multiplier!=null) satsPerVbyte *= multiplier;
+
+        satsPerVbyte = Math.ceil(satsPerVbyte);
 
         const utxos = await this.getSpendableUtxos();
 
@@ -929,7 +933,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             metadata.times.amountsChecked = Date.now();
 
-            let chainFeeResp = await this.getChainFee(parsedBody.address, amountBD.toNumber());
+            let chainFeeResp = await this.getChainFee(parsedBody.address, amountBD.toNumber(), this.config.networkFeeMultiplierPPM.toNumber()/1000000);
 
             abortController.signal.throwIfAborted();
 
@@ -944,17 +948,11 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 return;
             }
 
-            const networkFee = chainFeeResp.fee;
-            const feeSatsPervByte = chainFeeResp.satsPerVbyte;
-
-            console.log("[To BTC: REST.PayInvoice] Total network fee: ", networkFee);
-            console.log("[To BTC: REST.PayInvoice] Network fee (sats/vB): ", feeSatsPervByte);
-
-            const networkFeeAdjusted = new BN(networkFee).mul(this.config.networkFeeMultiplierPPM).div(new BN(1000000));
-            const feeSatsPervByteAdjusted = new BN(feeSatsPervByte).mul(this.config.networkFeeMultiplierPPM).div(new BN(1000000));
+            const networkFeeAdjusted = new BN(chainFeeResp.fee);
+            const feeSatsPervByteAdjusted = new BN(chainFeeResp.satsPerVbyte);
 
             console.log("[To BTC: REST.PayInvoice] Adjusted total network fee: ", networkFeeAdjusted.toString(10));
-            console.log("[To BTC: REST.PayInvoice] Adjusted network fee (sats/vB): ", feeSatsPervByteAdjusted.toString(10));
+            console.log("[To BTC: REST.PayInvoice] Adjusted network fee (sats/vB): ", feeSatsPervByteAdjusted.toString());
 
             if(parsedBody.exactIn) {
                 //Decrease by network fee
