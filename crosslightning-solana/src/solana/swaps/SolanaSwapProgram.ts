@@ -1136,7 +1136,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 this.signer.connection.sendRawTransaction(rawTx, {skipPreflight: true}).then(result => {
                     console.log("SolanaSwapProgram: resendTransaction(): ", result);
                 }).catch(e => console.error("SolanaSwapProgram: resendTransaction(): ", e));
-            }, 5000);
+            }, 3000);
             abortController.signal.addEventListener("abort", () => clearInterval(intervalWatchdog));
 
             this.signer.connection.confirmTransaction({
