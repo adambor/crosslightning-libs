@@ -5,6 +5,13 @@ import {ISwapPrice} from "../swaps/ISwapPrice";
 import {CoinAddresses} from "./PricesTypes";
 import {tryWithRetries} from "../utils/RetryUtils";
 import {HttpResponseError} from "../errors/HttpResponseError";
+import {BinancePriceProvider} from "./BinancePriceProvider";
+import {BinanceSwapPrice} from "./BinanceSwapPrice";
+import {OKXPriceProvider} from "./OKXPriceProvider";
+import {OKXSwapPrice} from "./OKXSwapPrice";
+import {CoinGeckoPriceProvider} from "./CoinGeckoPriceProvider";
+import {CoinGeckoSwapPrice} from "./CoinGeckoSwapPrice";
+import {CoinPaprikaPriceProvider} from "./CoinPaprikaPriceProvider";
 
 function promiseAny(promises: Promise<any>[]): Promise<any> {
     return new Promise<any>((resolve, reject) => {
@@ -29,6 +36,32 @@ function promiseAny(promises: Promise<any>[]): Promise<any> {
 const CACHE_DURATION = 10000;
 
 export class RedundantSwapPrice extends ISwapPrice {
+
+    static create(maxAllowedFeeDiffPPM: BN, cacheTimeout?: number, wbtcAdress?: string, usdcAddress?: string, usdtAddress?: string): RedundantSwapPrice {
+
+        const priceApis = [
+            new BinancePriceProvider(BinanceSwapPrice.createCoinsMap(wbtcAdress, usdcAddress, usdtAddress)),
+            new OKXPriceProvider(OKXSwapPrice.createCoinsMap(wbtcAdress, usdcAddress, usdtAddress)),
+            new CoinGeckoPriceProvider(CoinGeckoSwapPrice.createCoinsMap(wbtcAdress, usdcAddress, usdtAddress)),
+            new CoinPaprikaPriceProvider(CoinPaprikaPriceProvider.createCoinsMap(wbtcAdress, usdcAddress, usdtAddress))
+        ];
+
+        return new RedundantSwapPrice(maxAllowedFeeDiffPPM, RedundantSwapPrice.createCoinsMap(wbtcAdress, usdcAddress, usdtAddress), priceApis, cacheTimeout);
+
+    }
+
+    static createFromTokens(maxAllowedFeeDiffPPM: BN, tokens: CoinAddresses, cacheTimeout?: number, nativeTokenTicker?: string): RedundantSwapPrice {
+
+        const priceApis = [
+            new BinancePriceProvider(BinanceSwapPrice.createCoinsMapFromTokens(tokens, nativeTokenTicker)),
+            new OKXPriceProvider(OKXSwapPrice.createCoinsMapFromTokens(tokens, nativeTokenTicker)),
+            new CoinGeckoPriceProvider(CoinGeckoSwapPrice.createCoinsMapFromTokens(tokens, nativeTokenTicker)),
+            new CoinPaprikaPriceProvider(CoinPaprikaPriceProvider.createCoinsMapFromTokens(tokens, nativeTokenTicker))
+        ];
+
+        return new RedundantSwapPrice(maxAllowedFeeDiffPPM, RedundantSwapPrice.createCoinsMapFromTokens(tokens, nativeTokenTicker), priceApis, cacheTimeout);
+
+    }
 
     static createCoinsMap(wbtcAdress?: string, usdcAddress?: string, usdtAddress?: string): {[key: string]: number} {
 
