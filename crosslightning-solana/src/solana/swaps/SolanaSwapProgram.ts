@@ -1112,7 +1112,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         ));
     }
 
-    confirmTransaction(signature: string, blockhash: string, lastValidBlockHeight: number, abortSignal?: AbortSignal, commitment?: Commitment) {
+    confirmTransaction(rawTx: Buffer, signature: string, blockhash: string, lastValidBlockHeight: number, abortSignal?: AbortSignal, commitment?: Commitment) {
         return new Promise<void>((resolve, reject) => {
             if(abortSignal!=null && abortSignal.aborted) {
                 reject("Aborted");
@@ -1133,6 +1133,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                         abortController.abort();
                     }
                 }).catch(e => console.error(e));
+                this.signer.connection.sendRawTransaction(rawTx, {skipPreflight: true}).then(result => {
+                    console.log("SolanaSwapProgram: resendTransaction(): ", result);
+                }).catch(e => console.error("SolanaSwapProgram: resendTransaction(): ", e));
             }, 5000);
             abortController.signal.addEventListener("abort", () => clearInterval(intervalWatchdog));
 
@@ -1211,10 +1214,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                     tx,
                     signers: unsignedTx.signers
                 }));
-                const txResult = await tryWithRetries(() => this.signer.connection.sendRawTransaction(tx.serialize(), options), this.retryPolicy);
+                const serializedTx = tx.serialize();
+                const txResult = await tryWithRetries(() => this.signer.connection.sendRawTransaction(serializedTx, options), this.retryPolicy);
                 console.log("Send signed TX: ", txResult);
                 if(waitForConfirmation) {
                     promises.push(this.confirmTransaction(
+                        serializedTx,
                         txResult,
                         tx.recentBlockhash,
                         unsignedTx.tx.lastValidBlockHeight || latestBlockData?.lastValidBlockHeight,
@@ -1242,9 +1247,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                     tx,
                     signers: unsignedTx.signers
                 }));
-                const txResult = await tryWithRetries(() => this.signer.connection.sendRawTransaction(tx.serialize(), options), this.retryPolicy);
+                const serializedTx = tx.serialize();
+                const txResult = await tryWithRetries(() => this.signer.connection.sendRawTransaction(serializedTx, options), this.retryPolicy);
                 console.log("Send signed TX: ", txResult);
                 await this.confirmTransaction(
+                    serializedTx,
                     txResult,
                     tx.recentBlockhash,
                     unsignedTx.tx.lastValidBlockHeight || latestBlockData?.lastValidBlockHeight,
