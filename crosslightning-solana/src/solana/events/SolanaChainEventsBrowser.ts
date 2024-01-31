@@ -1,5 +1,5 @@
 import {AnchorProvider, BorshCoder, DecodeType, IdlTypes, InstructionFn} from "@coral-xyz/anchor";
-import {Message, PublicKey} from "@solana/web3.js";
+import {Message, PublicKey, TransactionResponse} from "@solana/web3.js";
 import {ChainEvents, ClaimEvent, EventListener, InitializeEvent, RefundEvent} from "crosslightning-base";
 import {IdlInstruction} from "@coral-xyz/anchor/dist/cjs/idl";
 import {SolanaSwapData} from "../swaps/SolanaSwapData";
@@ -7,6 +7,7 @@ import {SolanaSwapProgram} from "../swaps/SolanaSwapProgram";
 import * as BN from "bn.js";
 import {SwapTypeEnum} from "../swaps/SwapTypeEnum";
 import {InitializeIxType, InitializePayInIxType, onceAsync} from "../swaps/Utils";
+import {tryWithRetries} from "../../utils/RetryUtils";
 
 export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
 
@@ -76,7 +77,13 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
                 Buffer.from(event.txoHash).toString("hex"),
                 SwapTypeEnum.toChainSwapType(event.kind),
                 onceAsync<SolanaSwapData>(async () => {
-                    const tx = await this.provider.connection.getTransaction(signature);
+                    const tx = await tryWithRetries<TransactionResponse>(async () => {
+                        const res = await this.provider.connection.getTransaction(signature, {
+                            commitment: "confirmed"
+                        });
+                        if(res==null) throw new Error("Transaction not found!");
+                        return res;
+                    });
 
                     if(tx==null) return null;
 
