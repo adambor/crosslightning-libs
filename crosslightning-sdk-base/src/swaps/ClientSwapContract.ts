@@ -824,17 +824,21 @@ export class ClientSwapContract<T extends SwapData> {
             throw RequestError.parse(resp, responseInitial.status);
         }
 
-        const initResp = await responseInitial.json();
+        const jsonBody = await responseInitial.json();
 
-        if(initResp.data.reqId==null) {
+        if(jsonBody.code!==20000) {
+            throw RequestError.parse(JSON.stringify(jsonBody), 400);
+        }
+
+        if(jsonBody.data.reqId==null) {
             throw new IntermediaryError("Invalid reqId returned");
         }
 
-        if(initResp.data.amount==null) {
+        if(jsonBody.data.amount==null) {
             throw new IntermediaryError("Invalid amount returned");
         }
 
-        const amountSats = new BN(initResp.data.amount);
+        const amountSats = new BN(jsonBody.data.amount);
 
         if(amountSats.isZero() || amountSats.isNeg()) {
             throw new IntermediaryError("Invalid amount returned (zero or negative)");
@@ -852,9 +856,9 @@ export class ClientSwapContract<T extends SwapData> {
         }
 
         let preFetchSignatureVerificationData: Promise<any>;
-        if(initResp.signDataPrefetch!=null) {
+        if(jsonBody.signDataPrefetch!=null) {
             if((this.swapContract as any).preFetchForInitSignatureVerification!=null) {
-                preFetchSignatureVerificationData = (this.swapContract as any).preFetchForInitSignatureVerification(initResp.signDataPrefetch).catch(e => {
+                preFetchSignatureVerificationData = (this.swapContract as any).preFetchForInitSignatureVerification(jsonBody.signDataPrefetch).catch(e => {
                     console.error(e);
                     return null;
                 });
@@ -873,7 +877,7 @@ export class ClientSwapContract<T extends SwapData> {
             requiredBaseFee,
             requiredFeePPM,
             true,
-            initResp.data.reqId,
+            jsonBody.data.reqId,
             amount,
             expiryTimestamp,
             feeRatePromise,
