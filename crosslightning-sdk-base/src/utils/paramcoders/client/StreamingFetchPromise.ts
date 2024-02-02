@@ -1,7 +1,6 @@
 import {ParamEncoder} from "../ParamEncoder";
 import {RequestSchema, RequestSchemaResultPromise, verifyField} from "../SchemaVerifier";
 import {ParamDecoder} from "../ParamDecoder";
-import {NetworkError} from "../../..";
 
 export type RequestBody = {
     [key: string]: Promise<any> | any
@@ -187,11 +186,6 @@ export async function streamingFetchPromise<T extends RequestSchema>(url: string
         }
     } else {
         const inputStream = new ParamDecoder();
-        const reader = resp.body.getReader();
-
-        if(init.signal!=null) init.signal.addEventListener("abort", () => {
-            if(!reader.closed) reader.cancel(signal.reason);
-        });
 
         for(let key in schema) {
             responseBody[key] = inputStream.getParam(key).then(value => {
@@ -204,7 +198,29 @@ export async function streamingFetchPromise<T extends RequestSchema>(url: string
             });
         }
 
-        readResponse(reader, inputStream);
+        try {
+            //Read from stream
+            const reader = resp.body.getReader();
+
+            if(init.signal!=null) init.signal.addEventListener("abort", () => {
+                if(!reader.closed) reader.cancel(signal.reason);
+            });
+
+            readResponse(reader, inputStream);
+        } catch (e) {
+            //Read in one piece
+            resp.arrayBuffer().then(respBuffer => {
+                if(init.signal!=null && init.signal.aborted) {
+                    inputStream.onError(init.signal.reason);
+                    return;
+                }
+                inputStream.onData(Buffer.from(respBuffer));
+                inputStream.onEnd();
+            }).catch(e => {
+                inputStream.onError(e);
+            });
+        }
+
     }
 
     return {
