@@ -46,6 +46,8 @@ export class ToBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
             this.maxFee = new BN(prOrObj.maxFee);
             this.signatureExpiry = prOrObj.signatureExpiry==null ? null : new BN(prOrObj.signatureExpiry);
             // this.refundAuthTimeout = prOrObj.refundAuthTimeout==null ? null : new BN(prOrObj.refundAuthTimeout);
+
+            this.realRoutingFee = prOrObj.realRoutingFee==null ? null : new BN(prOrObj.realRoutingFee);
             this.secret = prOrObj.secret;
         }
         this.type = SwapHandlerType.TO_BTCLN;
@@ -59,6 +61,8 @@ export class ToBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
         partialSerialized.maxFee = this.maxFee.toString(10);
         partialSerialized.signatureExpiry = this.signatureExpiry == null ? null : this.signatureExpiry.toString(10);
         // partialSerialized.refundAuthTimeout = this.refundAuthTimeout==null ? null : this.refundAuthTimeout.toString(10);
+
+        partialSerialized.realRoutingFee = this.realRoutingFee == null ? null : this.realRoutingFee.toString(10);
         partialSerialized.secret = this.secret;
         return partialSerialized;
     }
