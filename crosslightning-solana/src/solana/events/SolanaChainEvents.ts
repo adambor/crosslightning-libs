@@ -1,5 +1,5 @@
 import {SolanaSwapData} from "../swaps/SolanaSwapData";
-import {Message, PublicKey, TransactionResponse} from "@solana/web3.js";
+import {Message, ParsedMessage, ParsedTransactionWithMeta, PartiallyDecodedInstruction, PublicKey, TransactionResponse} from "@solana/web3.js";
 import {AnchorProvider, Event} from "@coral-xyz/anchor";
 import * as fs from "fs/promises";
 import {SolanaSwapProgram} from "../swaps/SolanaSwapProgram";
@@ -32,21 +32,24 @@ export type EventObject = {
 
 export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
 
-    private decodeInstructions(transactionMessage: Message): IxWithAccounts[] {
+    private decodeInstructions(transactionMessage: ParsedMessage): IxWithAccounts[] {
 
         const instructions: IxWithAccounts[] = [];
 
-        for(let ix of transactionMessage.instructions) {
-            if(transactionMessage.accountKeys[ix.programIdIndex].equals(this.solanaSwapProgram.program.programId)) {
-                const parsedIx: any = this.solanaSwapProgram.coder.instruction.decode(ix.data, 'base58');
-                const accountsData = nameMappedInstructions[parsedIx.name];
-                if(accountsData!=null && accountsData.accounts!=null) {
-                    parsedIx.accounts = {};
-                    for(let i=0;i<accountsData.accounts.length;i++) {
-                        parsedIx.accounts[accountsData.accounts[i].name] = transactionMessage.accountKeys[ix.accounts[i]]
+        for(let _ix of transactionMessage.instructions) {
+            if(_ix.programId.equals(this.solanaSwapProgram.program.programId)) {
+                if((_ix as PartiallyDecodedInstruction).data!=null) {
+                    const ix: PartiallyDecodedInstruction = _ix as PartiallyDecodedInstruction;
+                    const parsedIx: any = this.solanaSwapProgram.coder.instruction.decode(ix.data, 'base58');
+                    const accountsData = nameMappedInstructions[parsedIx.name];
+                    if(accountsData!=null && accountsData.accounts!=null) {
+                        parsedIx.accounts = {};
+                        for(let i=0;i<accountsData.accounts.length;i++) {
+                            parsedIx.accounts[accountsData.accounts[i].name] = ix.accounts[i];
+                        }
                     }
+                    instructions.push(parsedIx);
                 }
-                instructions.push(parsedIx);
             } else {
                 instructions.push(null);
             }
@@ -129,9 +132,10 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                     SwapTypeEnum.toChainSwapType(event.data.kind),
                     onceAsync<SolanaSwapData>(async () => {
                         if(eventObject.instructions==null) {
-                            const transaction = await tryWithRetries<TransactionResponse>(async () => {
-                                const res = await this.signer.connection.getTransaction(eventObject.signature, {
-                                    commitment: "confirmed"
+                            const transaction = await tryWithRetries<ParsedTransactionWithMeta>(async () => {
+                                const res = await this.signer.connection.getParsedTransaction(eventObject.signature, {
+                                    commitment: "confirmed",
+                                    maxSupportedTransactionVersion: 0
                                 });
                                 if(res==null) throw new Error("Transaction not found!");
                                 return res;
@@ -212,8 +216,9 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
             // if(result.value.err!=null) {
             //     return true;
             // }
-            const transaction = await this.signer.connection.getTransaction(signature, {
-                commitment: "confirmed"
+            const transaction = await this.signer.connection.getParsedTransaction(signature, {
+                commitment: "confirmed",
+                maxSupportedTransactionVersion: 0
             });
             if(transaction==null) return false;
             if(transaction.meta.err==null) {
