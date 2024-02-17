@@ -2207,7 +2207,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 vault
             ];
 
-            if(swapData.offererAta!=null) {
+            if(swapData.offererAta!=null && !swapData.offererAta.equals(PublicKey.default)) {
                 accounts.push(swapData.offererAta);
             }
         } else {
@@ -2240,7 +2240,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 vault
             ];
 
-            if(swapData.claimerAta!=null) {
+            if(swapData.claimerAta!=null && !swapData.claimerAta.equals(PublicKey.default)) {
                 accounts.push(swapData.claimerAta);
             }
         } else {

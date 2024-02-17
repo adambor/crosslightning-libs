@@ -130,7 +130,7 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
                                 parsedIx.data.swapData.payOut,
                                 SwapTypeEnum.toNumber(parsedIx.data.swapData.kind),
                                 payIn,
-                                parsedIx.name === "offererInitializePayIn" ? parsedIx.accounts.offererAta : undefined, //32 bytes
+                                parsedIx.name === "offererInitializePayIn" ? parsedIx.accounts.offererAta : PublicKey.default, //32 bytes
                                 parsedIx.data.swapData.payOut ? parsedIx.accounts.claimerAta : PublicKey.default,
                                 securityDeposit,
                                 claimerBounty,
