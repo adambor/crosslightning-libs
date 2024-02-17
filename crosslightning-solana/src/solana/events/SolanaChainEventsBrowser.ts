@@ -1,5 +1,5 @@
 import {AnchorProvider, BorshCoder, DecodeType, IdlTypes, InstructionFn} from "@coral-xyz/anchor";
-import {Message, PublicKey, TransactionResponse} from "@solana/web3.js";
+import {Message, ParsedMessage, ParsedTransactionWithMeta, PartiallyDecodedInstruction, PublicKey, TransactionResponse} from "@solana/web3.js";
 import {ChainEvents, ClaimEvent, EventListener, InitializeEvent, RefundEvent} from "crosslightning-base";
 import {IdlInstruction} from "@coral-xyz/anchor/dist/cjs/idl";
 import {SolanaSwapData} from "../swaps/SolanaSwapData";
@@ -32,7 +32,7 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
         }
     }
 
-    decodeInstructions(transactionMessage: Message): {
+    decodeInstructions(transactionMessage: ParsedMessage): {
         name: string,
         data: {
             [key: string]: any
@@ -44,17 +44,20 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
 
         const instructions = [];
 
-        for(let ix of transactionMessage.instructions) {
-            if(transactionMessage.accountKeys[ix.programIdIndex].equals(this.solanaSwapProgram.program.programId)) {
-                const parsedIx: any = this.coder.instruction.decode(ix.data, 'base58') as any;
-                const accountsData = this.nameMappedInstructions[parsedIx.name];
-                if(accountsData!=null && accountsData.accounts!=null) {
-                    parsedIx.accounts = {};
-                    for(let i=0;i<accountsData.accounts.length;i++) {
-                        parsedIx.accounts[accountsData.accounts[i].name] = transactionMessage.accountKeys[ix.accounts[i]]
+        for(let _ix of transactionMessage.instructions) {
+            if(_ix.programId.equals(this.solanaSwapProgram.program.programId)) {
+                if((_ix as PartiallyDecodedInstruction).data!=null) {
+                    const ix: PartiallyDecodedInstruction = _ix as PartiallyDecodedInstruction;
+                    const parsedIx: any = this.coder.instruction.decode(ix.data, 'base58') as any;
+                    const accountsData = this.nameMappedInstructions[parsedIx.name];
+                    if (accountsData != null && accountsData.accounts != null) {
+                        parsedIx.accounts = {};
+                        for (let i = 0; i < accountsData.accounts.length; i++) {
+                            parsedIx.accounts[accountsData.accounts[i].name] = ix.accounts[i];
+                        }
                     }
+                    instructions.push(parsedIx);
                 }
-                instructions.push(parsedIx);
             } else {
                 instructions.push(null);
             }
@@ -77,9 +80,10 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
                 Buffer.from(event.txoHash).toString("hex"),
                 SwapTypeEnum.toChainSwapType(event.kind),
                 onceAsync<SolanaSwapData>(async () => {
-                    const tx = await tryWithRetries<TransactionResponse>(async () => {
-                        const res = await this.provider.connection.getTransaction(signature, {
-                            commitment: "confirmed"
+                    const tx = await tryWithRetries<ParsedTransactionWithMeta>(async () => {
+                        const res = await this.provider.connection.getParsedTransaction(signature, {
+                            commitment: "confirmed",
+                            maxSupportedTransactionVersion: 0
                         });
                         if(res==null) throw new Error("Transaction not found!");
                         return res;
