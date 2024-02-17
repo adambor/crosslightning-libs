@@ -436,7 +436,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 limit: 500
             });
             for(let sig of signatures) {
-                const tx = await this.signer.connection.getTransaction(sig.signature);
+                const tx = await this.signer.connection.getTransaction(sig.signature, {
+                    commitment: "confirmed",
+                    maxSupportedTransactionVersion: 0
+                });
                 if(tx.meta.err==null) {
                     const parsedEvents = this.eventParser.parseLogs(tx.meta.logMessages);
 
@@ -488,14 +491,18 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         const signatures = await signaturesPromise;
 
         for(let sig of signatures) {
-            const tx = await this.signer.connection.getTransaction(sig.signature);
+            const tx = await this.signer.connection.getTransaction(sig.signature, {
+                commitment: "confirmed",
+                maxSupportedTransactionVersion: 0
+            });
             if(tx.meta.err==null) {
-                const instructions = Utils.decodeInstructions(tx.transaction.message);
-                for(let ix of instructions) {
-                    if(ix.name==="claimerClaim" || ix.name==="claimerClaimPayOut") {
+                const parsedEvents = this.eventParser.parseLogs(tx.meta.logMessages);
+
+                for(let _event of parsedEvents) {
+                    if(_event.name==="ClaimEvent") {
                         return SwapCommitStatus.PAID;
                     }
-                    if(ix.name==="offererRefund" || ix.name==="offererRefundPayIn") {
+                    if(_event.name==="RefundEvent") {
                         return SwapCommitStatus.NOT_COMMITED;
                     }
                 }
@@ -2620,7 +2627,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
     }
     async getTxStatus(tx: string): Promise<"pending" | "success" | "not_found" | "reverted"> {
         const parsedTx: SolTx = await this.deserializeTx(tx);
-        const txReceipt = await this.signer.connection.getTransaction(bs58.encode(parsedTx.tx.signature));
+        const txReceipt = await this.signer.connection.getTransaction(bs58.encode(parsedTx.tx.signature), {
+            commitment: "confirmed",
+            maxSupportedTransactionVersion: 0
+        });
         if(txReceipt==null) {
             const currentBlockheight = await this.signer.connection.getBlockHeight("processed");
             if(currentBlockheight>parsedTx.tx.lastValidBlockHeight) {
@@ -2633,7 +2643,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         return "success";
     }
     async getTxIdStatus(txId: string): Promise<"pending" | "success" | "not_found" | "reverted"> {
-        const txReceipt = await this.signer.connection.getTransaction(txId);
+        const txReceipt = await this.signer.connection.getTransaction(txId, {
+            commitment: "confirmed",
+            maxSupportedTransactionVersion: 0
+        });
         if(txReceipt==null) return "not_found";
         if(txReceipt.meta.err) return "reverted";
         return "success";
