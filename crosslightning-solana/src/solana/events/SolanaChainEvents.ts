@@ -321,12 +321,10 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                     promise: Promise<boolean>
                 } = this.signaturesProcessing[txSignature];
                 if(signatureHandlerObj!=null) {
-                    if(signatureHandlerObj.promise!=null) {
-                        if(await signatureHandlerObj.promise) {
-                            lastSuccessfulSignature = txSignature;
-                            delete this.signaturesProcessing[txSignature];
-                            continue;
-                        }
+                    if(await signatureHandlerObj.promise) {
+                        lastSuccessfulSignature = txSignature;
+                        delete this.signaturesProcessing[txSignature];
+                        continue;
                     }
                     delete this.signaturesProcessing[txSignature];
                 }
@@ -339,6 +337,8 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                 };
                 const result = await processPromise;
                 if(!result) throw new Error("Failed to process signature: "+txSignature);
+                lastSuccessfulSignature = txSignature;
+                delete this.signaturesProcessing[txSignature];
             }
         } catch (e) {
             console.error(e);
