@@ -1,7 +1,7 @@
 import {BitcoinNetwork} from "../btc/BitcoinNetwork";
 import {ISwapPrice} from "./ISwapPrice";
 import {IWrapperStorage} from "../storage/IWrapperStorage";
-import {ChainEvents, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
+import {ChainEvents, IStorageManager, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
 import {ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";
 import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
 import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
@@ -9,9 +9,7 @@ import {FromBTCWrapper} from "./frombtc/onchain/FromBTCWrapper";
 import {
     ClientSwapContract,
     LNURLPay,
-    LNURLPayParamsWithUrl,
     LNURLWithdraw,
-    LNURLWithdrawParamsWithUrl
 } from "./ClientSwapContract";
 import {IntermediaryDiscovery} from "../intermediaries/IntermediaryDiscovery";
 import * as bitcoin from "bitcoinjs-lib";
@@ -32,9 +30,11 @@ import {BtcRelay} from "crosslightning-base/dist";
 import {MempoolBtcRelaySynchronizer} from "../btc/synchronizer/MempoolBtcRelaySynchronizer";
 import {LocalWrapperStorage} from "../storage/LocalWrapperStorage";
 import {OutOfBoundsError} from "../errors/OutOfBoundsError";
-import {Intermediary} from "..";
+import {Intermediary, LocalStorageManager} from "..";
+import {LnForGasWrapper} from "./swapforgas/ln/LnForGasWrapper";
+import {LnForGasSwap} from "./swapforgas/ln/LnForGasSwap";
 
-export type SwapperOptions = {
+export type SwapperOptions<T extends SwapData> = {
     intermediaryUrl?: string,
     //wbtcToken?: PublicKey,
     pricing?: ISwapPrice,
@@ -50,7 +50,8 @@ export type SwapperOptions = {
         toBtc?: IWrapperStorage,
         fromBtc?: IWrapperStorage,
         toBtcLn?: IWrapperStorage,
-        fromBtcLn?: IWrapperStorage
+        fromBtcLn?: IWrapperStorage,
+        lnForGas?: IStorageManager<LnForGasSwap<T>>
     },
 
     getRequestTimeout?: number,
@@ -68,6 +69,10 @@ export class Swapper<
     frombtcln: FromBTCLNWrapper<T>;
     frombtc: FromBTCWrapper<T>;
 
+    lnforgas: LnForGasWrapper<T>;
+
+    readonly defaultTrustedIntermediaryUrl: string;
+
     readonly intermediaryDiscovery: IntermediaryDiscovery<T>;
     readonly clientSwapContract: ClientSwapContract<T>;
     readonly chainEvents: E;
@@ -76,7 +81,7 @@ export class Swapper<
 
     readonly bitcoinNetwork: bitcoin.Network;
 
-    readonly options: SwapperOptions;
+    readonly options: SwapperOptions<T>;
 
     constructor(
         btcRelay: BtcRelay<any, any, any>,
@@ -84,9 +89,12 @@ export class Swapper<
         swapContract: P,
         chainEvents: E,
         swapDataConstructor: new (data: any) => T,
-        options: SwapperOptions,
-        storagePrefix?: string
+        options: SwapperOptions<T>,
+        storagePrefix?: string,
+        defaultTrustedIntermediaryUrl?: string
     ) {
+        this.defaultTrustedIntermediaryUrl = defaultTrustedIntermediaryUrl;
+
         storagePrefix = storagePrefix || "";
 
         options.bitcoinNetwork = options.bitcoinNetwork==null ? BitcoinNetwork.TESTNET : options.bitcoinNetwork;
@@ -119,6 +127,8 @@ export class Swapper<
         this.tobtc = new ToBTCWrapper<T>(options.storage?.toBtc || new LocalWrapperStorage(storagePrefix + "Swaps-ToBTC"), clientSwapContract, chainEvents, swapDataConstructor);
         this.frombtcln = new FromBTCLNWrapper<T>(options.storage?.fromBtcLn || new LocalWrapperStorage(storagePrefix + "Swaps-FromBTCLN"), clientSwapContract, chainEvents, swapDataConstructor);
         this.frombtc = new FromBTCWrapper<T>(options.storage?.fromBtc || new LocalWrapperStorage(storagePrefix + "Swaps-FromBTC"), clientSwapContract, chainEvents, swapDataConstructor, synchronizer);
+
+        this.lnforgas = new LnForGasWrapper<T>(options.storage?.lnForGas || new LocalStorageManager(storagePrefix + "LnForGas"), swapContract, options);
 
         this.chainEvents = chainEvents;
         this.clientSwapContract = clientSwapContract;
@@ -235,6 +245,9 @@ export class Swapper<
         await this.frombtcln.init();
         console.log("Initializing From BTC");
         await this.frombtc.init();
+
+        console.log("Initializing LN for Gas");
+        await this.lnforgas.init();
 
         if(this.intermediaryDiscovery!=null) {
             await this.intermediaryDiscovery.init();
@@ -475,6 +488,18 @@ export class Swapper<
             true,
             SwapType.FROM_BTCLN
         );
+    }
+
+    /**
+     * Creates trusted LN for Gas swap
+     *
+     * @param amount                    Amount of native token to receive, in base units
+     * @param trustedIntermediaryUrl    URL of the trusted intermediary to use, otherwise uses default
+     */
+    createTrustedLNForGasSwap(amount: BN, trustedIntermediaryUrl?: string): Promise<LnForGasSwap<T>> {
+        const useUrl = trustedIntermediaryUrl || this.defaultTrustedIntermediaryUrl;
+        if(useUrl==null) throw new Error("No trusted intermediary URL specified!");
+        return this.lnforgas.create(amount, useUrl);
     }
 
     /**
