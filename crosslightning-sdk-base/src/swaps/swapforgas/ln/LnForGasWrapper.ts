@@ -22,7 +22,7 @@ import {RequestError} from "../../..";
 
 export class LnForGasWrapper<T extends SwapData> {
 
-    readonly events: EventEmitter;
+    readonly events: EventEmitter = new EventEmitter();
 
     readonly MAX_CONCURRENT_REQUESTS: number = 10;
 
@@ -33,6 +33,10 @@ export class LnForGasWrapper<T extends SwapData> {
         postRequestTimeout?: number
     };
     isInitialized: boolean = false;
+
+    swaps: {
+        [paymentHash: string]: LnForGasSwap<T>
+    };
 
     /**
      * @param storage           Storage interface for the current environment
@@ -49,8 +53,8 @@ export class LnForGasWrapper<T extends SwapData> {
     ) {
         this.storage = storage;
         this.contract = contract;
-        if(this.options.getRequestTimeout==null) this.options.getRequestTimeout = 15*1000;
-        if(this.options.postRequestTimeout==null) this.options.postRequestTimeout = 30*1000;
+        if(options.getRequestTimeout==null) options.getRequestTimeout = 15*1000;
+        if(options.postRequestTimeout==null) options.postRequestTimeout = 30*1000;
         this.options = options;
 
     }
@@ -85,6 +89,7 @@ export class LnForGasWrapper<T extends SwapData> {
         let jsonBody: any = await response.json();
 
         const swap = new LnForGasSwap(this, jsonBody.data.pr, url, new BN(jsonBody.data.total), new BN(jsonBody.data.swapFee), receiveAddress);
+        this.swaps[swap.getPaymentHash().toString("hex")] = swap;
         await swap.save();
         return swap;
 
@@ -98,10 +103,14 @@ export class LnForGasWrapper<T extends SwapData> {
 
         if(this.isInitialized) return;
 
-        console.log("Deserializers: ", SwapData.deserializers);
-
+        await this.storage.init();
         const swapData = await this.storage.loadData(LnForGasSwap);
-        swapData.forEach(e => e.wrapper = this);
+
+        this.swaps = {};
+        swapData.forEach(e => {
+            e.wrapper = this;
+            this.swaps[e.getPaymentHash().toString("hex")] = e;
+        });
 
         console.log("Loaded LnForGas: ", swapData);
 
@@ -129,11 +138,12 @@ export class LnForGasWrapper<T extends SwapData> {
         };
 
         let promises = [];
-        for(let paymentHash in this.storage.data) {
-            const swap: LnForGasSwap<T> = this.storage.data[paymentHash];
+        for(let paymentHash in this.swaps) {
+            const swap: LnForGasSwap<T> = this.swaps[paymentHash];
 
             promises.push(processSwap(swap).then(changed => {
                 if(swap.state===LnForGasSwapState.EXPIRED || swap.state===LnForGasSwapState.FAILED) {
+                    delete this.swaps[swap.getPaymentHash().toString("hex")];
                     this.storage.removeData(swap.getPaymentHash().toString("hex"));
                 } else {
                     if(changed) return this.storage.saveData(swap.getPaymentHash().toString("hex"), swap);
@@ -167,8 +177,8 @@ export class LnForGasWrapper<T extends SwapData> {
 
         const returnArr: LnForGasSwap<T>[] = [];
 
-        for(let paymentHash in this.storage.data) {
-            const swap = this.storage.data[paymentHash];
+        for(let paymentHash in this.swaps) {
+            const swap = this.swaps[paymentHash];
 
             console.log(swap);
 

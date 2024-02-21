@@ -55,7 +55,8 @@ export type SwapperOptions<T extends SwapData> = {
     },
 
     getRequestTimeout?: number,
-    postRequestTimeout?: number
+    postRequestTimeout?: number,
+    defaultTrustedIntermediaryUrl?: string
 };
 
 export class Swapper<
@@ -70,8 +71,6 @@ export class Swapper<
     frombtc: FromBTCWrapper<T>;
 
     lnforgas: LnForGasWrapper<T>;
-
-    readonly defaultTrustedIntermediaryUrl: string;
 
     readonly intermediaryDiscovery: IntermediaryDiscovery<T>;
     readonly clientSwapContract: ClientSwapContract<T>;
@@ -90,11 +89,8 @@ export class Swapper<
         chainEvents: E,
         swapDataConstructor: new (data: any) => T,
         options: SwapperOptions<T>,
-        storagePrefix?: string,
-        defaultTrustedIntermediaryUrl?: string
+        storagePrefix?: string
     ) {
-        this.defaultTrustedIntermediaryUrl = defaultTrustedIntermediaryUrl;
-
         storagePrefix = storagePrefix || "";
 
         options.bitcoinNetwork = options.bitcoinNetwork==null ? BitcoinNetwork.TESTNET : options.bitcoinNetwork;
@@ -128,7 +124,7 @@ export class Swapper<
         this.frombtcln = new FromBTCLNWrapper<T>(options.storage?.fromBtcLn || new LocalWrapperStorage(storagePrefix + "Swaps-FromBTCLN"), clientSwapContract, chainEvents, swapDataConstructor);
         this.frombtc = new FromBTCWrapper<T>(options.storage?.fromBtc || new LocalWrapperStorage(storagePrefix + "Swaps-FromBTC"), clientSwapContract, chainEvents, swapDataConstructor, synchronizer);
 
-        this.lnforgas = new LnForGasWrapper<T>(options.storage?.lnForGas || new LocalStorageManager(storagePrefix + "LnForGas"), swapContract, options);
+        this.lnforgas = new LnForGasWrapper<T>(options.storage?.lnForGas || new LocalStorageManager<LnForGasSwap<T>>(storagePrefix + "LnForGas"), swapContract, options);
 
         this.chainEvents = chainEvents;
         this.clientSwapContract = clientSwapContract;
@@ -497,9 +493,9 @@ export class Swapper<
      * @param trustedIntermediaryUrl    URL of the trusted intermediary to use, otherwise uses default
      */
     createTrustedLNForGasSwap(amount: BN, trustedIntermediaryUrl?: string): Promise<LnForGasSwap<T>> {
-        const useUrl = trustedIntermediaryUrl || this.defaultTrustedIntermediaryUrl;
+        const useUrl = trustedIntermediaryUrl || this.options.defaultTrustedIntermediaryUrl;
         if(useUrl==null) throw new Error("No trusted intermediary URL specified!");
-        return this.lnforgas.create(amount, useUrl);
+        return this.lnforgas.create(amount, useUrl+"/lnforgas");
     }
 
     /**

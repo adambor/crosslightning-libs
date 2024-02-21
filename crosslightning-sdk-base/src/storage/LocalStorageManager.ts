@@ -5,7 +5,7 @@ export class LocalStorageManager<T extends StorageObject> implements IStorageMan
     storageKey: string;
 
     data: {
-        [hash: string]: T
+        [hash: string]: any
     } = null;
 
     constructor(storageKey: string) {
@@ -39,7 +39,7 @@ export class LocalStorageManager<T extends StorageObject> implements IStorageMan
 
     loadData(type: new (data: any) => T): Promise<T[]> {
         return Promise.resolve(
-            Object.keys(this.data).map(e => this.data[e])
+            Object.keys(this.data).map(e => new type(this.data[e]))
         );
     }
 

@@ -51,5 +51,8 @@ export * from "./swaps/frombtc/ln/FromBTCLNWrapper";
 export * from "./swaps/frombtc/onchain/FromBTCSwap";
 export * from "./swaps/frombtc/onchain/FromBTCWrapper";
 
+export * from "./swaps/swapforgas/ln/LnForGasSwap";
+export * from "./swaps/swapforgas/ln/LnForGasWrapper";
+
 export * from "./swaps/Swapper";
 export * from "./btc/BitcoinNetwork";
