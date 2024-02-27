@@ -268,7 +268,10 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
                 instructions: null,
                 blockTime: Math.floor(Date.now()/1000),
                 signature
-            }).then(() => true);
+            }).then(() => true).catch(e => {
+                console.error(e);
+                return false;
+            });
 
             this.signaturesProcessing[signature] = obj;
 
