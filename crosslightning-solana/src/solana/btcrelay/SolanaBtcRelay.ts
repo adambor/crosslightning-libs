@@ -112,7 +112,8 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             lastSignature = fetched[fetched.length-1].signature;
             for(let data of fetched) {
                 const tx = await this.provider.connection.getTransaction(data.signature, {
-                    commitment: "confirmed"
+                    commitment: "confirmed",
+                    maxSupportedTransactionVersion: 0
                 });
                 if(tx.meta.err) continue;
 
@@ -166,7 +167,8 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             lastSignature = fetched[fetched.length-1].signature;
             for(let data of fetched) {
                 const tx = await this.provider.connection.getTransaction(data.signature, {
-                    commitment: "confirmed"
+                    commitment: "confirmed",
+                    maxSupportedTransactionVersion: 0
                 });
                 if(tx.meta.err) continue;
 
@@ -222,7 +224,8 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             lastSignature = fetched[fetched.length-1].signature;
             for(let data of fetched) {
                 const tx = await this.provider.connection.getTransaction(data.signature, {
-                    commitment: "confirmed"
+                    commitment: "confirmed",
+                    maxSupportedTransactionVersion: 0
                 });
                 if(tx.meta.err) continue;
 

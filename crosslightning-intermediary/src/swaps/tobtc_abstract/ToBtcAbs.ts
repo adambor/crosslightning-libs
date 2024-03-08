@@ -20,13 +20,18 @@ import {
 } from "crosslightning-base";
 import {BitcoinRpc, BtcBlock} from "crosslightning-base/dist";
 import {AuthenticatedLnd, pay} from "lightning";
-import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
+import {expressHandlerWrapper, HEX_REGEX} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
 import {IBtcFeeEstimator} from "../../fees/IBtcFeeEstimator";
 import {coinSelect} from "../../utils/coinselect2";
 import {CoinselectAddressTypes, CoinselectTxInput, CoinselectTxOutput, utils} from "../../utils/coinselect2/utils";
 import {randomBytes} from "crypto";
+import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
+import * as express from "express";
+import {serverParamDecoder} from "../../utils/paramcoders/server/ServerParamDecoder";
+import {IParamReader} from "../../utils/paramcoders/IParamReader";
+import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
 
 const OUTPUT_SCRIPT_MAX_LENGTH = 200;
 
@@ -84,7 +89,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
     constructor(
         storageDirectory: IIntermediaryStorage<ToBtcSwapAbs<T>>,
         path: string,
-        swapContract: SwapContract<T, any>,
+        swapContract: SwapContract<T, any, any, any>,
         chainEvents: ChainEvents<T>,
         allowedTokens: TokenAddress[],
         lnd: AuthenticatedLnd,
@@ -153,17 +158,21 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         });
     }
 
-    private async getChainFee(targetAddress: string, targetAmount: number): Promise<{
+    private async getChainFee(targetAddress: string, targetAmount: number, multiplier?: number): Promise<{
         satsPerVbyte: number,
         fee: number,
         inputs: CoinselectTxInput[],
         outputs: CoinselectTxOutput[]
     } | null> {
-        const satsPerVbyte: number | null = this.config.feeEstimator==null
+        let satsPerVbyte: number | null = this.config.feeEstimator==null
             ? await lncli.getChainFeeRate({lnd: this.LND}).then(res => res.tokens_per_vbyte).catch(e => console.error(e))
             : await this.config.feeEstimator.estimateFee();
 
         if(satsPerVbyte==null) return null;
+
+        if(multiplier!=null) satsPerVbyte *= multiplier;
+
+        satsPerVbyte = Math.ceil(satsPerVbyte);
 
         const utxos = await this.getSpendableUtxos();
 
@@ -729,14 +738,16 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
     }
 
     startRestServer(restServer: Express) {
-        restServer.post(this.path+"/payInvoice", expressHandlerWrapper(async (req, res) => {
+        restServer.use(this.path+"/payInvoice", serverParamDecoder(10*1000));
+        restServer.post(this.path+"/payInvoice", expressHandlerWrapper(async (req: Request & {paramReader: IParamReader}, res: Response & {responseStream: ServerParamEncoder}) => {
             const metadata: {
                 request: any,
                 times: {[key: string]: number}
-            } = {request: req.body, times: {}};
+            } = {request: {}, times: {}};
 
             metadata.times.requestReceived = Date.now();
             /**
+             *Sent initially:
              * address: string                      Bitcoin destination address
              * amount: string                       Amount to send (in satoshis)
              * confirmationTarget: number           Desired confirmation target for the swap, how big of a fee should be assigned to TX
@@ -745,9 +756,11 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
              * token: string                        Desired token to use
              * offerer: string                      Address of the caller
              * exactIn: boolean                     Whether the swap should be an exact in instead of exact out swap
-             * feeRate: string                      Fee rate to be used for the init signature
+             *
+             *Sent later:
+             * feeRate: string                      Fee rate to use for the init signature
              */
-            const parsedBody = verifySchema(req.body, {
+            const parsedBody = await req.paramReader.getParams({
                 address: FieldTypeEnum.String,
                 amount: FieldTypeEnum.BN,
                 confirmationTarget: FieldTypeEnum.Number,
@@ -758,18 +771,25 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                         this.allowedTokens.has(val) ? val : null,
                 offerer: (val: string) => val!=null &&
                         typeof(val)==="string" &&
-                        this.swapContract.isValidAddress(val) ? val : null
+                        this.swapContract.isValidAddress(val) ? val : null,
+                exactIn: FieldTypeEnum.BooleanOptional
             });
 
+            metadata.request = parsedBody;
+
+            const responseStream = res.responseStream;
+
             if (parsedBody==null) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
+                    code: 20100,
                     msg: "Invalid request body"
                 });
                 return;
             }
 
             if(parsedBody.nonce.isNeg()) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
+                    code: 20021,
                     msg: "Invalid request body (nonce - cannot be parsed)"
                 });
                 return;
@@ -780,33 +800,38 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             const maxAllowedValue = new BN(Math.floor(Date.now()/1000)-600000000);
             if(firstPart.gt(maxAllowedValue)) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
+                    code: 20022,
                     msg: "Invalid request body (nonce - too high)"
                 });
                 return;
             }
 
             if(parsedBody.confirmationTarget>this.config.maxConfTarget) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
+                    code: 20023,
                     msg: "Invalid request body (confirmationTarget - too high)"
                 });
                 return;
             }
             if(parsedBody.confirmationTarget<this.config.minConfTarget) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
+                    code: 20024,
                     msg: "Invalid request body (confirmationTarget - too low)"
                 });
                 return;
             }
 
             if(parsedBody.confirmations>this.config.maxConfirmations) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
+                    code: 20025,
                     msg: "Invalid request body (confirmations - too high)"
                 });
                 return;
             }
             if(parsedBody.confirmations<this.config.minConfirmations) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
+                    code: 20026,
                     msg: "Invalid request body (confirmations - too low)"
                 });
                 return;
@@ -817,14 +842,16 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             try {
                 parsedOutputScript = bitcoin.address.toOutputScript(parsedBody.address, this.config.bitcoinNetwork);
             } catch (e) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
+                    code: 20031,
                     msg: "Invalid request body (address - cannot be parsed)"
                 });
                 return;
             }
 
             if(parsedOutputScript.length > OUTPUT_SCRIPT_MAX_LENGTH) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
+                    code: 20032,
                     msg: "Invalid request body (address's output script - too long)"
                 });
                 return;
@@ -834,22 +861,39 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             metadata.times.requestChecked = Date.now();
 
+            const abortController = new AbortController();
+            const responseStreamAbortController = responseStream.getAbortSignal();
+            responseStreamAbortController.addEventListener("abort", () => abortController.abort(responseStreamAbortController.reason));
+
             const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken).catch(e => {
                 console.error("To BTC: REST.pricePrefetch", e);
-                throw e;
+                abortController.abort(e);
+                return null;
             }) : null;
-            const signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
+            let signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
                 console.error("To BTC: REST.signDataPrefetch", e);
-                throw e;
+                abortController.abort(e);
+                return null;
             }) : null;
 
             if(pricePrefetchPromise!=null) console.log("[To BTC: REST.payInvoice] Pre-fetching swap price!");
-            if(signDataPrefetchPromise!=null) console.log("[To BTC: REST.payInvoice] Pre-fetching signature data!");
+            if(signDataPrefetchPromise!=null) {
+                signDataPrefetchPromise = signDataPrefetchPromise.then(val => val==null ? null :  responseStream.writeParams({
+                    signDataPrefetch: val
+                }).then(() => val).catch(e => {
+                    console.error("[To BTC: REST.payInvoice] Send signDataPreFetch error: ", e);
+                    abortController.abort(e);
+                    return null;
+                }));
+                if(signDataPrefetchPromise!=null) console.log("[To BTC: REST.payInvoice] Pre-fetching signature data!");
+            }
 
             let tooLow = false;
             let amountBD: BN;
-            if(req.body.exactIn) {
+            if(parsedBody.exactIn) {
                 amountBD = await this.swapPricing.getToBtcSwapAmount(parsedBody.amount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+
+                abortController.signal.throwIfAborted();
 
                 //Decrease by base fee
                 amountBD = amountBD.sub(this.config.baseFee);
@@ -859,11 +903,12 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                     amountBD = this.config.min;
                     tooLow = true;
                 }
+
             } else {
                 amountBD = parsedBody.amount;
 
                 if(amountBD.lt(this.config.min)) {
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20003,
                         msg: "Amount too low!",
                         data: {
@@ -874,7 +919,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                     return;
                 }
                 if(amountBD.gt(this.config.max)) {
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20004,
                         msg: "Amount too high!",
                         data: {
@@ -888,32 +933,28 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             metadata.times.amountsChecked = Date.now();
 
-            let chainFeeResp = await this.getChainFee(parsedBody.address, amountBD.toNumber());
+            let chainFeeResp = await this.getChainFee(parsedBody.address, amountBD.toNumber(), this.config.networkFeeMultiplierPPM.toNumber()/1000000);
+
+            abortController.signal.throwIfAborted();
 
             metadata.times.chainFeeFetched = Date.now();
 
             const hasEnoughFunds = chainFeeResp!=null;
             if(!hasEnoughFunds) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
                     code: 20002,
                     msg: "Insufficient liquidity!"
                 });
                 return;
             }
 
-            const networkFee = chainFeeResp.fee;
-            const feeSatsPervByte = chainFeeResp.satsPerVbyte;
-
-            console.log("[To BTC: REST.PayInvoice] Total network fee: ", networkFee);
-            console.log("[To BTC: REST.PayInvoice] Network fee (sats/vB): ", feeSatsPervByte);
-
-            const networkFeeAdjusted = new BN(networkFee).mul(this.config.networkFeeMultiplierPPM).div(new BN(1000000));
-            const feeSatsPervByteAdjusted = new BN(feeSatsPervByte).mul(this.config.networkFeeMultiplierPPM).div(new BN(1000000));
+            const networkFeeAdjusted = new BN(chainFeeResp.fee);
+            const feeSatsPervByteAdjusted = new BN(chainFeeResp.satsPerVbyte);
 
             console.log("[To BTC: REST.PayInvoice] Adjusted total network fee: ", networkFeeAdjusted.toString(10));
-            console.log("[To BTC: REST.PayInvoice] Adjusted network fee (sats/vB): ", feeSatsPervByteAdjusted.toString(10));
+            console.log("[To BTC: REST.PayInvoice] Adjusted network fee (sats/vB): ", feeSatsPervByteAdjusted.toString());
 
-            if(req.body.exactIn) {
+            if(parsedBody.exactIn) {
                 //Decrease by network fee
                 amountBD = amountBD.sub(networkFeeAdjusted);
 
@@ -928,7 +969,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                     adjustedMax = adjustedMax.add(this.config.baseFee).add(networkFeeAdjusted);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20003,
                         msg: "Amount too low!",
                         data: {
@@ -945,7 +986,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                     adjustedMax = adjustedMax.add(this.config.baseFee).add(networkFeeAdjusted);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20004,
                         msg: "Amount too high!",
                         data: {
@@ -964,14 +1005,18 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(networkFeeAdjusted, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
             const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
 
+            abortController.signal.throwIfAborted();
+
             let amountInToken: BN;
             let total: BN;
-            if(req.body.exactIn) {
+            if(parsedBody.exactIn) {
                 amountInToken = parsedBody.amount.sub(swapFeeInToken).sub(networkFeeInToken);
                 total = parsedBody.amount;
             } else {
                 amountInToken = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                 total = amountInToken.add(swapFeeInToken).add(networkFeeInToken);
+
+                abortController.signal.throwIfAborted();
             }
 
             metadata.times.priceCalculated = Date.now();
@@ -1001,15 +1046,26 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 new BN(0)
             );
 
+            abortController.signal.throwIfAborted();
+
             metadata.times.swapCreated = Date.now();
 
-            const feeRate = req.body.feeRate!=null && typeof(req.body.feeRate)==="string" ? req.body.feeRate : null;
+            const feeRateObj = await req.paramReader.getParams({
+                feeRate: FieldTypeEnum.String
+            }).catch(e => null);
+
+            abortController.signal.throwIfAborted();
+
+            const feeRate = feeRateObj?.feeRate!=null && typeof(feeRateObj.feeRate)==="string" ? feeRateObj.feeRate : null;
+
             const sigData = await this.swapContract.getClaimInitSignature(
                 payObject,
                 this.config.authorizationTimeout,
                 signDataPrefetchPromise==null ? null : await signDataPrefetchPromise,
                 feeRate
             );
+
+            abortController.signal.throwIfAborted();
 
             metadata.times.swapSigned = Date.now();
 
@@ -1021,7 +1077,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             await this.storageManager.saveData(paymentHash, sequence, createdSwap);
 
-            res.status(200).json({
+            await responseStream.writeParamsAndEnd({
                 code: 20000,
                 msg: "Success",
                 data: {

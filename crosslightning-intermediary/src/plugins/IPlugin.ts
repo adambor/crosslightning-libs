@@ -11,7 +11,7 @@ export interface IPlugin<T extends SwapData> {
 
     //Needs to be called by implementation
     onEnable(
-        swapContract: SwapContract<T, any>,
+        swapContract: SwapContract<T, any, any, any>,
         btcRelay: BtcRelay<any, any, any>,
         chainEvents: ChainEvents<T>,
         lnd: AuthenticatedLnd

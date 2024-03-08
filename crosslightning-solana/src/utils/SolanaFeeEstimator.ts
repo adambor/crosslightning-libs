@@ -99,26 +99,30 @@ export class SolanaFeeEstimator {
     private async getGlobalFeeRate(): Promise<BN> {
 
         if(this.blockFeeCache==null || Date.now() - this.blockFeeCache.timestamp > MAX_FEE_AGE) {
-            const promise = this._getGlobalFeeRate();
-            this.blockFeeCache = {
+            let obj = {
                 timestamp: Date.now(),
-                feeRate: promise
+                feeRate: null
             };
-            return await promise;
+            obj.feeRate = this._getGlobalFeeRate().catch(e => {
+                if(this.blockFeeCache===obj) this.blockFeeCache=null;
+                throw e;
+            });
+            this.blockFeeCache = obj;
+            return await obj.feeRate;
         }
 
-        let res = await this.blockFeeCache.feeRate.catch(e => {});
+        // let isRejected = await Promise.race([this.blockFeeCache.feeRate, Promise.resolve()]).then(() => false, () => true);
+        //
+        // if(isRejected) {
+        //     const promise = this._getGlobalFeeRate();
+        //     this.blockFeeCache = {
+        //         timestamp: Date.now(),
+        //         feeRate: promise
+        //     };
+        //     return await promise;
+        // }
 
-        if(res==null) {
-            const promise = this._getGlobalFeeRate();
-            this.blockFeeCache = {
-                timestamp: Date.now(),
-                feeRate: promise
-            };
-            return await promise;
-        }
-
-        return res as BN;
+        return await this.blockFeeCache.feeRate;
 
     }
 
@@ -136,7 +140,7 @@ export class SolanaFeeEstimator {
             ]);
 
             if(response.error==null) {
-                const calculatedFee = BN.max(new BN(8000), new BN(response.result.priorityFeeLevels.high));
+                const calculatedFee = BN.max(new BN(8000), new BN(response.result.priorityFeeLevels.veryHigh));
                 return BN.min(calculatedFee, this.maxFeeMicroLamports);
             }
 

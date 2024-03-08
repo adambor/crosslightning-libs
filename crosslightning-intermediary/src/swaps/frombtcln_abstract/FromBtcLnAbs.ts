@@ -19,9 +19,14 @@ import {
     TokenAddress
 } from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
-import {expressHandlerWrapper, FieldTypeEnum, HEX_REGEX, verifySchema} from "../../utils/Utils";
+import {expressHandlerWrapper, HEX_REGEX} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
+import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
+import * as express from "express";
+import {serverParamDecoder} from "../../utils/paramcoders/server/ServerParamDecoder";
+import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
+import {IParamReader} from "../../utils/paramcoders/IParamReader";
 
 export type FromBtcLnConfig = {
     authorizationTimeout: number,
@@ -56,7 +61,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
     constructor(
         storageDirectory: IIntermediaryStorage<FromBtcLnSwapAbs<T>>,
         path: string,
-        swapContract: SwapContract<T, any>,
+        swapContract: SwapContract<T, any, any, any>,
         chainEvents: ChainEvents<T>,
         allowedTokens: TokenAddress[],
         lnd: AuthenticatedLnd,
@@ -364,17 +369,22 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
         const sendAmount: BN = invoiceData.data.getAmount();
 
+        const abortController = new AbortController();
+
         const balancePrefetch: Promise<BN> = this.swapContract.getBalance(useToken, true).catch(e => {
             console.error("From BTC-LN: HTLC-Received.balancePrefetch", e);
-            throw e;
+            abortController.abort(e);
+            return null;
         });
         const blockheightPrefetch = lncli.getHeight({lnd: this.LND}).catch(e => {
             console.error("From BTC-LN: HTLC-Received.blockheightPrefetch", e);
-            throw e;
+            abortController.abort(e);
+            return null;
         });
         const signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
             console.error("From BTC-LN: HTLC-Received.signDataPrefetch", e);
-            throw e;
+            abortController.abort(e);
+            return null;
         }) : null;
 
         const cancelAndRemove = async () => {
@@ -389,6 +399,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
         };
 
         const balance: BN = await balancePrefetch;
+
+        abortController.signal.throwIfAborted();
 
         const hasEnoughBalance = balance.gte(sendAmount);
         if (!hasEnoughBalance) {
@@ -407,6 +419,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             if (timeout == null || timeout > curr.timeout) timeout = curr.timeout;
         });
         const {current_block_height} = await blockheightPrefetch;
+
+        abortController.signal.throwIfAborted();
 
         const blockDelta = new BN(timeout - current_block_height);
 
@@ -445,6 +459,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             new BN(0)
         );
 
+        abortController.signal.throwIfAborted();
+
         if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcSwapCreated = Date.now();
 
         const sigData = await this.swapContract.getInitSignature(
@@ -453,6 +469,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             signDataPrefetchPromise==null ? null : await signDataPrefetchPromise,
             invoiceData.feeRate
         );
+
+        //No need to check abortController anymore since all pending promises are resolved by now
 
         if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcSwapSigned = Date.now();
 
@@ -474,13 +492,14 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
     startRestServer(restServer: Express) {
 
-        restServer.post(this.path+"/createInvoice", expressHandlerWrapper(async (req, res) => {
+        restServer.use(this.path+"/createInvoice", serverParamDecoder(10*1000));
+        restServer.post(this.path+"/createInvoice", expressHandlerWrapper(async (req: Request & {paramReader: IParamReader}, res: Response & {responseStream: ServerParamEncoder}) => {
             const metadata: {
                 request: any,
                 invoiceRequest?: any,
                 invoiceResponse?: any,
                 times: {[key: string]: number}
-            } = {request: req.body, times: {}};
+            } = {request: {}, times: {}};
 
             metadata.times.requestReceived = Date.now();
             /**
@@ -489,9 +508,13 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
              * amount: string               amount (in sats) of the invoice
              * token: string                Desired token to swap
              * exactOut: boolean            Whether the swap should be an exact out instead of exact in swap
+             * descriptionHash: string      Description hash of the invoice
+             *
+             *Sent later:
+             * feeRate: string              Fee rate to use for the init signature
              */
 
-            const parsedBody = verifySchema(req.body, {
+            const parsedBody = await req.paramReader.getParams({
                 address: (val: string) => val!=null &&
                             typeof(val)==="string" &&
                             this.swapContract.isValidAddress(val) ? val : null,
@@ -500,44 +523,60 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                             val.length===64 &&
                             HEX_REGEX.test(val) ? val: null,
                 amount: FieldTypeEnum.BN,
-                //expiry: FieldTypeEnum.Number,
                 token: (val: string) => val!=null &&
                         typeof(val)==="string" &&
-                        this.allowedTokens.has(val) ? val : null
+                        this.allowedTokens.has(val) ? val : null,
+                descriptionHash: FieldTypeEnum.StringOptional,
+                exactOut: FieldTypeEnum.BooleanOptional
             });
 
+            metadata.request = parsedBody;
+
+            const responseStream = res.responseStream;
+
             if(parsedBody==null) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
+                    code: 20100,
                     msg: "Invalid request body"
                 });
                 return;
             }
 
-            if(req.body.descriptionHash!=null) {
-                if(typeof(req.body.descriptionHash)!=="string" || !HEX_REGEX.test(req.body.descriptionHash) || req.body.descriptionHash.length!==64) {
-                    res.status(400).json({
+            if(parsedBody.descriptionHash!=null) {
+                if(typeof(parsedBody.descriptionHash)!=="string" || !HEX_REGEX.test(parsedBody.descriptionHash) || parsedBody.descriptionHash.length!==64) {
+                    await responseStream.writeParamsAndEnd({
+                        code: 20100,
                         msg: "Invalid request body"
                     });
+                    return;
                 }
             }
 
             metadata.times.requestChecked = Date.now();
 
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
+
+            const abortController = new AbortController();
+            const responseStreamAbortController = responseStream.getAbortSignal();
+            responseStreamAbortController.addEventListener("abort", () => abortController.abort(responseStreamAbortController.reason));
+
             const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken).catch(e => {
                 console.error("From BTC-LN: REST.pricePrefetch", e);
-                throw e;
+                abortController.abort(e);
+                return null;
             }) : null;
             const securityDepositPricePrefetchPromise: Promise<BN> = parsedBody.token===this.swapContract.getNativeCurrencyAddress().toString() ?
                 pricePrefetchPromise :
                 (this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(this.swapContract.getNativeCurrencyAddress()).catch(e => {
                     console.error("From BTC-LN: REST.securityDepositPrefetch", e);
-                    throw e;
+                    abortController.abort(e);
+                    return null;
                 }) : null);
 
             const balancePrefetch = this.swapContract.getBalance(useToken, true).catch(e => {
                 console.error("From BTC-LN: REST.balancePrefetch", e);
-                throw e;
+                abortController.abort(e);
+                return null;
             });
 
             const dummySwapData = await this.swapContract.createSwapData(
@@ -557,25 +596,31 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 new BN(0)
             );
 
+            abortController.signal.throwIfAborted();
+
             let baseSDPromise: Promise<BN>;
             //Solana workaround
             if((this.swapContract as any).getRawRefundFee!=null) {
                 baseSDPromise = (this.swapContract as any).getRawRefundFee(dummySwapData).catch(e => {
                     console.error("From BTC-LN: REST.baseSDPrefetch", e);
-                    throw e;
+                    abortController.abort(e);
+                    return null;
                 });
             } else {
                 baseSDPromise = this.swapContract.getRefundFee(dummySwapData).then(result => result.mul(new BN(2))).catch(e => {
                     console.error("From BTC-LN: REST.baseSDPrefetch", e);
-                    throw e;
+                    abortController.abort(e);
+                    return null;
                 });
             }
 
             if(pricePrefetchPromise!=null) console.log("[From BTC-LN: REST.payInvoice] Pre-fetching swap price!");
 
             let amountBD: BN;
-            if(req.body.exactOut) {
+            if(parsedBody.exactOut) {
                 amountBD = await this.swapPricing.getToBtcSwapAmount(parsedBody.amount, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+
+                abortController.signal.throwIfAborted();
 
                 // amt = (amt+base_fee)/(1-fee)
                 amountBD = amountBD.add(this.config.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(this.config.feePPM));
@@ -585,7 +630,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     let adjustedMax = this.config.max.mul(new BN(1000000).sub(this.config.feePPM)).div(new BN(1000000)).sub(this.config.baseFee);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20003,
                         msg: "Amount too low!",
                         data: {
@@ -601,7 +646,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     let adjustedMax = this.config.max.mul(new BN(1000000).sub(this.config.feePPM)).div(new BN(1000000)).sub(this.config.baseFee);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20004,
                         msg: "Amount too high!",
                         data: {
@@ -615,7 +660,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 amountBD = parsedBody.amount;
 
                 if(amountBD.lt(this.config.min)) {
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20003,
                         msg: "Amount too low!",
                         data: {
@@ -627,7 +672,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 }
 
                 if(amountBD.gt(this.config.max)) {
-                    res.status(400).json({
+                    await responseStream.writeParamsAndEnd({
                         code: 20004,
                         msg: "Amount too high!",
                         data: {
@@ -642,7 +687,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             metadata.times.amountsChecked = Date.now();
 
             // if(parsedBody.expiry<=0) {
-            //     res.status(400).json({
+            //     await responseStream.writeParamsAndEnd({
             //         msg: "Invalid request body (expiry)"
             //     });
             //     return;
@@ -650,23 +695,30 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
             const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
 
+            abortController.signal.throwIfAborted();
+
             let amountInToken: BN;
             let total: BN;
-            if(req.body.exactOut) {
+            if(parsedBody.exactOut) {
                 amountInToken = parsedBody.amount.add(swapFeeInToken);
                 total = parsedBody.amount;
             } else {
                 amountInToken = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                 total = amountInToken.sub(swapFeeInToken);
+
+                abortController.signal.throwIfAborted();
             }
 
             metadata.times.priceCalculated = Date.now();
 
             const balance = await balancePrefetch;
 
+            abortController.signal.throwIfAborted();
+
             const hasEnoughBalance = balance.gte(total);
             if(!hasEnoughBalance) {
-                res.status(400).json({
+                await responseStream.writeParamsAndEnd({
+                    code: 20002,
                     msg: "Not enough liquidity"
                 });
                 return;
@@ -680,7 +732,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 expires_at: new Date(Date.now()+(this.config.invoiceTimeoutSeconds*1000)).toISOString(),
                 id: parsedBody.paymentHash,
                 tokens: amountBD.toString(10),
-                description_hash: req.body.descriptionHash
+                description_hash: parsedBody.descriptionHash
             };
 
             metadata.invoiceRequest = {...hodlInvoiceObj};
@@ -690,6 +742,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
             hodlInvoiceObj.lnd = this.LND;
 
             const hodlInvoice = await lncli.createHodlInvoice(hodlInvoiceObj);
+
+            abortController.signal.throwIfAborted();
 
             metadata.times.invoiceCreated = Date.now();
             metadata.invoiceResponse = {...hodlInvoice};
@@ -703,6 +757,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
             let baseSD: BN = await baseSDPromise;
 
+            abortController.signal.throwIfAborted();
+
             metadata.times.refundFeeFetched = Date.now();
 
             const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(
@@ -711,6 +767,9 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 true,
                 securityDepositPricePrefetchPromise==null ? null : await securityDepositPricePrefetchPromise
             );
+
+            abortController.signal.throwIfAborted();
+
             const apyPPM = new BN(Math.floor(this.config.securityDepositAPY*1000000));
             const variableSD = swapValueInNativeCurrency.mul(apyPPM).mul(expiryTimeout).div(new BN(1000000)).div(secondsInYear);
 
@@ -735,16 +794,25 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 new BN(0)
             );
 
+            abortController.signal.throwIfAborted();
+
             metadata.times.swapCreated = Date.now();
             createdSwap.metadata = metadata;
 
-            createdSwap.feeRate = req.body.feeRate!=null && typeof(req.body.feeRate)==="string" ? req.body.feeRate : null;
+            const feeRateObj = await req.paramReader.getParams({
+                feeRate: FieldTypeEnum.String
+            }).catch(e => null);
+
+            abortController.signal.throwIfAborted();
+
+            createdSwap.feeRate = feeRateObj?.feeRate!=null && typeof(feeRateObj.feeRate)==="string" ? feeRateObj.feeRate : null;
 
             await PluginManager.swapCreate(createdSwap);
 
             await this.storageManager.saveData(parsedBody.paymentHash, null, createdSwap);
 
-            res.status(200).json({
+            await responseStream.writeParamsAndEnd({
+                code: 20000,
                 msg: "Success",
                 data: {
                     pr: hodlInvoice.request,

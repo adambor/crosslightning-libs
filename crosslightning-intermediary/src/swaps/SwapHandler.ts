@@ -34,13 +34,13 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
     readonly storageManager: IIntermediaryStorage<V>;
     readonly path: string;
 
-    readonly swapContract: SwapContract<T, any>;
+    readonly swapContract: SwapContract<T, any, any, any>;
     readonly chainEvents: ChainEvents<T>;
     readonly allowedTokens: Set<string>;
     readonly swapPricing: ISwapPrice;
     readonly LND: AuthenticatedLnd;
 
-    protected constructor(storageDirectory: IIntermediaryStorage<V>, path: string, swapContract: SwapContract<T, any>, chainEvents: ChainEvents<T>, allowedTokens: TokenAddress[], lnd: AuthenticatedLnd, swapPricing: ISwapPrice) {
+    protected constructor(storageDirectory: IIntermediaryStorage<V>, path: string, swapContract: SwapContract<T, any, any, any>, chainEvents: ChainEvents<T>, allowedTokens: TokenAddress[], lnd: AuthenticatedLnd, swapPricing: ISwapPrice) {
         this.storageManager = storageDirectory;
         this.swapContract = swapContract;
         this.chainEvents = chainEvents;
