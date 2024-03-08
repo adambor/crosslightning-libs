@@ -45,6 +45,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
      * @param requiredBaseFee   Desired base fee reported by the swap intermediary
      * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
      * @param exactOut          Whether to create an exact out swap instead of exact in
+     * @param additionalParams  Additional parameters sent to the LP when creating the swap
      */
     async create(
         amount: BN,
@@ -53,12 +54,13 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
         requiredKey?: string,
         requiredBaseFee?: BN,
         requiredFeePPM?: BN,
-        exactOut?: boolean
+        exactOut?: boolean,
+        additionalParams?: Record<string, any>
     ): Promise<FromBTCSwap<T>> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const result = await this.contract.receiveOnchain(amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, null, null, exactOut);
+        const result = await this.contract.receiveOnchain(amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, null, null, exactOut, additionalParams);
 
         const swap = new FromBTCSwap(
             this,

@@ -319,8 +319,9 @@ export class Swapper<
      * @param confirmationTarget    How soon should the transaction be confirmed (determines the fee)
      * @param confirmations         How many confirmations must the intermediary wait to claim the funds
      * @param exactIn               Whether to use exact in instead of exact out
+     * @param additionalParams      Additional parameters sent to the LP when creating the swap
      */
-    createToBTCSwap(tokenAddress: TokenAddressType, address: string, amount: BN, confirmationTarget?: number, confirmations?: number, exactIn?: boolean): Promise<ToBTCSwap<T>> {
+    createToBTCSwap(tokenAddress: TokenAddressType, address: string, amount: BN, confirmationTarget?: number, confirmations?: number, exactIn?: boolean, additionalParams?: Record<string, any>): Promise<ToBTCSwap<T>> {
         return this.createSwap<ToBTCSwap<T>>(
             (candidate: Intermediary) => this.tobtc.create(
                 address,
@@ -332,7 +333,8 @@ export class Swapper<
                 candidate.address,
                 new BN(candidate.services[SwapType.TO_BTC].swapBaseFee),
                 new BN(candidate.services[SwapType.TO_BTC].swapFeePPM),
-                exactIn
+                exactIn,
+                additionalParams
             ),
             amount,
             tokenAddress,
@@ -349,8 +351,9 @@ export class Swapper<
      * @param expirySeconds         For how long to lock your funds (higher expiry means higher probability of payment success)
      * @param maxRoutingBaseFee     Maximum routing fee to use - base fee (higher routing fee means higher probability of payment success)
      * @param maxRoutingPPM         Maximum routing fee to use - proportional fee in PPM (higher routing fee means higher probability of payment success)
+     * @param additionalParams      Additional parameters sent to the LP when creating the swap
      */
-    async createToBTCLNSwap(tokenAddress: TokenAddressType, paymentRequest: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN): Promise<ToBTCLNSwap<T>> {
+    async createToBTCLNSwap(tokenAddress: TokenAddressType, paymentRequest: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN, additionalParams?: Record<string, any>): Promise<ToBTCLNSwap<T>> {
         const parsedPR = bolt11.decode(paymentRequest);
 
         return this.createSwap<ToBTCLNSwap<T>>(
@@ -363,7 +366,8 @@ export class Swapper<
                 tokenAddress,
                 candidate.address,
                 new BN(candidate.services[SwapType.TO_BTCLN].swapBaseFee),
-                new BN(candidate.services[SwapType.TO_BTCLN].swapFeePPM)
+                new BN(candidate.services[SwapType.TO_BTCLN].swapFeePPM),
+                additionalParams
             ),
             new BN(parsedPR.millisatoshis).div(new BN(1000)),
             tokenAddress,
@@ -383,8 +387,9 @@ export class Swapper<
      * @param maxRoutingBaseFee     Maximum routing fee to use - base fee (higher routing fee means higher probability of payment success)
      * @param maxRoutingPPM         Maximum routing fee to use - proportional fee in PPM (higher routing fee means higher probability of payment success)
      * @param exactIn               Whether to do an exact in swap instead of exact out
+     * @param additionalParams      Additional parameters sent to the LP when creating the swap
      */
-    async createToBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurlPay: string | LNURLPay, amount: BN, comment: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN, exactIn?: boolean): Promise<ToBTCLNSwap<T>> {
+    async createToBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurlPay: string | LNURLPay, amount: BN, comment: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN, exactIn?: boolean, additionalParams?: Record<string, any>): Promise<ToBTCLNSwap<T>> {
         return this.createSwap<ToBTCLNSwap<T>>(
             (candidate: Intermediary) => this.tobtcln.createViaLNURL(
                 lnurlPay,
@@ -398,7 +403,8 @@ export class Swapper<
                 candidate.address,
                 new BN(candidate.services[SwapType.TO_BTCLN].swapBaseFee),
                 new BN(candidate.services[SwapType.TO_BTCLN].swapFeePPM),
-                exactIn
+                exactIn,
+                additionalParams
             ),
             amount,
             tokenAddress,
@@ -413,8 +419,9 @@ export class Swapper<
      * @param tokenAddress          Token address to receive
      * @param amount                Amount to receive, in satoshis (bitcoin's smallest denomination)
      * @param exactOut              Whether to use a exact out instead of exact in
+     * @param additionalParams      Additional parameters sent to the LP when creating the swap
      */
-    async createFromBTCSwap(tokenAddress: TokenAddressType, amount: BN, exactOut?: boolean): Promise<FromBTCSwap<T>> {
+    async createFromBTCSwap(tokenAddress: TokenAddressType, amount: BN, exactOut?: boolean, additionalParams?: Record<string, any>): Promise<FromBTCSwap<T>> {
         return this.createSwap<FromBTCSwap<T>>(
             (candidate: Intermediary) => this.frombtc.create(
                 amount,
@@ -423,7 +430,8 @@ export class Swapper<
                 candidate.address,
                 new BN(candidate.services[SwapType.FROM_BTC].swapBaseFee),
                 new BN(candidate.services[SwapType.FROM_BTC].swapFeePPM),
-                exactOut
+                exactOut,
+                additionalParams
             ),
             amount,
             tokenAddress,
@@ -439,8 +447,9 @@ export class Swapper<
      * @param amount            Amount to receive, in satoshis (bitcoin's smallest denomination)
      * @param exactOut          Whether to use exact out instead of exact in
      * @param descriptionHash   Description hash for ln invoice
+     * @param additionalParams  Additional parameters sent to the LP when creating the swap
      */
-    async createFromBTCLNSwap(tokenAddress: TokenAddressType, amount: BN, exactOut?: boolean, descriptionHash?: Buffer): Promise<FromBTCLNSwap<T>> {
+    async createFromBTCLNSwap(tokenAddress: TokenAddressType, amount: BN, exactOut?: boolean, descriptionHash?: Buffer, additionalParams?: Record<string, any>): Promise<FromBTCLNSwap<T>> {
         return this.createSwap<FromBTCLNSwap<T>>(
             (candidate: Intermediary) => this.frombtcln.create(
                 amount,
@@ -450,7 +459,8 @@ export class Swapper<
                 new BN(candidate.services[SwapType.FROM_BTCLN].swapBaseFee),
                 new BN(candidate.services[SwapType.FROM_BTCLN].swapFeePPM),
                 exactOut,
-                descriptionHash
+                descriptionHash,
+                additionalParams
             ),
             amount,
             tokenAddress,
@@ -466,8 +476,9 @@ export class Swapper<
      * @param lnurl             LNURL-withdraw to pull the funds from
      * @param amount            Amount to receive, in satoshis (bitcoin's smallest denomination)
      * @param noInstantReceive  Flag to disable instantly posting the lightning PR to LN service for withdrawal, when set the lightning PR is sent to LN service when waitForPayment is called
+     * @param additionalParams  Additional parameters sent to the LP when creating the swap
      */
-    async createFromBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurl: string | LNURLWithdraw, amount: BN, noInstantReceive?: boolean): Promise<FromBTCLNSwap<T>> {
+    async createFromBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurl: string | LNURLWithdraw, amount: BN, noInstantReceive?: boolean, additionalParams?: Record<string, any>): Promise<FromBTCLNSwap<T>> {
         return this.createSwap<FromBTCLNSwap<T>>(
             (candidate: Intermediary) => this.frombtcln.createViaLNURL(
                 lnurl,
@@ -477,7 +488,8 @@ export class Swapper<
                 candidate.address,
                 new BN(candidate.services[SwapType.FROM_BTCLN].swapBaseFee),
                 new BN(candidate.services[SwapType.FROM_BTCLN].swapFeePPM),
-                noInstantReceive
+                noInstantReceive,
+                additionalParams
             ),
             amount,
             tokenAddress,

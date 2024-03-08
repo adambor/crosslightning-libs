@@ -490,7 +490,8 @@ export class ClientSwapContract<T extends SwapData> {
         requiredClaimerKey?: string,
         requiredBaseFee?: BN,
         requiredFeePPM?: BN,
-        exactIn?: boolean
+        exactIn?: boolean,
+        additionalParams?: Record<string, any>
     ): Promise<{
         amount: BN,
         networkFee: BN,
@@ -550,6 +551,7 @@ export class ClientSwapContract<T extends SwapData> {
             : tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, hash));
 
         const {parsedData, preFetchSignatureVerificationData} = await this.postWithRetries(url+"/payInvoice", {
+            ...additionalParams,
             address,
             amount: amountOrTokens.toString(10),
             confirmationTarget,
@@ -591,13 +593,6 @@ export class ClientSwapContract<T extends SwapData> {
             hash = this.swapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
 
             console.log("Generated hash: ", hash);
-
-            //This shall never happen with the provided entropy
-            // const payStatus = await tryWithRetries(() => this.swapContract.getPaymentHashStatus(hash));
-            //
-            // if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
-            //     throw new UserError("Invoice already being paid for or paid");
-            // }
         }
 
         const swapFee: BN = parsedData.swapFee;
@@ -765,7 +760,8 @@ export class ClientSwapContract<T extends SwapData> {
         requiredClaimerKey?: string,
         requiredBaseFee?: BN,
         requiredFeePPM?: BN,
-        preFetchedPrice?: Promise<BN>
+        preFetchedPrice?: Promise<BN>,
+        additionalParams?: Record<string, any>
     ): Promise<{
         confidence: string,
         maxFee: BN,
@@ -802,6 +798,7 @@ export class ClientSwapContract<T extends SwapData> {
         const responseInitial: Response = await tryWithRetries(() => fetchWithTimeout(url+"/payInvoice", {
             method: "POST",
             body: JSON.stringify({
+                ...additionalParams,
                 pr: dummyInvoice,
                 maxFee: maxFee.toString(),
                 expiryTimestamp: expiryTimestamp.toString(10),
@@ -882,7 +879,8 @@ export class ClientSwapContract<T extends SwapData> {
             expiryTimestamp,
             feeRatePromise,
             preFetchedPrice,
-            preFetchSignatureVerificationData
+            preFetchSignatureVerificationData,
+            additionalParams
         );
 
         resp.invoice = invoice;
@@ -904,7 +902,8 @@ export class ClientSwapContract<T extends SwapData> {
         requiredBaseFee?: BN,
         requiredFeePPM?: BN,
         preFetchedPrice?: Promise<BN>,
-        exactIn?: boolean
+        exactIn?: boolean,
+        additionalParams?: Record<string, any>
     ): Promise<{
         confidence: string,
         maxFee: BN,
@@ -949,7 +948,7 @@ export class ClientSwapContract<T extends SwapData> {
         }
 
         if(exactIn) {
-            return await this.payLightningLNURLExactIn(payRequest, amount, comment, expirySeconds, maxFee, url, requiredToken, requiredClaimerKey, requiredBaseFee, requiredFeePPM, preFetchedPrice);
+            return await this.payLightningLNURLExactIn(payRequest, amount, comment, expirySeconds, maxFee, url, requiredToken, requiredClaimerKey, requiredBaseFee, requiredFeePPM, preFetchedPrice, additionalParams);
         }
 
         const min = new BN(payRequest.minSendable).div(new BN(1000));
@@ -983,7 +982,9 @@ export class ClientSwapContract<T extends SwapData> {
             null,
             null,
             feeRatePromise,
-            preFetchedPrice
+            preFetchedPrice,
+            null,
+            additionalParams
         );
 
         resp.invoice = invoice;
@@ -1007,7 +1008,8 @@ export class ClientSwapContract<T extends SwapData> {
         expiryTimestamp?: BN,
         feeRatePromise?: Promise<any>,
         pricePreFetchPromise?: Promise<BN>,
-        preFetchSignatureVerificationData?: Promise<any>
+        preFetchSignatureVerificationData?: Promise<any>,
+        additionalParams?: Record<string, any>
     ): Promise<{
         confidence: string,
         maxFee: BN,
@@ -1057,6 +1059,7 @@ export class ClientSwapContract<T extends SwapData> {
                     : tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, parsedPR.tagsObject.payment_hash), null, null, abortController.signal);
 
                 const {parsedData, preFetchSignatureVerificationData: _preFetchSignatureVerificationData} = await this.postWithRetries(url+(exactIn ? "/payInvoiceExactIn" : "/payInvoice"), {
+                    ...additionalParams,
                     reqId,
                     pr: bolt11PayReq,
                     maxFee: maxFee.toString(),
@@ -1317,7 +1320,8 @@ export class ClientSwapContract<T extends SwapData> {
         requiredFeePPM?: BN,
         feeSafetyFactor?: BN,
         blockSafetyFactor?: number,
-        exactOut?: boolean
+        exactOut?: boolean,
+        additionalParams?: Record<string, any>
     ): Promise<{
         amount: BN,
         address: string,
@@ -1396,6 +1400,7 @@ export class ClientSwapContract<T extends SwapData> {
         const startTimestamp = new BN(Math.floor(Date.now()/1000));
 
         const {parsedData, preFetchSignatureVerificationData} = await this.postWithRetries(url+"/getAddress", {
+            ...additionalParams,
             address: this.swapContract.getAddress(),
             amount: amountOrTokens.toString(),
             token: requiredToken==null ? null : requiredToken.toString(),
@@ -1623,7 +1628,8 @@ export class ClientSwapContract<T extends SwapData> {
         requiredKey?: string,
         requiredBaseFee?: BN,
         requiredFeePPM?: BN,
-        noInstantReceive?: boolean
+        noInstantReceive?: boolean,
+        additionalParams?: Record<string, any>
     ): Promise<{
         secret: Buffer,
         pr: string,
@@ -1664,7 +1670,7 @@ export class ClientSwapContract<T extends SwapData> {
             throw new UserError("Amount more than maximum");
         }
 
-        const resp = await this.receiveLightning(amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
+        const resp = await this.receiveLightning(amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, null, null, additionalParams);
 
         if(noInstantReceive) {
             const anyResp: any = resp;
@@ -1687,7 +1693,8 @@ export class ClientSwapContract<T extends SwapData> {
         requiredBaseFee?: BN,
         requiredFeePPM?: BN,
         exactOut?: boolean,
-        descriptionHash?: Buffer
+        descriptionHash?: Buffer,
+        additionalParams?: Record<string, any>
     ): Promise<{
         secret: Buffer,
         pr: string,
@@ -1726,6 +1733,7 @@ export class ClientSwapContract<T extends SwapData> {
             : tryWithRetries<any>(() => this.swapContract.getInitFeeRate(requiredKey, this.swapContract.getAddress(), requiredToken));
 
         const {parsedData} = await this.postWithRetries(url+"/createInvoice", {
+            ...additionalParams,
             paymentHash: paymentHash.toString("hex"),
             amount: amountOrTokens.toString(),
             address: this.swapContract.getAddress(),
