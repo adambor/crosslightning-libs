@@ -14,7 +14,8 @@ export class ParamDecoder implements IParamReader {
         [key: string]: {
             promise: Promise<any>,
             resolve: (data: any) => void,
-            reject: (err: any) => void
+            reject: (err: any) => void,
+            value: any
         }
     } = {};
 
@@ -30,7 +31,8 @@ export class ParamDecoder implements IParamReader {
                 this.params[key] = {
                     promise: Promise.resolve(obj[key]),
                     resolve: null,
-                    reject: null
+                    reject: null,
+                    value: obj[key]
                 };
             } else {
                 if(this.params[key].resolve!=null) {
@@ -121,7 +123,8 @@ export class ParamDecoder implements IParamReader {
             this.params[key] = {
                 resolve,
                 reject,
-                promise
+                promise,
+                value: null
             }
         }
         return this.params[key].promise;
@@ -131,7 +134,55 @@ export class ParamDecoder implements IParamReader {
         const resultSchema: any = {};
         for(let fieldName in schema) {
             const val: any = await this.getParam(fieldName);
-            console.log("param got "+fieldName+": ", val);
+            const type: FieldTypeEnum | RequestSchema | ((val: any) => boolean) = schema[fieldName];
+            if(typeof(type)==="function") {
+                const result = type(val);
+                if(result==null) return null;
+                resultSchema[fieldName] = result;
+                continue;
+            }
+
+            if(val==null && type>=100) {
+                resultSchema[fieldName] = null;
+                continue;
+            }
+
+            if(type===FieldTypeEnum.Any || type===FieldTypeEnum.AnyOptional) {
+                resultSchema[fieldName] = val;
+            } else if(type===FieldTypeEnum.Boolean || type===FieldTypeEnum.BooleanOptional) {
+                if(typeof(val)!=="boolean") return null;
+                resultSchema[fieldName] = val;
+            } else if(type===FieldTypeEnum.Number || type===FieldTypeEnum.NumberOptional) {
+                if(typeof(val)!=="number") return null;
+                if(isNaN(val as number)) return null;
+                resultSchema[fieldName] = val;
+            } else if(type===FieldTypeEnum.BN || type===FieldTypeEnum.BNOptional) {
+                const result = parseBN(val);
+                if(result==null) return null;
+                resultSchema[fieldName] = result;
+            } else if(type===FieldTypeEnum.String || type===FieldTypeEnum.StringOptional) {
+                if(typeof(val)!=="string") return null;
+                resultSchema[fieldName] = val;
+            } else {
+                //Probably another request schema
+                const result = verifySchema(val, type as RequestSchema);
+                if(result==null) return null;
+                resultSchema[fieldName] = result;
+            }
+        }
+        return resultSchema;
+    }
+
+    getExistingParamsOrNull<T extends RequestSchema>(schema: T): RequestSchemaResult<T> {
+        const resultSchema: any = {};
+        for(let fieldName in schema) {
+            const val: any = this.params[fieldName]?.value;
+
+            if(val==null) {
+                resultSchema[fieldName] = null;
+                continue;
+            }
+
             const type: FieldTypeEnum | RequestSchema | ((val: any) => boolean) = schema[fieldName];
             if(typeof(type)==="function") {
                 const result = type(val);

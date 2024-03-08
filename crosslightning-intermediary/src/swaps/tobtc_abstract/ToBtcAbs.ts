@@ -74,6 +74,17 @@ const ADDRESS_FORMAT_MAP = {
 
 const LND_CHANGE_OUTPUT_TYPE = "p2tr";
 
+export type ToBtcRequestType = {
+    address: string,
+    amount: BN,
+    confirmationTarget: number,
+    confirmations: number,
+    nonce: BN,
+    token: string,
+    offerer: string,
+    exactIn?: boolean
+};
+
 /**
  * Handler for to BTC swaps, utilizing PTLCs (proof-time locked contracts) using btc relay (on-chain bitcoin SPV)
  */
@@ -760,7 +771,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
              *Sent later:
              * feeRate: string                      Fee rate to use for the init signature
              */
-            const parsedBody = await req.paramReader.getParams({
+            const parsedBody: ToBtcRequestType = await req.paramReader.getParams({
                 address: FieldTypeEnum.String,
                 amount: FieldTypeEnum.BN,
                 confirmationTarget: FieldTypeEnum.Number,
@@ -859,6 +870,19 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
+            const pluginResult = await PluginManager.onSwapRequestToBtc(req, parsedBody, metadata);
+
+            if(pluginResult.throw) {
+                await responseStream.writeParamsAndEnd({
+                    code: 29999,
+                    msg: pluginResult.throw
+                });
+                return;
+            }
+
+            let baseFee = pluginResult.baseFee || this.config.baseFee;
+            let feePPM = pluginResult.feePPM || this.config.feePPM;
+
             metadata.times.requestChecked = Date.now();
 
             const abortController = new AbortController();
@@ -896,7 +920,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 abortController.signal.throwIfAborted();
 
                 //Decrease by base fee
-                amountBD = amountBD.sub(this.config.baseFee);
+                amountBD = amountBD.sub(baseFee);
 
                 //If it's already smaller than minimum, set it to minimum so we can calculate the network fee
                 if(amountBD.lt(this.config.min)) {
@@ -959,14 +983,14 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 amountBD = amountBD.sub(networkFeeAdjusted);
 
                 //Decrease by percentage fee
-                amountBD = amountBD.mul(new BN(1000000)).div(this.config.feePPM.add(new BN(1000000)));
+                amountBD = amountBD.mul(new BN(1000000)).div(feePPM.add(new BN(1000000)));
 
                 if(tooLow || amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)))) {
                     //Compute min/max
-                    let adjustedMin = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    let adjustedMax = this.config.max.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    adjustedMin = adjustedMin.add(this.config.baseFee).add(networkFeeAdjusted);
-                    adjustedMax = adjustedMax.add(this.config.baseFee).add(networkFeeAdjusted);
+                    let adjustedMin = this.config.min.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    let adjustedMax = this.config.max.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    adjustedMin = adjustedMin.add(baseFee).add(networkFeeAdjusted);
+                    adjustedMax = adjustedMax.add(baseFee).add(networkFeeAdjusted);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     await responseStream.writeParamsAndEnd({
@@ -980,10 +1004,10 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                     return;
                 }
                 if(amountBD.gt(this.config.max.mul(new BN(105)).div(new BN(100)))) {
-                    let adjustedMin = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    let adjustedMax = this.config.max.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    adjustedMin = adjustedMin.add(this.config.baseFee).add(networkFeeAdjusted);
-                    adjustedMax = adjustedMax.add(this.config.baseFee).add(networkFeeAdjusted);
+                    let adjustedMin = this.config.min.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    let adjustedMax = this.config.max.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    adjustedMin = adjustedMin.add(baseFee).add(networkFeeAdjusted);
+                    adjustedMax = adjustedMax.add(baseFee).add(networkFeeAdjusted);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     await responseStream.writeParamsAndEnd({
@@ -1000,7 +1024,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             metadata.times.chainFeeCalculated = Date.now();
 
-            const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
+            const swapFee = baseFee.add(amountBD.mul(feePPM).div(new BN(1000000)));
 
             const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(networkFeeAdjusted, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
             const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);

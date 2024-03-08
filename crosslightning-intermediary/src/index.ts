@@ -30,3 +30,12 @@ export * from "./plugins/IPlugin";
 
 export * from "./fees/IBtcFeeEstimator";
 export * from "./fees/OneDollarFeeEstimator";
+
+export * from "./utils/paramcoders/IParamReader";
+export * from "./utils/paramcoders/IParamWriter";
+export * from "./utils/paramcoders/LegacyParamEncoder";
+export * from "./utils/paramcoders/ParamDecoder";
+export * from "./utils/paramcoders/ParamEncoder";
+export * from "./utils/paramcoders/SchemaVerifier";
+export * from "./utils/paramcoders/server/ServerParamDecoder";
+export * from "./utils/paramcoders/server/ServerParamEncoder";

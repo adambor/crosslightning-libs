@@ -1,8 +1,10 @@
 import {BtcRelay, ChainEvents, SwapContract, SwapData} from "crosslightning-base";
 import {IPlugin} from "./IPlugin";
-import {SwapHandler} from "..";
+import {FromBtcLnRequestType, FromBtcRequestType, SwapHandler, ToBtcLnRequestType, ToBtcRequestType} from "..";
 import {SwapHandlerSwap} from "../swaps/SwapHandlerSwap";
 import {AuthenticatedLnd} from "lightning";
+import {IParamReader} from "../utils/paramcoders/IParamReader";
+import * as BN from "bn.js";
 
 
 export class PluginManager {
@@ -63,6 +65,17 @@ export class PluginManager {
         }
     }
 
+    static async onHttpServerStarted(httpServer: any): Promise<void> {
+        for(let plugin of PluginManager.plugins) {
+            try {
+                if(plugin.onHttpServerStarted!=null) await plugin.onHttpServerStarted(httpServer);
+            } catch (e) {
+                console.error("Plugin onHttpServerStarted error: ", plugin.name);
+                console.error(e);
+            }
+        }
+    }
+
     static async swapStateChange<T extends SwapData>(swap: SwapHandlerSwap<T>, oldState?: any) {
         for(let plugin of PluginManager.plugins) {
             try {
@@ -94,6 +107,94 @@ export class PluginManager {
                 console.error(e);
             }
         }
+    }
+
+    static async onSwapRequestToBtcLn?(req: Request & {paramReader: IParamReader}, requestData: ToBtcLnRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}> {
+        let fees: {baseFee: BN, feePPM: BN} = {baseFee: null, feePPM: null};
+        for(let plugin of PluginManager.plugins) {
+            try {
+                if(plugin.onSwapRequestToBtcLn!=null) {
+                    const result = await plugin.onSwapRequestToBtcLn(req, requestData, swapMetadata);
+                    if(result!=null) {
+                        if(result.throw) {
+                            return {throw: result.throw}
+                        }
+                        if(result.baseFee!=null) fees.baseFee = result.baseFee;
+                        if(result.feePPM!=null) fees.feePPM = result.feePPM;
+                    }
+                }
+            } catch (e) {
+                console.error("Plugin onSwapRequestToBtcLn error: ", plugin.name);
+                console.error(e);
+            }
+        }
+        return fees;
+    }
+
+    static async onSwapRequestToBtc?(req: Request & {paramReader: IParamReader}, requestData: ToBtcRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}> {
+        let fees: {baseFee: BN, feePPM: BN} = {baseFee: null, feePPM: null};
+        for(let plugin of PluginManager.plugins) {
+            try {
+                if(plugin.onSwapRequestToBtc!=null) {
+                    const result = await plugin.onSwapRequestToBtc(req, requestData, swapMetadata);
+                    if(result!=null) {
+                        if(result.throw) {
+                            return {throw: result.throw}
+                        }
+                        if(result.baseFee!=null) fees.baseFee = result.baseFee;
+                        if(result.feePPM!=null) fees.feePPM = result.feePPM;
+                    }
+                }
+            } catch (e) {
+                console.error("Plugin onSwapRequestToBtc error: ", plugin.name);
+                console.error(e);
+            }
+        }
+        return fees;
+    }
+
+    static async onSwapRequestFromBtcLn?(req: Request & {paramReader: IParamReader}, requestData: FromBtcLnRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}> {
+        let fees: {baseFee: BN, feePPM: BN} = {baseFee: null, feePPM: null};
+        for(let plugin of PluginManager.plugins) {
+            try {
+                if(plugin.onSwapRequestFromBtcLn!=null) {
+                    const result = await plugin.onSwapRequestFromBtcLn(req, requestData, swapMetadata);
+                    if(result!=null) {
+                        if(result.throw) {
+                            return {throw: result.throw}
+                        }
+                        if(result.baseFee!=null) fees.baseFee = result.baseFee;
+                        if(result.feePPM!=null) fees.feePPM = result.feePPM;
+                    }
+                }
+            } catch (e) {
+                console.error("Plugin onSwapRequestFromBtcLn error: ", plugin.name);
+                console.error(e);
+            }
+        }
+        return fees;
+    }
+
+    static async onSwapRequestFromBtc?(req: Request & {paramReader: IParamReader}, requestData: FromBtcRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}> {
+        let fees: {baseFee: BN, feePPM: BN} = {baseFee: null, feePPM: null};
+        for(let plugin of PluginManager.plugins) {
+            try {
+                if(plugin.onSwapRequestFromBtc!=null) {
+                    const result = await plugin.onSwapRequestFromBtc(req, requestData, swapMetadata);
+                    if(result!=null) {
+                        if(result.throw) {
+                            return {throw: result.throw}
+                        }
+                        if(result.baseFee!=null) fees.baseFee = result.baseFee;
+                        if(result.feePPM!=null) fees.feePPM = result.feePPM;
+                    }
+                }
+            } catch (e) {
+                console.error("Plugin onSwapRequestFromBtc error: ", plugin.name);
+                console.error(e);
+            }
+        }
+        return fees;
     }
 
 }
