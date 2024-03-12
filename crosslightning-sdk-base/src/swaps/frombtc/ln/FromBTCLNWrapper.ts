@@ -46,8 +46,19 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
      * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
      * @param exactOut          Whether to create an exact out swap instead of exact in
      * @param descriptionHash   Description hash to use for the invoice
+     * @param additionalParams  Additional parameters sent to the LP when creating the swap
      */
-    async create(amount: BN, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, exactOut?: boolean, descriptionHash?: Buffer): Promise<FromBTCLNSwap<T>> {
+    async create(
+        amount: BN,
+        url: string,
+        requiredToken?: TokenAddress,
+        requiredKey?: string,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN,
+        exactOut?: boolean,
+        descriptionHash?: Buffer,
+        additionalParams?: Record<string, any>
+    ): Promise<FromBTCLNSwap<T>> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
@@ -59,7 +70,8 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
             requiredBaseFee,
             requiredFeePPM,
             exactOut,
-            descriptionHash
+            descriptionHash,
+            additionalParams
         );
 
         const parsed = bolt11.decode(result.pr);
@@ -82,14 +94,6 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
         );
 
         const total = result.total;
-
-        //Already checked by ClientSwapContract implementation
-        // if(requiredKey!=null) {
-        //     const liquidity = await this.contract.swapContract.getIntermediaryBalance(requiredKey, requiredToken);
-        //     if(liquidity.lt(total)) {
-        //         throw new IntermediaryError("Intermediary doesn't have enough liquidity");
-        //     }
-        // }
 
         const swap = new FromBTCLNSwap<T>(
             this,
@@ -128,11 +132,22 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
      * @param requiredBaseFee   Desired base fee reported by the swap intermediary
      * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
      * @param noInstantReceive  Flag to disable instantly posting the lightning PR to LN service for withdrawal, when set the lightning PR is sent to LN service when waitForPayment is called
+     * @param additionalParams  Additional parameters sent to the LP when creating the swap
      */
-    async createViaLNURL(lnurl: string | LNURLWithdraw, amount: BN, url: string, requiredToken?: TokenAddress, requiredKey?: string, requiredBaseFee?: BN, requiredFeePPM?: BN, noInstantReceive?: boolean): Promise<FromBTCLNSwap<T>> {
+    async createViaLNURL(
+        lnurl: string | LNURLWithdraw,
+        amount: BN,
+        url: string,
+        requiredToken?: TokenAddress,
+        requiredKey?: string,
+        requiredBaseFee?: BN,
+        requiredFeePPM?: BN,
+        noInstantReceive?: boolean,
+        additionalParams?: Record<string, any>
+    ): Promise<FromBTCLNSwap<T>> {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const result = await this.contract.receiveLightningLNURL(typeof(lnurl)==="string" ? lnurl : lnurl.params, amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, noInstantReceive);
+        const result = await this.contract.receiveLightningLNURL(typeof(lnurl)==="string" ? lnurl : lnurl.params, amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, noInstantReceive, additionalParams);
 
         const parsed = bolt11.decode(result.pr);
 

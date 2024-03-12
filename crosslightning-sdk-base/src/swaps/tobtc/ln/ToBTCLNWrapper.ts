@@ -39,6 +39,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
      * @param requiredKey       Required key of the Intermediary
      * @param requiredBaseFee   Desired base fee reported by the swap intermediary
      * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
+     * @param additionalParams  Additional parameters sent to the LP when creating the swap
      */
     async create(
         bolt11PayRequest: string,
@@ -49,7 +50,8 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
         requiredToken?: TokenAddress,
         requiredKey?: string,
         requiredBaseFee?: BN,
-        requiredFeePPM?: BN
+        requiredFeePPM?: BN,
+        additionalParams?: Record<string, any>
     ): Promise<ToBTCLNSwap<T>> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
@@ -64,7 +66,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
 
         const fee = this.calculateFeeForAmount(sats, maxBaseFee, maxPPMFee);
 
-        const result = await this.contract.payLightning(bolt11PayRequest, expirySeconds, fee, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM);
+        const result = await this.contract.payLightning(bolt11PayRequest, expirySeconds, fee, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, null, null, null, null, null, null, null, additionalParams);
 
         const swap = new ToBTCLNSwap(
             this,
@@ -106,6 +108,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
      * @param requiredBaseFee   Desired base fee reported by the swap intermediary
      * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
      * @param exactIn           Whether to do an exactIn swap instead of exactOut
+     * @param additionalParams  Additional parameters sent to the LP when creating the swap
      */
     async createViaLNURL(
         lnurlPay: string | LNURLPay,
@@ -119,7 +122,8 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
         requiredKey?: string,
         requiredBaseFee?: BN,
         requiredFeePPM?: BN,
-        exactIn?: boolean
+        exactIn?: boolean,
+        additionalParams?: Record<string, any>
     ): Promise<ToBTCLNSwap<T>> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
@@ -149,7 +153,8 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
             requiredBaseFee,
             requiredFeePPM,
             pricePreFetch,
-            exactIn
+            exactIn,
+            additionalParams
         );
 
         const swap = new ToBTCLNSwap(

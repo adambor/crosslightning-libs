@@ -128,6 +128,16 @@ type ExactInAuthorization = {
     }
 }
 
+export type ToBtcLnRequestType = {
+    pr: string,
+    maxFee: BN,
+    expiryTimestamp: BN,
+    token: string,
+    offerer: string,
+    exactIn?: boolean,
+    amount?: BN
+};
+
 /**
  * Swap handler handling to BTCLN swaps using submarine swaps
  */
@@ -732,7 +742,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
              *Sent later:
              * feeRate: string              Fee rate to use for the init signature
              */
-            const parsedBody = await req.paramReader.getParams({
+            const parsedBody: ToBtcLnRequestType = await req.paramReader.getParams({
                 pr: FieldTypeEnum.String,
                 maxFee: FieldTypeEnum.BN,
                 expiryTimestamp: FieldTypeEnum.BN,
@@ -823,6 +833,19 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
+            const pluginResult = await PluginManager.onSwapRequestToBtcLn(req, parsedBody, metadata);
+
+            if(pluginResult.throw) {
+                await responseStream.writeParamsAndEnd({
+                    code: 29999,
+                    msg: pluginResult.throw
+                });
+                return;
+            }
+
+            let baseFee = pluginResult.baseFee || this.config.baseFee;
+            let feePPM = pluginResult.feePPM || this.config.feePPM;
+
             const abortController = new AbortController();
             const responseStreamAbortController = responseStream.getAbortSignal();
             responseStreamAbortController.addEventListener("abort", () => abortController.abort(responseStreamAbortController.reason));
@@ -857,7 +880,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 amountBD = await this.swapPricing.getToBtcSwapAmount(requestAmount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
 
                 //Decrease by base fee
-                amountBD = amountBD.sub(this.config.baseFee);
+                amountBD = amountBD.sub(baseFee);
 
                 //If it's already smaller than minimum, set it to minimum so we can calculate the network fee
                 if(amountBD.lt(this.config.min)) {
@@ -1038,14 +1061,14 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 amountBD = amountBD.sub(actualRoutingFee);
 
                 //Decrease by percentage fee
-                amountBD = amountBD.mul(new BN(1000000)).div(this.config.feePPM.add(new BN(1000000)));
+                amountBD = amountBD.mul(new BN(1000000)).div(feePPM.add(new BN(1000000)));
 
                 if(tooLow || amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)))) {
                     //Compute min/max
-                    let adjustedMin = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    let adjustedMax = this.config.max.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    adjustedMin = adjustedMin.add(this.config.baseFee).add(actualRoutingFee);
-                    adjustedMax = adjustedMax.add(this.config.baseFee).add(actualRoutingFee);
+                    let adjustedMin = this.config.min.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    let adjustedMax = this.config.max.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    adjustedMin = adjustedMin.add(baseFee).add(actualRoutingFee);
+                    adjustedMax = adjustedMax.add(baseFee).add(actualRoutingFee);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     await responseStream.writeParamsAndEnd({
@@ -1059,10 +1082,10 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     return;
                 }
                 if(amountBD.gt(this.config.max.mul(new BN(105)).div(new BN(100)))) {
-                    let adjustedMin = this.config.min.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    let adjustedMax = this.config.max.mul(this.config.feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    adjustedMin = adjustedMin.add(this.config.baseFee).add(actualRoutingFee);
-                    adjustedMax = adjustedMax.add(this.config.baseFee).add(actualRoutingFee);
+                    let adjustedMin = this.config.min.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    let adjustedMax = this.config.max.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
+                    adjustedMin = adjustedMin.add(baseFee).add(actualRoutingFee);
+                    adjustedMax = adjustedMax.add(baseFee).add(actualRoutingFee);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     await responseStream.writeParamsAndEnd({
@@ -1077,7 +1100,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 }
             }
 
-            const swapFee = amountBD.mul(this.config.feePPM).div(new BN(1000000)).add(this.config.baseFee);
+            const swapFee = amountBD.mul(feePPM).div(new BN(1000000)).add(baseFee);
 
             const prefetchedPrice = pricePrefetchPromise!=null ? await pricePrefetchPromise : null;
             if(prefetchedPrice!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetched price: ", prefetchedPrice.toString(10));

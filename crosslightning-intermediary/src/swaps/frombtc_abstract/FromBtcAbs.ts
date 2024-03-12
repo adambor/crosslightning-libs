@@ -49,6 +49,14 @@ export type FromBtcConfig = {
 
 const secondsInYear = new BN(365*24*60*60);
 
+export type FromBtcRequestType = {
+    address: string,
+    amount: BN,
+    token: string,
+    sequence: BN,
+    exactOut?: boolean
+};
+
 /**
  * Swap handler handling from BTC swaps using PTLCs (proof-time locked contracts) and btc relay (on-chain bitcoin SPV)
  */
@@ -304,7 +312,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
              * feeRate: string              Fee rate to be used for init signature
              */
 
-            const parsedBody = await req.paramReader.getParams({
+            const parsedBody: FromBtcRequestType = await req.paramReader.getParams({
                 address: (val: string) => val!=null &&
                         typeof(val)==="string" &&
                         this.swapContract.isValidAddress(val) ? val : null,
@@ -335,6 +343,19 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 });
                 return;
             }
+
+            const pluginResult = await PluginManager.onSwapRequestFromBtc(req, parsedBody, metadata);
+
+            if(pluginResult.throw) {
+                await responseStream.writeParamsAndEnd({
+                    code: 29999,
+                    msg: pluginResult.throw
+                });
+                return;
+            }
+
+            let baseFee = pluginResult.baseFee || this.config.baseFee;
+            let feePPM = pluginResult.feePPM || this.config.feePPM;
 
             metadata.times.requestChecked = Date.now();
 
@@ -423,11 +444,11 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 abortController.signal.throwIfAborted();
 
                 // amt = (amt+base_fee)/(1-fee)
-                amountBD = amountBD.add(this.config.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(this.config.feePPM));
+                amountBD = amountBD.add(baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(feePPM));
 
                 if(amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)))) {
-                    let adjustedMin = this.config.min.mul(new BN(1000000).sub(this.config.feePPM)).div(new BN(1000000)).sub(this.config.baseFee);
-                    let adjustedMax = this.config.max.mul(new BN(1000000).sub(this.config.feePPM)).div(new BN(1000000)).sub(this.config.baseFee);
+                    let adjustedMin = this.config.min.mul(new BN(1000000).sub(feePPM)).div(new BN(1000000)).sub(baseFee);
+                    let adjustedMax = this.config.max.mul(new BN(1000000).sub(feePPM)).div(new BN(1000000)).sub(baseFee);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     await responseStream.writeParamsAndEnd({
@@ -442,8 +463,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 }
 
                 if(amountBD.gt(this.config.max.mul(new BN(105)).div(new BN(100)))) {
-                    let adjustedMin = this.config.min.mul(new BN(1000000).sub(this.config.feePPM)).div(new BN(1000000)).sub(this.config.baseFee);
-                    let adjustedMax = this.config.max.mul(new BN(1000000).sub(this.config.feePPM)).div(new BN(1000000)).sub(this.config.baseFee);
+                    let adjustedMin = this.config.min.mul(new BN(1000000).sub(feePPM)).div(new BN(1000000)).sub(baseFee);
+                    let adjustedMax = this.config.max.mul(new BN(1000000).sub(feePPM)).div(new BN(1000000)).sub(baseFee);
                     const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                     await responseStream.writeParamsAndEnd({
@@ -486,7 +507,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
             metadata.times.amountsChecked = Date.now();
 
-            const swapFee = this.config.baseFee.add(amountBD.mul(this.config.feePPM).div(new BN(1000000)));
+            const swapFee = baseFee.add(amountBD.mul(feePPM).div(new BN(1000000)));
             const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
 
             abortController.signal.throwIfAborted();
