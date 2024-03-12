@@ -268,12 +268,12 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 const status = await this.swapContract.getCommitStatus(invoiceData.data);
                 if(status===SwapCommitStatus.PAID) {
                     await invoiceData.setState(ToBtcLnSwapState.CLAIMED);
-                    // await PluginManager.swapStateChange(invoiceData);
-                } else if(status===SwapCommitStatus.EXPIRED || status===SwapCommitStatus.NOT_COMMITED) {
+                } else if(status===SwapCommitStatus.EXPIRED) {
                     await invoiceData.setState(ToBtcLnSwapState.REFUNDED);
                 }
+                await this.storageManager.saveData(decodedPR.tagsObject.payment_hash, invoiceData.data.getSequence(), invoiceData);
+
                 console.error("[To BTC-LN: BTCLN.PaymentResult] Tried to claim but escrow doesn't exist anymore, commit status="+status+" : ", decodedPR.tagsObject.payment_hash);
-                await this.removeSwapData(decodedPR.tagsObject.payment_hash, invoiceData.data.getSequence());
                 return;
             }
 
