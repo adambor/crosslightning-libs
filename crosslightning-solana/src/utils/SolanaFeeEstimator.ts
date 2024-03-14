@@ -145,7 +145,7 @@ export class SolanaFeeEstimator {
             }
 
             if(response.error!=null) {
-                if(response.error.code!==-32601) {
+                if(response.error.code!==-32601 && response.error.code!==-32600) {
                     throw new Error(response.error.message);
                 }
             }
