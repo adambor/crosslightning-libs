@@ -137,7 +137,17 @@ export class SolanaFeeEstimator {
                         "includeAllPriorityFeeLevels": true
                     }
                 }
-            ]);
+            ]).catch(e => {
+                if(e.message!=null && (e.message.includes("-32601") || e.message.includes("-32600"))) {
+                    return {
+                        error: {
+                            code: -32601,
+                            message: e.message
+                        }
+                    };
+                }
+                throw e;
+            });
 
             if(response.error==null) {
                 const calculatedFee = BN.max(new BN(8000), new BN(response.result.priorityFeeLevels.veryHigh));
