@@ -3,6 +3,7 @@ import {RequestSchema, verifySchema} from "../SchemaVerifier";
 import {ParamDecoder} from "../ParamDecoder";
 import {ServerParamEncoder} from "./ServerParamEncoder";
 import {ServerResponse} from "http";
+import {IParamReader} from "../IParamReader";
 
 export class RequestTimeoutError extends Error {
 
@@ -30,11 +31,15 @@ export const serverParamDecoder = (timeoutMillis: number) => (req: Request, res:
         req.on("end", () => {
             console.log("Request end, buffers: ", dataBuffers);
             const body = JSON.parse(Buffer.concat(dataBuffers).toString());
-            (req as any).paramReader = {
+            const paramReader: IParamReader = {
                 getParams: <T extends RequestSchema>(schema: T) => {
                     return Promise.resolve(verifySchema(body, schema));
+                },
+                getExistingParamsOrNull: <T extends RequestSchema>(schema: T) => {
+                    return verifySchema(body, schema);
                 }
             };
+            (req as any).paramReader = paramReader;
             clearTimeout(timeout);
             next();
         });
