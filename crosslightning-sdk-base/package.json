@@ -1,6 +1,6 @@
 {
   "name": "crosslightning-sdk-base",
-  "version": "8.2.3",
+  "version": "8.2.5",
   "description": "CrossLightning SDK chain-agnostic base",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",

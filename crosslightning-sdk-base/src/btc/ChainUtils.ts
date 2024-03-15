@@ -198,7 +198,38 @@ export class ChainUtils {
             confirmedBalance: confirmedInput.sub(confirmedOutput),
             unconfirmedBalance: unconfirmedInput.sub(unconfirmedOutput)
         }
+    }
 
+    static async getAddressUTXOs(address: string): Promise<{
+        txId: string,
+        vout: number,
+        status: {
+            confirmed: boolean,
+            block_height: number,
+            block_hash: string,
+            block_time: number
+        },
+        value: BN
+    }[]> {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"address/"+address+"/utxo", {
+            method: "GET",
+            timeout
+        }));
+
+        if(response.status!==200) {
+            let resp: string;
+            try {
+                resp = await response.text();
+            } catch (e) {
+                throw new Error(response.statusText);
+            }
+            throw new Error(resp);
+        }
+
+        let jsonBody: any = await response.json();
+        jsonBody.forEach(e => e.value = new BN(e.value));
+
+        return jsonBody;
     }
 
     static async getAddressTransactions(address: string): Promise<BitcoinTransaction[]> {
@@ -485,6 +516,26 @@ export class ChainUtils {
 
         return jsonBody;
 
+    }
+
+    static async sendTransaction(transactionHex: string): Promise<string> {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"tx", {
+            method: "POST",
+            timeout,
+            body: transactionHex
+        }));
+
+        if(response.status!==200) {
+            let resp: string;
+            try {
+                resp = await response.text();
+            } catch (e) {
+                throw new Error(response.statusText);
+            }
+            throw new Error(resp);
+        }
+
+        return await response.text();
     }
 
 }
