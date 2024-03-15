@@ -13,6 +13,7 @@ import {
     InitializeEvent,
     IStorageManager,
     RefundEvent,
+    SwapCommitStatus,
     SwapContract,
     SwapData,
     SwapEvent,
@@ -32,6 +33,7 @@ import * as express from "express";
 import {serverParamDecoder} from "../../utils/paramcoders/server/ServerParamDecoder";
 import {IParamReader} from "../../utils/paramcoders/IParamReader";
 import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
+import {ToBtcLnSwapState} from "../..";
 
 const OUTPUT_SCRIPT_MAX_LENGTH = 200;
 
@@ -300,13 +302,15 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
         if(unlock==null) return false;
 
-        const result = await this.swapContract.claimWithTxData(payment.data, blockHeader.getHeight(), tx, vout, null, null, false, true);
+        try {
+            const result = await this.swapContract.claimWithTxData(payment.data, blockHeader.getHeight(), tx, vout, null, null, false, true);
+            if(payment.metadata!=null) payment.metadata.times.txClaimed = Date.now();
+            unlock();
+            return true;
+        } catch (e) {
+            return false
+        }
 
-        if(payment.metadata!=null) payment.metadata.times.txClaimed = Date.now();
-
-        unlock();
-
-        return true;
     }
 
     /**
@@ -357,6 +361,36 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             }
 
             if(payment.state===ToBtcSwapState.COMMITED || payment.state===ToBtcSwapState.BTC_SENDING || payment.state===ToBtcSwapState.BTC_SENT) {
+
+                //Sanity check for sent swaps
+                if(payment.state===ToBtcSwapState.BTC_SENT) {
+                    const isCommited = await this.swapContract.isCommited(payment.data);
+
+                    if(!isCommited) {
+                        const status = await this.swapContract.getCommitStatus(payment.data);
+                        if(status===SwapCommitStatus.PAID) {
+                            if(payment.txId!=null) {
+                                if(this.activeSubscriptions[payment.txId]!=null) {
+                                    console.log("[ToBtc: Bitcoin.checkPastSwaps] Removing from txId subscriptions PAID: ", payment.txId);
+                                    delete this.activeSubscriptions[payment.txId];
+                                }
+                            }
+                            await payment.setState(ToBtcSwapState.CLAIMED);
+                            await this.removeSwapData(this.getChainHash(payment).toString("hex"), payment.data.getSequence());
+                        } else if(status===SwapCommitStatus.EXPIRED) {
+                            if(payment.txId!=null) {
+                                if(this.activeSubscriptions[payment.txId]!=null) {
+                                    console.log("[ToBtc: Bitcoin.checkPastSwaps] Removing from txId subscriptions EXPIRED: ", payment.txId);
+                                    delete this.activeSubscriptions[payment.txId];
+                                }
+                            }
+                            await payment.setState(ToBtcSwapState.REFUNDED);
+                            await this.removeSwapData(this.getChainHash(payment).toString("hex"), payment.data.getSequence());
+                        }
+                        continue;
+                    }
+                }
+
                 await this.processInitialized(payment);
                 continue;
             }
@@ -390,13 +424,12 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
                 const outputScript = bitcoin.address.toOutputScript(payment.address, this.config.bitcoinNetwork);
 
-                console.log("[To BTC: Bitcoin.CheckTransactions] TX vouts: ", tx.outs);
-                console.log("[To BTC: Bitcoin.CheckTransactions] Required output script: ", outputScript.toString("hex"));
-                console.log("[To BTC: Bitcoin.CheckTransactions] Required amount: ", payment.amount.toString(10));
-
                 const vout = tx.outs.find(e => new BN(e.value).eq(payment.amount) && Buffer.from(e.scriptPubKey.hex, "hex").equals(outputScript));
 
                 if(vout==null) {
+                    console.error("[To BTC: Bitcoin.CheckTransactions] TX vouts: ", tx.outs);
+                    console.error("[To BTC: Bitcoin.CheckTransactions] Required output script: ", outputScript.toString("hex"));
+                    console.error("[To BTC: Bitcoin.CheckTransactions] Required amount: ", payment.amount.toString(10));
                     console.error("Cannot find vout!!");
                     continue;
                 }
@@ -405,7 +438,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
                 const success = await this.processPaymentResult(tx, payment, vout.n);
 
-                console.log("[To BTC: Bitcoin.CheckTransactions] Claim processed: ", txId);
+                console.log("[To BTC: Bitcoin.CheckTransactions] Claim processed: "+txId+" success: "+success);
 
                 if(success) removeTxIds.push(txId);
             } catch (e) {
@@ -415,7 +448,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
         removeTxIds.forEach(txId => {
             console.log("[ToBtc: Bitcoin.CheckTransactions] Removing from txId subscriptions: ", txId);
-            delete this.activeSubscriptions[txId];
+            if(this.activeSubscriptions[txId]!=null) delete this.activeSubscriptions[txId];
         });
 
         //if(removeTxIds.length>0) console.log("[ToBtc: Bitcoin.CheckTransactions] Still subscribed to: ", Object.keys(this.activeSubscriptions));
@@ -697,6 +730,14 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
                 console.log("[To BTC: Solana.ClaimEvent] Transaction confirmed! Event: ", event);
 
+                //Also remove transaction from active subscriptions
+                if(savedInvoice.txId!=null) {
+                    if(this.activeSubscriptions[savedInvoice.txId]!=null) {
+                        console.log("[To Btc: Solana.ClaimEvent] Removing from txId subscriptions: ", savedInvoice.txId);
+                        delete this.activeSubscriptions[savedInvoice.txId];
+                    }
+                }
+
                 await savedInvoice.setState(ToBtcSwapState.CLAIMED);
                 await this.removeSwapData(paymentHash, event.sequence);
 
@@ -717,6 +758,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 //Also remove transaction from active subscriptions
                 if(savedInvoice.txId!=null) {
                     if(this.activeSubscriptions[savedInvoice.txId]!=null) {
+                        console.log("[To Btc: Solana.RefundEvent] Removing from txId subscriptions: ", savedInvoice.txId);
                         delete this.activeSubscriptions[savedInvoice.txId];
                     }
                 }
