@@ -1415,6 +1415,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         const txs = await this.txsClaimWithTxData(swapData, blockheight, tx, vout, commitedHeader, synchronizer, initAta, data, feeRate);
 
+        if(txs===null) throw new Error("Btc relay not synchronized to required blockheight!");
+
         const [signature] = await this.sendAndConfirm(txs, waitForConfirmation, abortSignal);
 
         await this.removeDataAccount(data.storageAcc);
@@ -1475,7 +1477,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                     }, blockheight+swapData.getConfirmations()-1),
                     this.retryPolicy
                 );
-                commitedHeader = result.header;
+                if(result!=null) commitedHeader = result.header;
             } catch (e) {
                 console.error(e);
             }
