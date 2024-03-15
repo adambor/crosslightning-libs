@@ -232,6 +232,32 @@ export class ChainUtils {
         return jsonBody;
     }
 
+    static async getFees(): Promise<{
+        fastestFee: number,
+        halfHourFee: number,
+        hourFee: number,
+        economyFee: number,
+        minimumFee: number
+    }> {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"v1/fees/recommended", {
+            method: "GET",
+            timeout
+        }));
+
+        if(response.status!==200) {
+            let resp: string;
+            try {
+                resp = await response.text();
+            } catch (e) {
+                throw new Error(response.statusText);
+            }
+            throw new Error(resp);
+        }
+
+        return await response.json();
+    }
+
+
     static async getAddressTransactions(address: string): Promise<BitcoinTransaction[]> {
 
         const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"address/"+address+"/txs", {
