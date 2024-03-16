@@ -143,6 +143,29 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
     }
 
     /**
+     * Checks whether a bitcoin payment was already made, returns the payment or null when no payment has been made.
+     */
+    async getBitcoinPayment(): Promise<{txId: string, confirmations: number, targetConfirmations: number} | null> {
+
+        const result = await ChainUtils.checkAddressTxos(this.address, this.getTxoHash());
+
+        if(result==null) return null;
+
+        let confirmations = 0;
+        if(result.tx.status.confirmed) {
+            const tipHeight = await ChainUtils.getTipBlockHeight();
+            confirmations = tipHeight-result.tx.status.block_height+1;
+        }
+
+        return {
+            txId: result.tx.txid,
+            confirmations,
+            targetConfirmations: this.data.getConfirmations()
+        }
+
+    }
+
+    /**
      * Returns if the swap can be committed
      */
     canCommit(): boolean {
