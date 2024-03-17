@@ -201,7 +201,7 @@ export class ChainUtils {
     }
 
     static async getAddressUTXOs(address: string): Promise<{
-        txId: string,
+        txid: string,
         vout: number,
         status: {
             confirmed: boolean,
