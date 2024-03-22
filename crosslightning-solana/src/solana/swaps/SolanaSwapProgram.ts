@@ -12,6 +12,7 @@ import {
     SystemProgram,
     SYSVAR_INSTRUCTIONS_PUBKEY, SYSVAR_RENT_PUBKEY,
     Transaction,
+    TransactionExpiredBlockheightExceededError,
     TransactionInstruction
 } from "@solana/web3.js";
 import {createHash, randomBytes} from "crypto";
@@ -1176,7 +1177,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                             }
                             return;
                         }
-                        reject(err);
+                        if(err instanceof TransactionExpiredBlockheightExceededError) {
+                            reject(new Error("Transaction expired before confirmation, please try again!"));
+                        } else {
+                            reject(err);
+                        }
                     }).catch(e => reject(e));
                     return;
                 }
