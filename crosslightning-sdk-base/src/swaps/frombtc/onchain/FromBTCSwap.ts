@@ -118,14 +118,18 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
      * @param checkIntervalSeconds  How often to poll the intermediary for answer
      * @param updateCallback        Callback called when txId is found, and also called with subsequent confirmations
      */
-    async waitForPayment(abortSignal?: AbortSignal, checkIntervalSeconds?: number, updateCallback?: (txId: string, confirmations: number, targetConfirmations: number) => void): Promise<void> {
+    async waitForPayment(
+        abortSignal?: AbortSignal,
+        checkIntervalSeconds?: number,
+        updateCallback?: (txId: string, confirmations: number, targetConfirmations: number, txEtaMs: number) => void
+    ): Promise<void> {
         if(this.state!==FromBTCSwapState.CLAIM_COMMITED) {
             throw new Error("Must be in PR_CREATED state!");
         }
 
-        const result = await ChainUtils.waitForAddressTxo(this.address, this.getTxoHash(), this.data.getConfirmations(), (confirmations: number, txId: string, vout: number) => {
+        const result = await ChainUtils.waitForAddressTxo(this.address, this.getTxoHash(), this.data.getConfirmations(), (confirmations: number, txId: string, vout: number, txEtaMs: number) => {
             if(updateCallback!=null) {
-                updateCallback(txId, confirmations, this.data.getConfirmations());
+                updateCallback(txId, confirmations, this.data.getConfirmations(), txEtaMs);
             }
         }, abortSignal, checkIntervalSeconds);
 

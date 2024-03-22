@@ -6,6 +6,9 @@ import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 
 let url = "https://mempool.space/testnet/api/";
 
+const BITCOIN_BLOCKTIME = 600 * 1000;
+const BITCOIN_BLOCKSIZE = 1024*1024;
+
 const timeoutPromise = (timeoutSeconds) => {
     return new Promise(resolve => {
         setTimeout(resolve, timeoutSeconds*1000)
@@ -330,7 +333,14 @@ export class ChainUtils {
 
     }
 
-    static async waitForAddressTxo(address: string, txoHash: Buffer, requiredConfirmations: number, stateUpdateCbk:(confirmations: number, txId: string, vout: number) => void, abortSignal?: AbortSignal, intervalSeconds?: number): Promise<{
+    static async waitForAddressTxo(
+        address: string,
+        txoHash: Buffer,
+        requiredConfirmations: number,
+        stateUpdateCbk:(confirmations: number, txId: string, vout: number, txEtaMS: number) => void,
+        abortSignal?: AbortSignal,
+        intervalSeconds?: number
+    ): Promise<{
         tx: BitcoinTransaction,
         vout: number
     }> {
@@ -348,7 +358,14 @@ export class ChainUtils {
                     confirmations = tipHeight-result.tx.status.block_height+1;
                 }
 
-                if(stateUpdateCbk!=null) stateUpdateCbk(confirmations, result.tx.txid, result.vout);
+                let confirmationDelay = 0;
+                if(confirmations===0) {
+                    confirmationDelay = (await this.getTransactionConfirmationDelay(result.tx.fee/result.tx.size)) + ((requiredConfirmations-1)*BITCOIN_BLOCKTIME);
+                } else {
+                    confirmationDelay = ((requiredConfirmations-confirmations)*BITCOIN_BLOCKTIME);
+                }
+
+                if(stateUpdateCbk!=null) stateUpdateCbk(confirmations, result.tx.txid, result.vout, confirmationDelay);
 
                 if(confirmations>=requiredConfirmations) {
                     return result;
@@ -358,6 +375,46 @@ export class ChainUtils {
         }
 
         throw new Error("Aborted");
+
+    }
+
+    static async getMempoolBlocks(): Promise<{
+        blockSize: number,
+        blockVSize: number,
+        nTx: number,
+        totalFees: number,
+        medianFee: number,
+        feeRange: number[]
+    }[]> {
+
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"v1/fees/mempool-blocks", {
+            method: "GET",
+            timeout
+        }));
+
+        if(response.status!==200) {
+            let resp: string;
+            try {
+                resp = await response.text();
+            } catch (e) {
+                throw new Error(response.statusText);
+            }
+            throw new Error(resp);
+        }
+
+        let jsonBody: any = await response.json();
+
+        return jsonBody;
+
+    }
+
+    //Returns delay in milliseconds till the transaction is expected to confirm
+    static async getTransactionConfirmationDelay(feeRate: number): Promise<number> {
+
+        const mempoolBlocks = await this.getMempoolBlocks();
+        const mempoolBlockIndex = mempoolBlocks.findIndex(block => block.feeRange[0]<=feeRate);
+        if(mempoolBlockIndex==null || mempoolBlockIndex+1===mempoolBlocks.length) return -1;
+        return (mempoolBlockIndex+1) * BITCOIN_BLOCKTIME;
 
     }
 
