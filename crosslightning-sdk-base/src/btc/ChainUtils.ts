@@ -360,7 +360,8 @@ export class ChainUtils {
 
                 let confirmationDelay = 0;
                 if(confirmations===0) {
-                    confirmationDelay = (await this.getTransactionConfirmationDelay(result.tx.fee/result.tx.size)) + ((requiredConfirmations-1)*BITCOIN_BLOCKTIME);
+                    confirmationDelay = (await this.getTransactionConfirmationDelay(result.tx.fee/(result.tx.weight/4)));
+                    if(confirmationDelay!==-1) confirmationDelay += (requiredConfirmations-1)*BITCOIN_BLOCKTIME;
                 } else {
                     confirmationDelay = ((requiredConfirmations-confirmations)*BITCOIN_BLOCKTIME);
                 }
@@ -410,10 +411,15 @@ export class ChainUtils {
 
     //Returns delay in milliseconds till the transaction is expected to confirm
     static async getTransactionConfirmationDelay(feeRate: number): Promise<number> {
-
         const mempoolBlocks = await this.getMempoolBlocks();
         const mempoolBlockIndex = mempoolBlocks.findIndex(block => block.feeRange[0]<=feeRate);
-        if(mempoolBlockIndex==null || mempoolBlockIndex+1===mempoolBlocks.length) return -1;
+        if(
+            mempoolBlockIndex==null ||
+            (
+                mempoolBlockIndex+1===mempoolBlocks.length &&
+                mempoolBlocks[mempoolBlocks.length-1].blockVSize>BITCOIN_BLOCKSIZE
+            )
+        ) return -1;
         return (mempoolBlockIndex+1) * BITCOIN_BLOCKTIME;
 
     }
