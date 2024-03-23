@@ -863,7 +863,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             if(pricePrefetchPromise!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetching swap price!");
             if(signDataPrefetchPromise!=null) {
-                signDataPrefetchPromise = signDataPrefetchPromise.then(val => val==null ? null : responseStream.writeParams({
+                signDataPrefetchPromise = signDataPrefetchPromise.then(val => val==null || abortController.signal.aborted ? null : responseStream.writeParams({
                     signDataPrefetch: val
                 }).then(() => val)).catch(e => {
                     console.error("[To BTC-LN: REST.payInvoice] Send signDataPreFetch error: ", e);
@@ -939,6 +939,8 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             abortController.signal.throwIfAborted();
 
+            metadata.times.priorPaymentChecked = Date.now();
+
             // const existingSwap = await this.storageManager.getData(parsedPR.tagsObject.payment_hash);
             // if(existingSwap!=null && existingSwap.state!=ToBtcLnSwapState.SAVED) {
             //     await responseStream.writeParamsAndEnd({
@@ -948,7 +950,17 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             //     return;
             // }
 
-            metadata.times.priorPaymentChecked = Date.now();
+            const amountBDMtokens = amountBD.mul(new BN(1000));
+            const channelBalances = await lncli.getChannelBalance({lnd: this.LND});
+            const localBalance = new BN(channelBalances.channel_balance_mtokens);
+            if(amountBDMtokens.gt(localBalance)) {
+                await responseStream.writeParamsAndEnd({
+                    code: 20002,
+                    msg: "Not enough liquidity"
+                });
+                return;
+            }
+            metadata.times.liquidityChecked = Date.now();
 
             const maxUsableCLTV: BN = parsedBody.expiryTimestamp.sub(currentTimestamp).sub(this.config.gracePeriod).div(this.config.bitcoinBlocktime.mul(this.config.safetyFactor));
 
@@ -969,11 +981,11 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             const probeReq: any = {
                 destination: parsedPR.payeeNodeKey,
                 cltv_delta: parsedPR.tagsObject.min_final_cltv_expiry,
-                mtokens: amountBD.mul(new BN(1000)).toString(10),
+                mtokens: amountBDMtokens.toString(10),
                 max_fee_mtokens: parsedBody.maxFee.mul(new BN(1000)).toString(10),
                 max_timeout_height: new BN(current_block_height).add(maxUsableCLTV).toString(10),
                 payment: parsedRequest.payment,
-                total_mtokens: amountBD.mul(new BN(1000)).toString(10),
+                total_mtokens: amountBDMtokens.toString(10),
                 routes: parsedRequest.routes
             };
             metadata.probeRequest = {...probeReq};

@@ -944,7 +944,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
             if(pricePrefetchPromise!=null) console.log("[To BTC: REST.payInvoice] Pre-fetching swap price!");
             if(signDataPrefetchPromise!=null) {
-                signDataPrefetchPromise = signDataPrefetchPromise.then(val => val==null ? null :  responseStream.writeParams({
+                signDataPrefetchPromise = signDataPrefetchPromise.then(val => val==null || abortController.signal.aborted ? null : responseStream.writeParams({
                     signDataPrefetch: val
                 }).then(() => val).catch(e => {
                     console.error("[To BTC: REST.payInvoice] Send signDataPreFetch error: ", e);
@@ -1009,7 +1009,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             if(!hasEnoughFunds) {
                 await responseStream.writeParamsAndEnd({
                     code: 20002,
-                    msg: "Insufficient liquidity!"
+                    msg: "Not enough liquidity"
                 });
                 return;
             }
