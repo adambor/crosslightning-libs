@@ -1,10 +1,9 @@
 import {FromBTCLNSwap, FromBTCLNSwapState} from "./FromBTCLNSwap";
 import {IFromBTCWrapper} from "../IFromBTCWrapper";
 import {IWrapperStorage} from "../../../storage/IWrapperStorage";
-import {ClientSwapContract, LNURLWithdraw, LNURLWithdrawParamsWithUrl, PaymentAuthError} from "../../ClientSwapContract";
+import {ClientSwapContract, LNURLWithdraw, PaymentAuthError} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import * as bolt11 from "bolt11";
-import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {
     ChainEvents,
     ChainSwapType,
@@ -18,7 +17,6 @@ import {
     TokenAddress
 } from "crosslightning-base";
 import {tryWithRetries} from "../../../utils/RetryUtils";
-import {LNURLWithdrawParams} from "js-lnurl/lib";
 
 export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
@@ -116,6 +114,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
         await swap.save();
         this.swapData[swap.getPaymentHash().toString("hex")] = swap;
+        this.events.emit("swapCreated", swap);
 
         return swap;
 
@@ -439,16 +438,9 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
             const castedSwap = swap as FromBTCLNSwap<T>;
 
-            if(
-                castedSwap.state===FromBTCLNSwapState.PR_CREATED ||
-                castedSwap.state===FromBTCLNSwapState.CLAIM_CLAIMED ||
-                castedSwap.state===FromBTCLNSwapState.FAILED ||
-                castedSwap.state===FromBTCLNSwapState.EXPIRED
-            ) {
-                continue;
+            if(castedSwap.isClaimable()) {
+                returnArr.push(castedSwap);
             }
-
-            returnArr.push(castedSwap);
         }
 
         return returnArr;
@@ -458,26 +450,8 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
     /**
      * Returns all swaps that were initiated with the current provider's public key
      */
-    async getAllSwaps(): Promise<FromBTCLNSwap<T>[]> {
-
-        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
-
-        const returnArr: FromBTCLNSwap<T>[] = [];
-
-        for(let paymentHash in this.swapData) {
-            const swap = this.swapData[paymentHash];
-
-            console.log(swap);
-
-            if(swap.data.getClaimer()!==this.contract.swapContract.getAddress()) {
-                continue;
-            }
-
-            returnArr.push(swap as FromBTCLNSwap<T>);
-        }
-
-        return returnArr;
-
+    getAllSwaps(): Promise<FromBTCLNSwap<T>[]> {
+        return Promise.resolve(this.getAllSwapsSync());
     }
 
     /**

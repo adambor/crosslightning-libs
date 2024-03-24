@@ -94,6 +94,11 @@ export abstract class ISwap {
     abstract getExpiry(): number;
 
     /**
+     * Returns whether the swap is finished and in its terminal state (this can mean successful, refunded or failed)
+     */
+    abstract isFinished(): boolean;
+
+    /**
      * Event emitter emitting "swapState" event when swap's state changes
      */
     events: EventEmitter;

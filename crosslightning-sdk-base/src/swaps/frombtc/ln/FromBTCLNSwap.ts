@@ -8,6 +8,7 @@ import {tryWithRetries} from "../../../utils/RetryUtils";
 import {SignatureVerificationError} from "crosslightning-base";
 import {PriceInfoType} from "../../ISwap";
 import {LNURLWithdraw, LNURLWithdrawParamsWithUrl} from "../../ClientSwapContract";
+import {FromBTCSwapState} from "../../..";
 
 export enum FromBTCLNSwapState {
     EXPIRED = -2,
@@ -672,6 +673,17 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
      */
     getLNURL(): string | null {
         return this.lnurl;
+    }
+
+    /**
+     * Returns whether the swap is finished and in its terminal state (this can mean successful, refunded or failed)
+     */
+    isFinished(): boolean {
+        return this.state===FromBTCLNSwapState.CLAIM_CLAIMED || this.state===FromBTCLNSwapState.EXPIRED || this.state===FromBTCLNSwapState.FAILED;
+    }
+
+    isClaimable(): boolean {
+        return this.state===FromBTCLNSwapState.PR_PAID || this.state===FromBTCLNSwapState.CLAIM_COMMITED;
     }
 
 }

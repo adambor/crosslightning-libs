@@ -257,35 +257,14 @@ export abstract class IToBTCWrapper<T extends SwapData> {
     /**
      * Returns swaps that are refundable and that were initiated with the current provider's public key
      */
-    async getRefundableSwaps(): Promise<IToBTCSwap<T>[]> {
-
-        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
-
-        const returnArr: IToBTCSwap<T>[] = [];
-
-        for(let paymentHash in this.swapData) {
-            const swap = this.swapData[paymentHash];
-
-            console.log(swap);
-
-            if(swap.data.getOfferer()!==this.contract.swapContract.getAddress()) {
-                continue;
-            }
-
-            if(swap.state===ToBTCSwapState.REFUNDABLE) {
-                returnArr.push(swap);
-            }
-        }
-
-        return returnArr;
-
+    getRefundableSwaps(): Promise<IToBTCSwap<T>[]> {
+        return Promise.resolve(this.getRefundableSwapsSync());
     }
 
     /**
      * Returns swaps that are refundable and that were initiated with the current provider's public key
      */
     getRefundableSwapsSync(): IToBTCSwap<T>[] {
-
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
         const returnArr: IToBTCSwap<T>[] = [];
@@ -299,38 +278,19 @@ export abstract class IToBTCWrapper<T extends SwapData> {
                 continue;
             }
 
-            if(swap.state===ToBTCSwapState.REFUNDABLE) {
+            if(swap.isRefundable()) {
                 returnArr.push(swap);
             }
         }
 
         return returnArr;
-
     }
 
     /**
      * Returns all swaps that were initiated with the current provider's public key
      */
-    async getAllSwaps(): Promise<IToBTCSwap<T>[]> {
-
-        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
-
-        const returnArr: IToBTCSwap<T>[] = [];
-
-        for(let paymentHash in this.swapData) {
-            const swap = this.swapData[paymentHash];
-
-            console.log(swap);
-
-            if(swap.data.getOfferer()!==this.contract.swapContract.getAddress()) {
-                continue;
-            }
-
-            returnArr.push(swap);
-        }
-
-        return returnArr;
-
+    getAllSwaps(): Promise<IToBTCSwap<T>[]> {
+        return Promise.resolve(this.getAllSwapsSync());
     }
 
     /**

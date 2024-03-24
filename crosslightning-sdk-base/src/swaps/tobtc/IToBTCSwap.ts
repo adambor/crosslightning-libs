@@ -522,6 +522,17 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
         return this.expiry;
     }
 
+    /**
+     * Returns whether the swap is finished and in its terminal state (this can mean successful, refunded or failed)
+     */
+    isFinished(): boolean {
+        return this.state===ToBTCSwapState.CLAIMED || this.state===ToBTCSwapState.REFUNDED || this.state===ToBTCSwapState.FAILED;
+    }
+
+    isRefundable(): boolean {
+        return this.state===ToBTCSwapState.REFUNDABLE || (this.state===ToBTCSwapState.COMMITED && this.wrapper.contract.swapContract.isExpired(this.data));
+    }
+
     async refetchPriceData(): Promise<PriceInfoType> {
 
         if(this.pricingInfo==null) return null;

@@ -255,4 +255,6 @@ export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
 
     }
 
+    abstract isClaimable(): boolean;
+
 }

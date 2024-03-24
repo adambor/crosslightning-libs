@@ -6,7 +6,6 @@ import {ChainUtils} from "../../../btc/ChainUtils";
 import {FromBTCWrapper} from "./FromBTCWrapper";
 import * as BN from "bn.js";
 import {SwapCommitStatus, SwapData} from "crosslightning-base";
-import {tryWithRetries} from "../../../utils/RetryUtils";
 import {SignatureVerificationError} from "crosslightning-base";
 import {PriceInfoType} from "../../ISwap";
 
@@ -492,6 +491,17 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
 
     getClaimerBounty(): BN {
         return this.data.getClaimerBounty();
+    }
+
+    /**
+     * Returns whether the swap is finished and in its terminal state (this can mean successful, refunded or failed)
+     */
+    isFinished(): boolean {
+        return this.state===FromBTCSwapState.CLAIM_CLAIMED || this.state===FromBTCSwapState.EXPIRED || this.state===FromBTCSwapState.FAILED;
+    }
+
+    isClaimable(): boolean {
+        return this.state===FromBTCSwapState.BTC_TX_CONFIRMED || (this.state===FromBTCSwapState.CLAIM_COMMITED && !this.wrapper.contract.swapContract.isExpired(this.data));
     }
 
 }
