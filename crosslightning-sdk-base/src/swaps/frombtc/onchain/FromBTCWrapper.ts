@@ -17,6 +17,7 @@ import {
     TokenAddress
 } from "crosslightning-base";
 import {tryWithRetries} from "../../../utils/RetryUtils";
+import * as EventEmitter from "events";
 
 export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
@@ -24,14 +25,15 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
     listener: (events: SwapEvent<T>[]) => Promise<boolean>;
 
     /**
-     * @param storage           Storage interface for the current environment
-     * @param contract          Underlying contract handling the swaps
-     * @param chainEvents       On-chain event emitter
+     * @param storage                   Storage interface for the current environment
+     * @param contract                  Underlying contract handling the swaps
+     * @param chainEvents               On-chain event emitter
      * @param swapDataDeserializer      Deserializer for SwapData
-     * @param synchronizer      Btc relay synchronizer
+     * @param synchronizer              Btc relay synchronizer
+     * @param events                    Instance to use for emitting events
      */
-    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T, synchronizer: RelaySynchronizer<any,any,any>) {
-        super(storage, contract, chainEvents, swapDataDeserializer);
+    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T, synchronizer: RelaySynchronizer<any,any,any>, events?: EventEmitter) {
+        super(storage, contract, chainEvents, swapDataDeserializer, events);
         this.synchronizer = synchronizer;
     }
 

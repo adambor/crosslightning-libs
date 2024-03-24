@@ -4,18 +4,19 @@ import {IWrapperStorage} from "../../../storage/IWrapperStorage";
 import {ClientSwapContract} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {ChainEvents, SwapData, TokenAddress} from "crosslightning-base";
+import * as EventEmitter from "events";
 
 export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T> {
 
-
     /**
-     * @param storage           Storage interface for the current environment
-     * @param contract          Underlying contract handling the swaps
-     * @param chainEvents       On-chain event emitter
+     * @param storage                   Storage interface for the current environment
+     * @param contract                  Underlying contract handling the swaps
+     * @param chainEvents               On-chain event emitter
      * @param swapDataDeserializer      Deserializer for SwapData
+     * @param events                    Instance to use for emitting events
      */
-    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T) {
-        super(storage, contract, chainEvents, swapDataDeserializer);
+    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T, events?: EventEmitter) {
+        super(storage, contract, chainEvents, swapDataDeserializer, events);
     }
 
     /**

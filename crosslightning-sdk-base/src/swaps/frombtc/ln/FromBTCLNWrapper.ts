@@ -17,19 +17,21 @@ import {
     TokenAddress
 } from "crosslightning-base";
 import {tryWithRetries} from "../../../utils/RetryUtils";
+import * as EventEmitter from "events";
 
 export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
     listener: (events: SwapEvent<T>[]) => Promise<boolean>;
 
     /**
-     * @param storage           Storage interface for the current environment
-     * @param contract          Underlying contract handling the swaps
-     * @param chainEvents       On-chain event emitter
+     * @param storage                   Storage interface for the current environment
+     * @param contract                  Underlying contract handling the swaps
+     * @param chainEvents               On-chain event emitter
      * @param swapDataDeserializer      Deserializer for SwapData
+     * @param events                    Instance to use for emitting events
      */
-    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T) {
-        super(storage, contract, chainEvents, swapDataDeserializer);
+    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T, events?: EventEmitter) {
+        super(storage, contract, chainEvents, swapDataDeserializer, events);
     }
 
     /**

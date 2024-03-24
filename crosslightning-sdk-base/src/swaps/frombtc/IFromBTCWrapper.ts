@@ -30,13 +30,14 @@ export abstract class IFromBTCWrapper<T extends SwapData> {
      * @param contract                  Underlying contract handling the swaps
      * @param chainEvents               On-chain event emitter
      * @param swapDataDeserializer      Deserializer for SwapData
+     * @param events                    Instance to use for emitting events
      */
-    protected constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T) {
+    protected constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T, events?: EventEmitter) {
         this.storage = storage;
         this.contract = contract;
         this.chainEvents = chainEvents;
         this.swapDataDeserializer = swapDataDeserializer;
-        this.events = new EventEmitter();
+        this.events = events || new EventEmitter();
     }
 
     /**
