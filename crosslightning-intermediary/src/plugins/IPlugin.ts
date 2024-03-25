@@ -34,4 +34,9 @@ export interface IPlugin<T extends SwapData> {
     onSwapRequestFromBtcLn?(req: Request & {paramReader: IParamReader}, requestData: FromBtcLnRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}>;
     onSwapRequestFromBtc?(req: Request & {paramReader: IParamReader}, requestData: FromBtcRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}>;
 
+    /**
+     * Returns whitelisted bitcoin txIds that are OK to spend even with 0-confs
+     */
+    getWhitelistedTxIds?(): string[];
+
 }

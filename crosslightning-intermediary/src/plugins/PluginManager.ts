@@ -197,4 +197,24 @@ export class PluginManager {
         return fees;
     }
 
+    static getWhitelistedTxIds(): Set<string> {
+        const whitelist: Set<string> = new Set<string>();
+
+        for(let plugin of PluginManager.plugins) {
+            try {
+                if(plugin.getWhitelistedTxIds!=null) {
+                    const result: string[] = plugin.getWhitelistedTxIds();
+                    if(result!=null) {
+                        result.forEach(e => whitelist.add(e));
+                    }
+                }
+            } catch (e) {
+                console.error("Plugin getWhitelistedTxIds error: ", plugin.name);
+                console.error(e);
+            }
+        }
+
+        return whitelist;
+    }
+
 }

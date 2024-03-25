@@ -137,12 +137,12 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             after: blockheight-CONFIRMATIONS_REQUIRED
         });
 
-        const selfUTXOs: {[txId: string]: boolean} = {};
+        const selfUTXOs: Set<string> = PluginManager.getWhitelistedTxIds();
 
         const transactions = resChainTxns.transactions;
         for(let tx of transactions) {
             if(tx.is_outgoing) {
-                selfUTXOs[tx.id] = true;
+                selfUTXOs.add(tx.id);
             }
         }
 
@@ -150,7 +150,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             lnd: this.LND
         });
 
-        return resUtxos.utxos.filter(utxo => utxo.confirmation_count>=CONFIRMATIONS_REQUIRED || selfUTXOs[utxo.transaction_id]);
+        return resUtxos.utxos.filter(utxo => utxo.confirmation_count>=CONFIRMATIONS_REQUIRED || selfUTXOs.has(utxo.transaction_id));
 
     }
 
