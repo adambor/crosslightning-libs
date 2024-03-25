@@ -332,7 +332,7 @@ export class Swapper<
                 address,
                 amount,
                 confirmationTarget || 3,
-                confirmations || 3,
+                confirmations || 2,
                 candidate.url+"/tobtc",
                 tokenAddress,
                 candidate.address,
