@@ -349,7 +349,7 @@ export class ClientSwapContract<T extends SwapData> {
                 });
             }
 
-            if(response.status!==200) {
+            if(!response.ok) {
                 let resp: string;
                 try {
                     resp = await response.text();
@@ -395,7 +395,7 @@ export class ClientSwapContract<T extends SwapData> {
                 });
             }
 
-            if(response.status!==200) {
+            if(!response.ok) {
                 let resp: string;
                 try {
                     resp = await response.text();
@@ -683,7 +683,7 @@ export class ClientSwapContract<T extends SwapData> {
             timeout: this.options.getRequestTimeout
         }));
 
-        if(response.status!==200) {
+        if(!response.ok) {
             let resp: string;
             try {
                 resp = await response.text();
@@ -1556,7 +1556,7 @@ export class ClientSwapContract<T extends SwapData> {
             method: "GET"
         }));
 
-        if(response.status!==200) {
+        if(!response.ok) {
             let resp: string;
             try {
                 resp = await response.text();
