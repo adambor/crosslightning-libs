@@ -29,6 +29,7 @@ export * from "./prices/RedundantSwapPrice";
 export * from "./storage/IWrapperStorage";
 export * from "./storage/LocalStorageManager";
 export * from "./storage/LocalWrapperStorage";
+export * from "./storage/IndexedDBWrapperStorage";
 
 export * from "./swaps/ClientSwapContract";
 export * from "./swaps/ISwapPrice";

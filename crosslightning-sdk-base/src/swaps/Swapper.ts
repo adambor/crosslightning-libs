@@ -30,7 +30,7 @@ import {BtcRelay} from "crosslightning-base/dist";
 import {MempoolBtcRelaySynchronizer} from "../btc/synchronizer/MempoolBtcRelaySynchronizer";
 import {LocalWrapperStorage} from "../storage/LocalWrapperStorage";
 import {OutOfBoundsError} from "../errors/OutOfBoundsError";
-import {Intermediary, LocalStorageManager} from "..";
+import {IndexedDBWrapperStorage, Intermediary, LocalStorageManager} from "..";
 import {LnForGasWrapper} from "./swapforgas/ln/LnForGasWrapper";
 import {LnForGasSwap} from "./swapforgas/ln/LnForGasSwap";
 import * as EventEmitter from "events";
@@ -124,10 +124,10 @@ export class Swapper<
             postRequestTimeout: options.postRequestTimeout
         });
 
-        this.tobtcln = new ToBTCLNWrapper<T>(options.storage?.toBtcLn || new LocalWrapperStorage(storagePrefix + "Swaps-ToBTCLN"), clientSwapContract, chainEvents, swapDataConstructor, this);
-        this.tobtc = new ToBTCWrapper<T>(options.storage?.toBtc || new LocalWrapperStorage(storagePrefix + "Swaps-ToBTC"), clientSwapContract, chainEvents, swapDataConstructor, this);
-        this.frombtcln = new FromBTCLNWrapper<T>(options.storage?.fromBtcLn || new LocalWrapperStorage(storagePrefix + "Swaps-FromBTCLN"), clientSwapContract, chainEvents, swapDataConstructor, this);
-        this.frombtc = new FromBTCWrapper<T>(options.storage?.fromBtc || new LocalWrapperStorage(storagePrefix + "Swaps-FromBTC"), clientSwapContract, chainEvents, swapDataConstructor, synchronizer, this);
+        this.tobtcln = new ToBTCLNWrapper<T>(options.storage?.toBtcLn || new IndexedDBWrapperStorage(storagePrefix + "Swaps-ToBTCLN"), clientSwapContract, chainEvents, swapDataConstructor, this);
+        this.tobtc = new ToBTCWrapper<T>(options.storage?.toBtc || new IndexedDBWrapperStorage(storagePrefix + "Swaps-ToBTC"), clientSwapContract, chainEvents, swapDataConstructor, this);
+        this.frombtcln = new FromBTCLNWrapper<T>(options.storage?.fromBtcLn || new IndexedDBWrapperStorage(storagePrefix + "Swaps-FromBTCLN"), clientSwapContract, chainEvents, swapDataConstructor, this);
+        this.frombtc = new FromBTCWrapper<T>(options.storage?.fromBtc || new IndexedDBWrapperStorage(storagePrefix + "Swaps-FromBTC"), clientSwapContract, chainEvents, swapDataConstructor, synchronizer, this);
 
         this.lnforgas = new LnForGasWrapper<T>(options.storage?.lnForGas || new LocalStorageManager<LnForGasSwap<T>>(storagePrefix + "LnForGas"), swapContract, options);
 
