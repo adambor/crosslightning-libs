@@ -88,7 +88,8 @@ const ESCROW_STATE_RENT_EXEMPT = 2658720;
 export type SolanaRetryPolicy = {
     maxRetries?: number,
     delay?: number,
-    exponential?: boolean
+    exponential?: boolean,
+    transactionResendInterval?: number
 }
 
 type SolanaPreFetchVerification = {
@@ -1144,7 +1145,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 this.signer.connection.sendRawTransaction(rawTx, {skipPreflight: true}).then(result => {
                     console.log("SolanaSwapProgram: resendTransaction(): ", result);
                 }).catch(e => console.error("SolanaSwapProgram: resendTransaction(): ", e));
-            }, 3000);
+            }, this.retryPolicy?.transactionResendInterval || 3000);
             abortController.signal.addEventListener("abort", () => clearInterval(intervalWatchdog));
 
             this.signer.connection.confirmTransaction({
