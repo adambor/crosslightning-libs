@@ -8,6 +8,7 @@ import {
     Ed25519Program,
     Keypair, ParsedAccountsModeBlockResponse,
     PublicKey,
+    SendOptions,
     Signer,
     SystemProgram,
     SYSVAR_INSTRUCTIONS_PUBKEY, SYSVAR_RENT_PUBKEY,
@@ -350,6 +351,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                             data: publicKey
                         })
                         .transaction();
+
+                    const feeRate = await this.getFeeRate([this.signer.publicKey, publicKey]);
+                    eraseTx.instructions.push(ComputeBudgetProgram.setComputeUnitPrice({
+                        microLamports: BigInt(feeRate)
+                    }));
+                    eraseTx.instructions.push(ComputeBudgetProgram.setComputeUnitLimit({
+                        units: 100000
+                    }));
 
                     const [signature] = await this.sendAndConfirm([{tx: eraseTx, signers: []}], true);
                     console.log("[To BTC: Solana.GC] Previous data account erased: ", signature);
@@ -1142,7 +1151,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                         abortController.abort();
                     }
                 }).catch(e => console.error(e));
-                this.signer.connection.sendRawTransaction(rawTx, {skipPreflight: true}).then(result => {
+                this.sendRawTransaction(rawTx, {skipPreflight: true}).then(result => {
                     console.log("SolanaSwapProgram: resendTransaction(): ", result);
                 }).catch(e => console.error("SolanaSwapProgram: resendTransaction(): ", e));
             }, this.retryPolicy?.transactionResendInterval || 3000);
@@ -1197,6 +1206,15 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
     }
 
+    async sendRawTransaction(data: Buffer, options?: SendOptions): Promise<string> {
+        let result: string = null;
+        if(this.cbkSendTransaction!=null) {
+            result = await this.cbkSendTransaction(data, options);
+        }
+        if(result==null) result = await this.signer.connection.sendRawTransaction(data, options);
+        return result;
+    }
+
     async sendAndConfirm(txs: SolTx[], waitForConfirmation?: boolean, abortSignal?: AbortSignal, parallel?: boolean, onBeforePublish?: (txId: string, rawTx: string) => Promise<void>): Promise<string[]> {
         let latestBlockData: {blockhash: string, lastValidBlockHeight: number} = null;
 
@@ -1207,6 +1225,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 tx.tx.lastValidBlockHeight = latestBlockData.lastValidBlockHeight;
             }
             tx.tx.feePayer = this.signer.publicKey;
+            if(this.cbkBeforeTxSigned!=null) await this.cbkBeforeTxSigned(tx);
             if(tx.signers!=null && tx.signers.length>0) for(let signer of tx.signers) tx.tx.sign(signer);
         }
 
@@ -1228,7 +1247,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                     signers: unsignedTx.signers
                 }));
                 const serializedTx = tx.serialize();
-                const txResult = await tryWithRetries(() => this.signer.connection.sendRawTransaction(serializedTx, options), this.retryPolicy);
+                const txResult = await tryWithRetries(() => this.sendRawTransaction(serializedTx, options), this.retryPolicy);
                 console.log("Send signed TX: ", txResult);
                 if(waitForConfirmation) {
                     promises.push(this.confirmTransaction(
@@ -1261,7 +1280,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                     signers: unsignedTx.signers
                 }));
                 const serializedTx = tx.serialize();
-                const txResult = await tryWithRetries(() => this.signer.connection.sendRawTransaction(serializedTx, options), this.retryPolicy);
+                const txResult = await tryWithRetries(() => this.sendRawTransaction(serializedTx, options), this.retryPolicy);
                 console.log("Send signed TX: ", txResult);
                 await this.confirmTransaction(
                     serializedTx,
@@ -1279,7 +1298,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                     tx: lastTx,
                     signers: lastUnsignedTx.signers
                 }));
-                const txResult = await tryWithRetries(() => this.signer.connection.sendRawTransaction(lastTx.serialize(), options), this.retryPolicy);
+                const txResult = await tryWithRetries(() => this.sendRawTransaction(lastTx.serialize(), options), this.retryPolicy);
                 console.log("Send signed TX: ", txResult);
                 signatures.push(txResult);
             }
@@ -2660,9 +2679,30 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         return "success";
 
     }
+
     onBeforeTxReplace(callback: (oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>): void {
     }
     offBeforeTxReplace(callback: (oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>): boolean {
+        return true;
+    }
+
+    cbkBeforeTxSigned: (tx: SolTx) => Promise<void>;
+
+    onBeforeTxSigned(callback: (tx: SolTx) => Promise<void>): void {
+        this.cbkBeforeTxSigned = callback;
+    }
+    offBeforeTxSigned(callback: (tx: SolTx) => Promise<void>): boolean {
+        this.cbkBeforeTxSigned = null;
+        return true;
+    }
+
+    cbkSendTransaction: (tx: Buffer, options?: SendOptions) => Promise<string>;
+
+    onSendTransaction(callback: (tx: Buffer, options?: SendOptions) => Promise<string>): void {
+        this.cbkSendTransaction = callback;
+    }
+    offSendTransaction(callback: (tx: Buffer, options?: SendOptions) => Promise<string>): boolean {
+        this.cbkSendTransaction = null;
         return true;
     }
 
