@@ -1,5 +1,5 @@
 import * as BN from "bn.js";
-import {Connection, PublicKey} from "@solana/web3.js";
+import {Connection, PublicKey, SendOptions, SystemInstruction, SystemProgram, Transaction} from "@solana/web3.js";
 
 const MAX_FEE_AGE = 5000;
 
@@ -11,18 +11,27 @@ export class SolanaFeeEstimator {
     private readonly period: number;
     private useHeliusApi: "yes" | "no" | "auto";
     private heliusApiSupported: boolean = true;
+    private readonly bribeData?: {address: string, endpoint: string}
 
     private blockFeeCache: {
         timestamp: number,
         feeRate: Promise<BN>
     } = null;
 
-    constructor(connection: Connection, maxFeeMicroLamports: number = 250000, numSamples: number = 8, period: number = 150, useHeliusApi: "yes" | "no" | "auto" = "auto") {
+    constructor(
+        connection: Connection,
+        maxFeeMicroLamports: number = 250000,
+        numSamples: number = 8,
+        period: number = 150,
+        useHeliusApi: "yes" | "no" | "auto" = "auto",
+        bribeData?: {address: string, endpoint: string}
+    ) {
         this.connection = connection;
         this.maxFeeMicroLamports = new BN(maxFeeMicroLamports);
         this.numSamples = numSamples;
         this.period = period;
         this.useHeliusApi = useHeliusApi;
+        this.bribeData = bribeData;
     }
 
     private async getBlockMeanFeeRate(slot: number): Promise<BN | null> {
@@ -126,7 +135,7 @@ export class SolanaFeeEstimator {
 
     }
 
-    async getFeeRate(mutableAccounts: PublicKey[]): Promise<BN> {
+    async _getFeeRate(mutableAccounts: PublicKey[]): Promise<BN> {
 
         if(this.useHeliusApi==="yes" || (this.useHeliusApi==="auto" && this.heliusApiSupported)) {
             //Try to use getPriorityFeeEstimate api of Helius
@@ -180,6 +189,60 @@ export class SolanaFeeEstimator {
         const fee =  BN.max(BN.max(globalFeeRate, localFeeRate), new BN(8000));
 
         return BN.min(fee, this.maxFeeMicroLamports);
+    }
+
+    getFeeRate(mutableAccounts: PublicKey[]): Promise<string> {
+        return this._getFeeRate(mutableAccounts).then(e =>
+            this.bribeData==null ?
+                e.toString(10) :
+                e.toString(10)+";"+this.bribeData.address
+        );
+    }
+
+    async submitTx(tx: Buffer, options?: SendOptions): Promise<string> {
+        const parsedTx = Transaction.from(tx);
+        const lastIx = parsedTx.instructions[parsedTx.instructions.length-1];
+        if(!lastIx.programId.equals(SystemProgram.programId)) {
+            return null;
+        }
+
+        if(SystemInstruction.decodeInstructionType(lastIx)!=="Transfer") {
+            return null;
+        }
+
+        const decodedIxData = SystemInstruction.decodeTransfer(lastIx);
+        if(decodedIxData.toPubkey.toBase58()!==this.bribeData?.address) {
+            return null;
+        }
+
+        console.log("Send Jito tx, fee: ", decodedIxData.lamports);
+
+        if(options==null) options = {};
+
+        //Is Jito tx
+        const request = await fetch(this.bribeData.endpoint, {
+            method: "POST",
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "sendTransaction",
+                params: [tx.toString("base64"), {
+                    ...options,
+                    encoding: "base64"
+                }],
+            }),
+            headers: {
+                "Content-Type": "application/json"
+            }
+        });
+
+        if(request.ok) {
+            const parsedResponse = await request.json();
+            // console.log(parsedResponse);
+            return parsedResponse.result;
+        }
+
+        throw new Error(await request.text());
     }
 
 }

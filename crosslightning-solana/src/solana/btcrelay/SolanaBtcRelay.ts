@@ -4,7 +4,7 @@ import {SolanaBtcStoredHeader} from "./headers/SolanaBtcStoredHeader";
 import {SolanaBtcHeader} from "./headers/SolanaBtcHeader";
 import * as programIdl from "./program/programIdl.json";
 import {BitcoinRpc, BtcBlock, BtcRelay, StatePredictorUtils} from "crosslightning-base";
-import {SolanaFeeEstimator} from "../..";
+import {SolanaFeeEstimator, SolanaSwapProgram} from "../..";
 
 const LOG_FETCH_LIMIT = 500;
 
@@ -30,9 +30,9 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
 
     bitcoinRpc: BitcoinRpc<B>;
 
-    readonly maxHeadersPerTx: number = 7;
-    readonly maxForkHeadersPerTx: number = 6;
-    readonly maxShortForkHeadersPerTx: number = 6;
+    readonly maxHeadersPerTx: number = 5;
+    readonly maxForkHeadersPerTx: number = 4;
+    readonly maxShortForkHeadersPerTx: number = 4;
 
     solanaFeeEstimator: SolanaFeeEstimator;
 
@@ -570,7 +570,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
 
         feeRate = feeRate || await this.getMainFeeRate();
         const computeBudget = 200000;
-        const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
+        const priorityMicroLamports = new BN(SolanaSwapProgram.getFeePerCU(feeRate)).mul(new BN(computeBudget));
         const priorityLamports = priorityMicroLamports.div(new BN(1000000));
 
         return new BN(blockheightDelta).mul(SOL_PER_BLOCKHEADER.add(priorityLamports));
@@ -579,7 +579,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
     async getFeePerBlock(feeRate?: string): Promise<BN> {
         feeRate = feeRate || await this.getMainFeeRate();
         const computeBudget = 200000;
-        const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
+        const priorityMicroLamports = new BN(SolanaSwapProgram.getFeePerCU(feeRate)).mul(new BN(computeBudget));
         const priorityLamports = priorityMicroLamports.div(new BN(1000000));
 
         return SOL_PER_BLOCKHEADER.add(priorityLamports);
@@ -634,14 +634,14 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
 
     }
 
-    getMainFeeRate(): Promise<any> {
+    getMainFeeRate(): Promise<string> {
         return this.solanaFeeEstimator.getFeeRate([
             this.provider.publicKey,
             this.BtcRelayMainState
         ]);
     }
 
-    getForkFeeRate(forkId: number): Promise<any> {
+    getForkFeeRate(forkId: number): Promise<string> {
         return this.solanaFeeEstimator.getFeeRate([
             this.provider.publicKey,
             this.BtcRelayMainState,

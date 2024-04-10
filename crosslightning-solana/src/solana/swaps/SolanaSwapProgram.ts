@@ -352,13 +352,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                         })
                         .transaction();
 
+                    eraseTx.feePayer = this.signer.publicKey;
+
                     const feeRate = await this.getFeeRate([this.signer.publicKey, publicKey]);
-                    eraseTx.instructions.push(ComputeBudgetProgram.setComputeUnitPrice({
-                        microLamports: BigInt(feeRate)
-                    }));
-                    eraseTx.instructions.push(ComputeBudgetProgram.setComputeUnitLimit({
-                        units: 100000
-                    }));
+                    SolanaSwapProgram.applyFeeRate(eraseTx, 100000, feeRate);
+                    SolanaSwapProgram.applyFeeRateEnd(eraseTx, 100000, feeRate);
 
                     const [signature] = await this.sendAndConfirm([{tx: eraseTx, signers: []}], true);
                     console.log("[To BTC: Solana.GC] Previous data account erased: ", signature);
@@ -587,19 +585,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         if(!swapData.payIn) throw new Error("Invalid payIn value");
 
         const tx = new Transaction();
+        tx.feePayer = swapData.offerer;
 
         const ix = await this.getInitInstruction(swapData, new BN(timeout));
 
-        if(feeRate!=null) {
-            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                units: 100000,
-            }));
-            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports: parseInt(feeRate)
-            }));
-        }
+        SolanaSwapProgram.applyFeeRate(tx, 100000, feeRate);
         tx.add(ix);
-        tx.feePayer = swapData.offerer;
+        SolanaSwapProgram.applyFeeRateEnd(tx, 100000, feeRate);
 
         return tx;
 
@@ -751,19 +743,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         if(swapData.payIn) throw new Error("Invalid payIn value");
 
         const tx = new Transaction();
+        tx.feePayer = swapData.claimer;
 
         let result = await this.getInitInstruction(swapData, new BN(timeout));
 
-        if(feeRate!=null) {
-            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                units: 100000,
-            }));
-            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports: parseInt(feeRate)
-            }));
-        }
+        SolanaSwapProgram.applyFeeRate(tx, 100000, feeRate);
         tx.add(result);
-        tx.feePayer = swapData.claimer;
+        SolanaSwapProgram.applyFeeRateEnd(tx, 100000, feeRate);
 
         return tx;
 
@@ -1208,9 +1194,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
     async sendRawTransaction(data: Buffer, options?: SendOptions): Promise<string> {
         let result: string = null;
-        if(this.cbkSendTransaction!=null) {
-            result = await this.cbkSendTransaction(data, options);
-        }
+        if(this.cbkSendTransaction!=null) result = await this.cbkSendTransaction(data, options);
+        if(result==null) result = await this.solanaFeeEstimator.submitTx(data, options);
         if(result==null) result = await this.signer.connection.sendRawTransaction(data, options);
         return result;
     }
@@ -1333,7 +1318,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             }
         }
 
+        if(feeRate==null) feeRate = await this.getClaimFeeRate(swapData);
+
         const tx = new Transaction();
+        tx.feePayer = this.signer.publicKey;
 
         if(!skipAtaCheck) {
             if(swapData.isPayOut()) {
@@ -1363,10 +1351,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         }
 
         let ix: TransactionInstruction;
+        let computeBudget: number;
         if(swapData.isPayOut()) {
-            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                units: 75000,
-            }));
+            computeBudget = 75000;
 
             ix = await this.program.methods
                 .claimerClaimPayOut(Buffer.from(secret, "hex"))
@@ -1383,9 +1370,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 })
                 .instruction();
         } else {
-            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                units: 25000,
-            }));
+            computeBudget = 25000;
 
             ix = await this.program.methods
                 .claimerClaim(Buffer.from(secret, "hex"))
@@ -1400,9 +1385,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 .instruction();
         }
 
-        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-            microLamports: parseInt(feeRate || (await this.getClaimFeeRate(swapData)))
-        }));
+        SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
         tx.add(ix);
 
         if(swapData.isPayOut()) {
@@ -1413,6 +1396,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 );
             }
         }
+
+        SolanaSwapProgram.applyFeeRateEnd(tx, computeBudget, feeRate);
 
         return [{
             tx: tx,
@@ -1462,7 +1447,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         feeRate?: string
     ): Promise<SolTx[] | null> {
 
-        const computedFeeRate = parseInt(feeRate || (await this.getClaimFeeRate(swapData)));
+        if(feeRate==null) feeRate = await this.getClaimFeeRate(swapData);
 
         let ataInitIx: TransactionInstruction;
         if(swapData.isPayOut()) {
@@ -1536,9 +1521,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                     const useFeeRate = resp.startForkId==null ? await this.btcRelay.getMainFeeRate() : await this.btcRelay.getForkFeeRate(resp.startForkId);
 
                     resp.txs.forEach(tx => {
-                        tx.tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                            microLamports: parseInt(useFeeRate)
-                        }));
+                        SolanaSwapProgram.applyFeeRate(tx.tx, null, useFeeRate);
+                        SolanaSwapProgram.applyFeeRateEnd(tx.tx, null, useFeeRate);
                         txs.push(tx)
                     });
                 } else {
@@ -1605,12 +1589,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             pointer += writeLen;
 
             const initTx = new Transaction();
-            initTx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports: computedFeeRate
-            }));
+            initTx.feePayer = this.signer.publicKey;
+
+            SolanaSwapProgram.applyFeeRate(initTx, null, feeRate);
             initTx.add(accIx);
             initTx.add(initIx);
             initTx.add(writeIx);
+            SolanaSwapProgram.applyFeeRateEnd(initTx, null, feeRate);
 
             await this.saveDataAccount(txDataKey.publicKey);
             txs.push({
@@ -1630,9 +1615,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 })
                 .transaction();
 
-            writeTx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports: computedFeeRate
-            }));
+            writeTx.feePayer = this.signer.publicKey;
+
+            SolanaSwapProgram.applyFeeRate(writeTx, null, feeRate);
+            SolanaSwapProgram.applyFeeRateEnd(writeTx, null, feeRate);
 
             txs.push({
                 tx: writeTx,
@@ -1680,14 +1666,15 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         }
 
         const solanaTx = new Transaction();
+        solanaTx.feePayer = this.signer.publicKey;
+
         solanaTx.add(verifyIx);
         if(ataInitIx!=null) solanaTx.add(ataInitIx);
         solanaTx.add(claimIx);
 
         //Add compute budget
-        solanaTx.add(ComputeBudgetProgram.setComputeUnitPrice({
-            microLamports: computedFeeRate
-        }));
+        SolanaSwapProgram.applyFeeRate(solanaTx, null, feeRate);
+        SolanaSwapProgram.applyFeeRateEnd(solanaTx, null, feeRate);
 
         if(Utils.getTxSize(solanaTx, this.signer.publicKey)>1232) {
             //TX too large
@@ -1703,15 +1690,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             if (swapData.token.equals(WSOL_ADDRESS) && swapData.claimer.equals(this.signer.publicKey)) {
                 //Move to normal SOL
                 const tx = new Transaction();
-                tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                    units: 50000,
-                }));
-                tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                    microLamports: computedFeeRate
-                }));
+                tx.feePayer = this.signer.publicKey;
+                SolanaSwapProgram.applyFeeRate(tx, 50000, feeRate);
                 tx.add(
                     createCloseAccountInstruction(swapData.claimerAta, this.signer.publicKey, this.signer.publicKey)
                 );
+                SolanaSwapProgram.applyFeeRateEnd(tx, 50000, feeRate);
                 txs.push({
                     tx,
                     signers: []
@@ -1739,20 +1723,19 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             }
         }
 
-        const tx = new Transaction();
+        if(feeRate==null) feeRate = await this.getRefundFeeRate(swapData)
 
-        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-            microLamports: parseInt(feeRate || (await this.getRefundFeeRate(swapData)))
-        }));
+        const tx = new Transaction();
+        tx.feePayer = this.signer.publicKey;
 
         let ata: PublicKey = null;
 
         let ix: TransactionInstruction;
 
+        let computeBudget: number;
         if(swapData.isPayIn()) {
-            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                units: 100000,
-            }));
+            computeBudget = 100000;
+            SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
 
             ata = getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
 
@@ -1787,9 +1770,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 })
                 .instruction();
         } else {
-            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                units: 25000,
-            }));
+            computeBudget = 25000;
+            SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
 
             ix = await this.program.methods
                 .offererRefund(new BN(0))
@@ -1814,6 +1796,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 );
             }
         }
+
+        SolanaSwapProgram.applyFeeRateEnd(tx, computeBudget, feeRate);
 
         return [{
             tx,
@@ -1843,7 +1827,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         );
         const signatureBuffer = Buffer.from(signature, "hex");
 
+        if(feeRate==null) feeRate = await this.getRefundFeeRate(swapData);
+
         const tx = new Transaction();
+        tx.feePayer = this.signer.publicKey;
 
         tx.add(Ed25519Program.createInstructionWithPublicKey({
             message: messageBuffer,
@@ -1851,13 +1838,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             signature: signatureBuffer
         }));
 
-        tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-            units: 100000,
-        }));
-
-        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-            microLamports: parseInt(feeRate || (await this.getRefundFeeRate(swapData)))
-        }));
+        SolanaSwapProgram.applyFeeRate(tx, 100000, feeRate);
 
         let ata: PublicKey = null;
 
@@ -1920,6 +1901,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 );
             }
         }
+        SolanaSwapProgram.applyFeeRateEnd(tx, 100000, feeRate);
 
         return [{
             tx,
@@ -1953,8 +1935,6 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             }
         }
 
-        const computedFeeRate = feeRate==null ? null : parseInt(feeRate);
-
         const ata = getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
         const ataIntermediary = getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
 
@@ -1986,15 +1966,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             } catch (e) {}
             if(balance.lt(swapData.amount)) {
                 const tx = new Transaction();
+                tx.feePayer = swapData.offerer;
 
-                if(computedFeeRate!=null) {
-                    tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                        units: 100000,
-                    }));
-                    tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                        microLamports: computedFeeRate
-                    }));
-                }
+                SolanaSwapProgram.applyFeeRate(tx, 100000, feeRate);
 
                 //Need to wrap some more
                 const remainder = swapData.amount.sub(balance);
@@ -2008,7 +1982,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                     lamports: remainder.toNumber()
                 }));
                 tx.add(createSyncNativeInstruction(ata));
-                tx.feePayer = swapData.offerer;
+
+                SolanaSwapProgram.applyFeeRateEnd(tx, 100000, feeRate);
+
                 tx.recentBlockhash = block.blockhash;
                 tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
 
@@ -2021,20 +1997,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         }
 
         const tx = new Transaction();
+        tx.feePayer = swapData.offerer;
 
         const ix = await this.getInitInstruction(swapData, new BN(timeout));
 
-        if(computedFeeRate!=null) {
-            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                units: 100000,
-            }));
-            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports: computedFeeRate
-            }));
-        }
+        SolanaSwapProgram.applyFeeRate(tx, 100000, feeRate);
         tx.add(ix);
+        SolanaSwapProgram.applyFeeRateEnd(tx, 100000, feeRate);
 
-        tx.feePayer = swapData.offerer;
         tx.recentBlockhash = block.blockhash;
         tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
         tx.addSignature(swapData.claimer, Buffer.from(signatureStr, "hex"));
@@ -2070,8 +2040,6 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         const block = await tryWithRetries(() => this.getParsedBlock(parseInt(slotNumber)), this.retryPolicy);
 
-        const _feeRate: number = feeRate==null ? null : parseInt(feeRate);
-
         const txns: {tx: Transaction, signers: Signer[]}[] = [];
 
         const claimerAta = getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
@@ -2089,16 +2057,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         }, this.retryPolicy);
         if(account==null) {
             const tx = new Transaction();
-            if(_feeRate!=null) {
-                tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                    units: 50000,
-                }));
-                tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                    microLamports: _feeRate
-                }));
-            }
-            tx.add(createAssociatedTokenAccountInstruction(this.signer.publicKey, claimerAta, this.signer.publicKey, swapData.token));
             tx.feePayer = swapData.claimer;
+            SolanaSwapProgram.applyFeeRate(tx, 50000, feeRate);
+            tx.add(createAssociatedTokenAccountInstruction(this.signer.publicKey, claimerAta, this.signer.publicKey, swapData.token));
+            SolanaSwapProgram.applyFeeRateEnd(tx, 50000, feeRate);
             tx.recentBlockhash = block.blockhash;
             tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
 
@@ -2106,20 +2068,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         }
 
         const tx = new Transaction();
+        tx.feePayer = swapData.claimer;
 
         const result = await this.getInitInstruction(swapData, new BN(timeout));
 
-        if(_feeRate!=null) {
-            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                units: 100000,
-            }));
-            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports: _feeRate
-            }));
-        }
+        SolanaSwapProgram.applyFeeRate(tx, 100000, feeRate);
         tx.add(result);
+        SolanaSwapProgram.applyFeeRateEnd(tx, 100000, feeRate);
 
-        tx.feePayer = swapData.claimer;
         tx.recentBlockhash = block.blockhash;
         tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
         tx.addSignature(swapData.offerer, Buffer.from(signatureStr, "hex"));
@@ -2187,7 +2143,48 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
     }
 
     async getFeeRate(mutableAccounts: PublicKey[]): Promise<string> {
-        return this.solanaFeeEstimator.getFeeRate(mutableAccounts).then(e => e.toString(10));
+        return this.solanaFeeEstimator.getFeeRate(mutableAccounts);
+    }
+
+    //Has to be called after feePayer is set for the tx
+    static applyFeeRate(tx: Transaction, computeBudget: number, feeRate: string): boolean {
+        if(feeRate==null) return false;
+
+        if(computeBudget!=null) tx.add(ComputeBudgetProgram.setComputeUnitLimit({
+            units: computeBudget,
+        }));
+
+        //Check if bribe is included
+        const arr = feeRate.split(";");
+        if(arr.length>1) {
+
+        } else {
+            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+                microLamports: BigInt(feeRate)
+            }));
+        }
+    }
+
+    static applyFeeRateEnd(tx: Transaction, computeBudget: number, feeRate: string): boolean {
+        if(feeRate==null) return false;
+
+        //Check if bribe is included
+        const arr = feeRate.split(";");
+        if(arr.length>1) {
+            const cuPrice = BigInt(arr[0]);
+            const bribeAddress = new PublicKey(arr[1]);
+            tx.add(SystemProgram.transfer({
+                fromPubkey: tx.feePayer,
+                toPubkey: bribeAddress,
+                lamports: (BigInt(computeBudget || 200000)*cuPrice)/BigInt(1000000)
+            }));
+        }
+    }
+
+    static getFeePerCU(feeRate: string): string {
+        if(feeRate==null) return null;
+        const arr = feeRate.split(";");
+        return arr.length>1 ? arr[0] : feeRate;
     }
 
     async getInitPayInFeeRate(offerer: string, claimer: string, token: PublicKey, paymentHash?: string): Promise<string> {
@@ -2212,7 +2209,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
     }
 
-    async getInitFeeRate(offerer: string, claimer: string, token: PublicKey, paymentHash?: string): Promise<string> {
+    getInitFeeRate(offerer: string, claimer: string, token: PublicKey, paymentHash?: string): Promise<string> {
 
         const userData = this.SwapUserVault(new PublicKey(offerer), token);
 
@@ -2225,11 +2222,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             accounts.push(escrowState);
         }
 
-        return await this.getFeeRate(accounts);
+        return this.getFeeRate(accounts);
 
     }
 
-    async getRefundFeeRate(swapData: SolanaSwapData): Promise<string> {
+    getRefundFeeRate(swapData: SolanaSwapData): Promise<string> {
 
         let accounts: PublicKey[] = [];
         if(swapData.payIn) {
@@ -2258,11 +2255,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             accounts.push(this.SwapEscrowState(Buffer.from(swapData.paymentHash, "hex")));
         }
 
-        return await this.getFeeRate(accounts);
+        return this.getFeeRate(accounts);
 
     }
 
-    async getClaimFeeRate(swapData: SolanaSwapData): Promise<string> {
+    getClaimFeeRate(swapData: SolanaSwapData): Promise<string> {
 
         let accounts: PublicKey[] = [];
         if(swapData.payOut) {
@@ -2291,7 +2288,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             accounts.push(this.SwapEscrowState(Buffer.from(swapData.paymentHash, "hex")));
         }
 
-        return await this.getFeeRate(accounts);
+        return this.getFeeRate(accounts);
     }
 
     private getATARentExemptLamports(): Promise<BN> {
@@ -2306,7 +2303,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         const computeBudget = swapData.getType()===ChainSwapType.HTLC ? (
             swapData.payOut ? 75000 : 25000
         ) : 400000;
-        const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
+        const priorityMicroLamports = new BN(SolanaSwapProgram.getFeePerCU(feeRate)).mul(new BN(computeBudget));
         const priorityLamports = priorityMicroLamports.div(new BN(1000000));
 
         return new BN(-ESCROW_STATE_RENT_EXEMPT+5000).add(priorityLamports);
@@ -2320,7 +2317,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         const computeBudget = swapData.getType()===ChainSwapType.HTLC ? (
             swapData.payOut ? 75000 : 25000
         ) : 400000;
-        const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
+        const priorityMicroLamports = new BN(SolanaSwapProgram.getFeePerCU(feeRate)).mul(new BN(computeBudget));
         const priorityLamports = priorityMicroLamports.div(new BN(1000000));
 
         return new BN(5000).add(priorityLamports);
@@ -2341,7 +2338,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         const computeBudget = swapData.payIn ? 100000 : 100000 + 50000;
         const baseFee = swapData.payIn ? 10000 : 10000 + 5000;
-        const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
+        const priorityMicroLamports = new BN(SolanaSwapProgram.getFeePerCU(feeRate)).mul(new BN(computeBudget));
         const priorityLamports = priorityMicroLamports.div(new BN(1000000));
 
         return new BN(ESCROW_STATE_RENT_EXEMPT+baseFee).add(priorityLamports);
@@ -2356,7 +2353,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         feeRate = feeRate || await this.getRefundFeeRate(swapData);
 
         const computeBudget = swapData.payIn ? 100000 : 25000;
-        const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
+        const priorityMicroLamports = new BN(SolanaSwapProgram.getFeePerCU(feeRate)).mul(new BN(computeBudget));
         const priorityLamports = priorityMicroLamports.div(new BN(1000000));
 
         return new BN(-ESCROW_STATE_RENT_EXEMPT+10000).add(priorityLamports);
@@ -2371,7 +2368,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         feeRate = feeRate || await this.getRefundFeeRate(swapData);
 
         const computeBudget = swapData.payIn ? 100000 : 25000;
-        const priorityMicroLamports = new BN(feeRate).mul(new BN(computeBudget));
+        const priorityMicroLamports = new BN(SolanaSwapProgram.getFeePerCU(feeRate)).mul(new BN(computeBudget));
         const priorityLamports = priorityMicroLamports.div(new BN(1000000));
 
         return new BN(10000).add(priorityLamports);
@@ -2406,6 +2403,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         feeRate = feeRate || await this.getFeeRate([this.signer.publicKey, ata, this.SwapUserVault(this.signer.publicKey, token), this.SwapVault(token)]);
 
         const tx = new Transaction();
+        tx.feePayer = this.signer.publicKey;
+
+        SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
 
         const account = await tryWithRetries<Account>(async () => {
             try {
@@ -2445,12 +2445,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             );
         }
 
-        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-            microLamports: parseInt(feeRate)
-        }));
-        tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-            units: computeBudget
-        }));
+        SolanaSwapProgram.applyFeeRateEnd(tx, computeBudget, feeRate);
 
         return [{
             tx,
@@ -2464,11 +2459,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
     }
     async txsDeposit(token: PublicKey, amount: BN, feeRate?: string): Promise<SolTx[]> {
         const ata = await getAssociatedTokenAddress(token, this.signer.publicKey);
+        
+        feeRate = feeRate || await this.getFeeRate([this.signer.publicKey, ata, this.SwapUserVault(this.signer.publicKey, token), this.SwapVault(token)]);
+        const computeBudget = 100000;
 
         const tx = new Transaction();
+        tx.feePayer = this.signer.publicKey;
 
-        const computeBudget = 100000;
-        feeRate = feeRate || await this.getFeeRate([this.signer.publicKey, ata, this.SwapUserVault(this.signer.publicKey, token), this.SwapVault(token)]);
+        SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
 
         if(WSOL_ADDRESS.equals(token)) {
             let accountExists: boolean = false;
@@ -2519,12 +2517,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         tx.add(depositIx);
 
-        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-            microLamports: parseInt(feeRate)
-        }));
-        tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-            units: computeBudget
-        }));
+        SolanaSwapProgram.applyFeeRateEnd(tx, computeBudget, feeRate);
 
         return [{
             tx,
@@ -2555,6 +2548,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             }, this.retryPolicy);
 
             const tx = new Transaction();
+            tx.feePayer = this.signer.publicKey;
+
+            SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
+
             if(account!=null) {
                 feeRate = feeRate || await this.getFeeRate([this.signer.publicKey, recipient, wsolAta]);
                 //Unwrap
@@ -2573,12 +2570,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 })
             );
 
-            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports: parseInt(feeRate)
-            }));
-            tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-                units: computeBudget
-            }));
+            SolanaSwapProgram.applyFeeRateEnd(tx, computeBudget, feeRate);
 
             return [{
                 tx,
@@ -2597,6 +2589,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         feeRate = feeRate || await this.getFeeRate([this.signer.publicKey, ata, dstAta]);
 
         const tx = new Transaction();
+        tx.feePayer = this.signer.publicKey;
+
+        SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
 
         const account = await tryWithRetries<Account>(async () => {
             try {
@@ -2618,12 +2613,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         const ix = createTransferInstruction(ata, dstAta, this.signer.publicKey, BigInt(amount.toString(10)));
         tx.add(ix);
 
-        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-            microLamports: parseInt(feeRate)
-        }));
-        tx.add(ComputeBudgetProgram.setComputeUnitLimit({
-            units: computeBudget
-        }));
+        SolanaSwapProgram.applyFeeRateEnd(tx, computeBudget, feeRate);
 
         return [{
             tx: tx,
