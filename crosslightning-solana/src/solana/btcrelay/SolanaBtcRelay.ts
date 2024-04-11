@@ -302,7 +302,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
     }
 
 
-    async saveInitialHeader(header: BtcBlock, epochStart: number, pastBlocksTimestamps: number[]): Promise<{ tx: Transaction; signers: Signer[]; }> {
+    async saveInitialHeader(header: BtcBlock, epochStart: number, pastBlocksTimestamps: number[], feeRate?: string): Promise<{ tx: Transaction; signers: Signer[]; }> {
         if(pastBlocksTimestamps.length!==10) {
             throw new Error("Invalid prevBlocksTimestamps");
         }
@@ -325,13 +325,16 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             })
             .transaction();
 
+        SolanaSwapProgram.applyFeeRate(tx, null, feeRate);
+        SolanaSwapProgram.applyFeeRateEnd(tx, null, feeRate);
+
         return {
             tx,
             signers: []
         };
     }
 
-    async saveMainHeaders(mainHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader) {
+    async saveMainHeaders(mainHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, feeRate?: string) {
         const blockHeaderObj = mainHeaders.map(SolanaBtcRelay.serializeBlockHeader);
 
         const tx = await this.program.methods
@@ -352,6 +355,9 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             }))
             .transaction();
 
+        SolanaSwapProgram.applyFeeRate(tx, null, feeRate);
+        SolanaSwapProgram.applyFeeRateEnd(tx, null, feeRate);
+
         const computedCommitedHeaders = [storedHeader];
         for(let blockHeader of blockHeaderObj) {
             computedCommitedHeaders.push(computedCommitedHeaders[computedCommitedHeaders.length-1].computeNext(blockHeader));
@@ -368,7 +374,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
         }
     }
 
-    async saveNewForkHeaders(forkHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, tipWork: Buffer) {
+    async saveNewForkHeaders(forkHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, tipWork: Buffer, feeRate?: string) {
         const blockHeaderObj = forkHeaders.map(SolanaBtcRelay.serializeBlockHeader);
 
         const mainState: any = await this.program.account.mainState.fetch(this.BtcRelayMainState);
@@ -397,6 +403,9 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             }))
             .transaction();
 
+        SolanaSwapProgram.applyFeeRate(tx, null, feeRate);
+        SolanaSwapProgram.applyFeeRateEnd(tx, null, feeRate);
+
         const computedCommitedHeaders = [storedHeader];
         for(let blockHeader of blockHeaderObj) {
             computedCommitedHeaders.push(computedCommitedHeaders[computedCommitedHeaders.length-1].computeNext(blockHeader));
@@ -420,7 +429,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
         }
     }
 
-    async saveForkHeaders(forkHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, forkId: number, tipWork: Buffer): Promise<{
+    async saveForkHeaders(forkHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, forkId: number, tipWork: Buffer, feeRate?: string): Promise<{
         forkId: number,
         lastStoredHeader: SolanaBtcStoredHeader,
         tx: {
@@ -453,6 +462,9 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             }))
             .transaction();
 
+        SolanaSwapProgram.applyFeeRate(tx, null, feeRate);
+        SolanaSwapProgram.applyFeeRateEnd(tx, null, feeRate);
+
         const computedCommitedHeaders = [storedHeader];
         for(let blockHeader of blockHeaderObj) {
             computedCommitedHeaders.push(computedCommitedHeaders[computedCommitedHeaders.length-1].computeNext(blockHeader));
@@ -476,7 +488,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
         }
     }
 
-    async saveShortForkHeaders(forkHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, tipWork: Buffer) {
+    async saveShortForkHeaders(forkHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, tipWork: Buffer, feeRate?: string) {
         const blockHeaderObj = forkHeaders.map(SolanaBtcRelay.serializeBlockHeader);
 
         let forkId: BN = new BN(-1);
@@ -498,6 +510,9 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
                 }
             }))
             .transaction();
+
+        SolanaSwapProgram.applyFeeRate(tx, null, feeRate);
+        SolanaSwapProgram.applyFeeRateEnd(tx, null, feeRate);
 
         const computedCommitedHeaders = [storedHeader];
         for(let blockHeader of blockHeaderObj) {
