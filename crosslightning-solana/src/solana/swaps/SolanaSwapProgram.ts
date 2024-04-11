@@ -1539,11 +1539,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                         commitedHeader = resp.computedHeaderMap[merkleProof.blockheight];
                     }
 
-                    const useFeeRate = resp.startForkId==null ? await this.btcRelay.getMainFeeRate() : await this.btcRelay.getForkFeeRate(resp.startForkId);
-
                     resp.txs.forEach(tx => {
-                        SolanaSwapProgram.applyFeeRate(tx.tx, null, useFeeRate);
-                        SolanaSwapProgram.applyFeeRateEnd(tx.tx, null, useFeeRate);
                         txs.push(tx)
                     });
                 } else {
