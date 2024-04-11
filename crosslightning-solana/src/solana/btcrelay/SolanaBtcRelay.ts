@@ -325,6 +325,8 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             })
             .transaction();
 
+        tx.feePayer = this.provider.publicKey;
+
         SolanaSwapProgram.applyFeeRate(tx, null, feeRate);
         SolanaSwapProgram.applyFeeRateEnd(tx, null, feeRate);
 
@@ -354,6 +356,8 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
                 }
             }))
             .transaction();
+
+        tx.feePayer = this.provider.publicKey;
 
         SolanaSwapProgram.applyFeeRate(tx, null, feeRate);
         SolanaSwapProgram.applyFeeRateEnd(tx, null, feeRate);
@@ -402,6 +406,8 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
                 }
             }))
             .transaction();
+
+        tx.feePayer = this.provider.publicKey;
 
         SolanaSwapProgram.applyFeeRate(tx, null, feeRate);
         SolanaSwapProgram.applyFeeRateEnd(tx, null, feeRate);
@@ -462,6 +468,8 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             }))
             .transaction();
 
+        tx.feePayer = this.provider.publicKey;
+
         SolanaSwapProgram.applyFeeRate(tx, null, feeRate);
         SolanaSwapProgram.applyFeeRateEnd(tx, null, feeRate);
 
@@ -510,6 +518,8 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
                 }
             }))
             .transaction();
+
+        tx.feePayer = this.provider.publicKey;
 
         SolanaSwapProgram.applyFeeRate(tx, null, feeRate);
         SolanaSwapProgram.applyFeeRateEnd(tx, null, feeRate);
