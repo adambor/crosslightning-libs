@@ -3,6 +3,13 @@ import {Connection, PublicKey, SendOptions, SystemInstruction, SystemProgram, Tr
 
 const MAX_FEE_AGE = 5000;
 
+export type FeeBribeData = {
+    address: string,
+    endpoint: string,
+    getBribeFee?: (original: BN) => BN,
+    getStaticFee?: (feeRate: BN) => BN
+};
+
 export class SolanaFeeEstimator {
 
     private readonly connection: Connection;
@@ -11,12 +18,7 @@ export class SolanaFeeEstimator {
     private readonly period: number;
     private useHeliusApi: "yes" | "no" | "auto";
     private heliusApiSupported: boolean = true;
-    private readonly bribeData?: {
-        address: string,
-        endpoint: string,
-        getBribeFee?: (original: BN) => BN,
-        getStaticFee?: (feeRate: BN) => BN
-    };
+    private readonly bribeData?: FeeBribeData;
 
     private blockFeeCache: {
         timestamp: number,
@@ -29,7 +31,7 @@ export class SolanaFeeEstimator {
         numSamples: number = 8,
         period: number = 150,
         useHeliusApi: "yes" | "no" | "auto" = "auto",
-        bribeData?: {address: string, endpoint: string, getBribeFee?: (original: BN) => BN}
+        bribeData?: FeeBribeData
     ) {
         this.connection = connection;
         this.maxFeeMicroLamports = new BN(maxFeeMicroLamports);
