@@ -26,36 +26,36 @@ export interface BtcRelay<V extends BtcStoredHeader<any>, T, B extends BtcBlock>
     }>;
     //retrieveOnchainTip(): Promise<B>;
 
-    saveInitialHeader(header: B, epochStart: number, pastBlocksTimestamps: number[]): Promise<T>;
-    saveMainHeaders(mainHeaders: B[], storedHeader: V): Promise<{
+    saveInitialHeader(header: B, epochStart: number, pastBlocksTimestamps: number[], feeRate?: string): Promise<T>;
+    saveMainHeaders(mainHeaders: B[], storedHeader: V, feeRate?: string): Promise<{
         forkId: number,
         lastStoredHeader: V,
         tx: T,
         computedCommitedHeaders: V[]
     }>;
-    saveNewForkHeaders(forkHeaders: B[], storedHeader: V, tipWork: Buffer): Promise<{
+    saveNewForkHeaders(forkHeaders: B[], storedHeader: V, tipWork: Buffer, feeRate?: string): Promise<{
         forkId: number,
         lastStoredHeader: V,
         tx: T,
         computedCommitedHeaders: V[]
     }>;
-    saveForkHeaders(forkHeaders: B[], storedHeader: V, forkId: number, tipWork: Buffer): Promise<{
+    saveForkHeaders(forkHeaders: B[], storedHeader: V, forkId: number, tipWork: Buffer, feeRate?: string): Promise<{
         forkId: number,
         lastStoredHeader: V,
         tx: T,
         computedCommitedHeaders: V[]
     }>;
-    saveShortForkHeaders?(forkHeaders: B[], storedHeader: V, tipWork: Buffer): Promise<{
+    saveShortForkHeaders?(forkHeaders: B[], storedHeader: V, tipWork: Buffer, feeRate?: string): Promise<{
         forkId: number,
         lastStoredHeader: V,
         tx: T,
         computedCommitedHeaders: V[]
     }>;
 
-    getMainFeeRate?(): Promise<any>;
-    getForkFeeRate?(forkId: number): Promise<any>;
+    getMainFeeRate?(): Promise<string>;
+    getForkFeeRate?(forkId: number): Promise<string>;
 
-    estimateSynchronizeFee(requiredBlockheight: number, feeRate?: any): Promise<BN>;
+    estimateSynchronizeFee(requiredBlockheight: number, feeRate?: string): Promise<BN>;
 
     getFeePerBlock(feeRate?: any): Promise<BN>;
 
