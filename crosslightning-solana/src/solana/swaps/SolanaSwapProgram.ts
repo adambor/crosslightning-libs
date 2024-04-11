@@ -2196,6 +2196,17 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         //Check if bribe is included
         const arr = feeRate.split(";");
+        if(arr.length>2) {
+            const cuPrice = BigInt(arr[0]);
+            const staticFee = BigInt(arr[1]);
+            const bribeAddress = new PublicKey(arr[2]);
+            tx.add(SystemProgram.transfer({
+                fromPubkey: tx.feePayer,
+                toPubkey: bribeAddress,
+                lamports: staticFee + ((BigInt(computeBudget || 200000)*cuPrice)/BigInt(1000000))
+            }));
+            return;
+        }
         if(arr.length>1) {
             const cuPrice = BigInt(arr[0]);
             const bribeAddress = new PublicKey(arr[1]);
@@ -2211,6 +2222,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         if(feeRate==null) return null;
         const arr = feeRate.split(";");
         return arr.length>1 ? arr[0] : feeRate;
+    }
+
+    static getStaticFee(feeRate: string): string {
+        if(feeRate==null) return null;
+        const arr = feeRate.split(";");
+        return arr.length>2 ? arr[1] : "0";
     }
 
     async getInitPayInFeeRate(offerer: string, claimer: string, token: PublicKey, paymentHash?: string): Promise<string> {
@@ -2332,7 +2349,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             swapData.payOut ? CUCosts.CLAIM_ONCHAIN_PAY_OUT : CUCosts.CLAIM_ONCHAIN
         );
         const priorityMicroLamports = new BN(SolanaSwapProgram.getFeePerCU(feeRate)).mul(new BN(computeBudget));
-        const priorityLamports = priorityMicroLamports.div(new BN(1000000));
+        const priorityLamports = priorityMicroLamports.div(new BN(1000000)).add(new BN(SolanaSwapProgram.getStaticFee(feeRate)));
 
         return new BN(-ESCROW_STATE_RENT_EXEMPT+5000).add(priorityLamports);
     }
@@ -2348,7 +2365,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             swapData.payOut ? CUCosts.CLAIM_ONCHAIN_PAY_OUT : CUCosts.CLAIM_ONCHAIN
         );
         const priorityMicroLamports = new BN(SolanaSwapProgram.getFeePerCU(feeRate)).mul(new BN(computeBudget));
-        const priorityLamports = priorityMicroLamports.div(new BN(1000000));
+        const priorityLamports = priorityMicroLamports.div(new BN(1000000)).add(new BN(SolanaSwapProgram.getStaticFee(feeRate)));
 
         return new BN(5000).add(priorityLamports);
     }
@@ -2369,7 +2386,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         const computeBudget = swapData.payIn ? CUCosts.INIT_PAY_IN : CUCosts.INIT;
         const baseFee = swapData.payIn ? 10000 : 10000 + 5000;
         const priorityMicroLamports = new BN(SolanaSwapProgram.getFeePerCU(feeRate)).mul(new BN(computeBudget));
-        const priorityLamports = priorityMicroLamports.div(new BN(1000000));
+        const priorityLamports = priorityMicroLamports.div(new BN(1000000)).add(new BN(SolanaSwapProgram.getStaticFee(feeRate)));
 
         return new BN(ESCROW_STATE_RENT_EXEMPT+baseFee).add(priorityLamports);
     }
@@ -2384,7 +2401,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         const computeBudget = swapData.payIn ? CUCosts.REFUND_PAY_OUT : CUCosts.REFUND;
         const priorityMicroLamports = new BN(SolanaSwapProgram.getFeePerCU(feeRate)).mul(new BN(computeBudget));
-        const priorityLamports = priorityMicroLamports.div(new BN(1000000));
+        const priorityLamports = priorityMicroLamports.div(new BN(1000000)).add(new BN(SolanaSwapProgram.getStaticFee(feeRate)));
 
         return new BN(-ESCROW_STATE_RENT_EXEMPT+10000).add(priorityLamports);
     }
@@ -2399,7 +2416,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         const computeBudget = swapData.payIn ? CUCosts.REFUND_PAY_OUT : CUCosts.REFUND;
         const priorityMicroLamports = new BN(SolanaSwapProgram.getFeePerCU(feeRate)).mul(new BN(computeBudget));
-        const priorityLamports = priorityMicroLamports.div(new BN(1000000));
+        const priorityLamports = priorityMicroLamports.div(new BN(1000000)).add(new BN(SolanaSwapProgram.getStaticFee(feeRate)));
 
         return new BN(10000).add(priorityLamports);
     }

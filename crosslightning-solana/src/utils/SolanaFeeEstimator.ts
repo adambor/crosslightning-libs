@@ -11,7 +11,12 @@ export class SolanaFeeEstimator {
     private readonly period: number;
     private useHeliusApi: "yes" | "no" | "auto";
     private heliusApiSupported: boolean = true;
-    private readonly bribeData?: {address: string, endpoint: string}
+    private readonly bribeData?: {
+        address: string,
+        endpoint: string,
+        getBribeFee?: (original: BN) => BN,
+        getStaticFee?: (feeRate: BN) => BN
+    };
 
     private blockFeeCache: {
         timestamp: number,
@@ -24,7 +29,7 @@ export class SolanaFeeEstimator {
         numSamples: number = 8,
         period: number = 150,
         useHeliusApi: "yes" | "no" | "auto" = "auto",
-        bribeData?: {address: string, endpoint: string}
+        bribeData?: {address: string, endpoint: string, getBribeFee?: (original: BN) => BN}
     ) {
         this.connection = connection;
         this.maxFeeMicroLamports = new BN(maxFeeMicroLamports);
@@ -195,7 +200,7 @@ export class SolanaFeeEstimator {
         return this._getFeeRate(mutableAccounts).then(e =>
             this.bribeData==null ?
                 e.toString(10) :
-                e.toString(10)+";"+this.bribeData.address
+                (this.bribeData.getBribeFee!=null ? this.bribeData.getBribeFee(e) : e).toString(10)+(this.bribeData.getStaticFee==null ? "" : ";"+this.bribeData.getStaticFee(e).toString(10))+";"+this.bribeData.address
         );
     }
 
