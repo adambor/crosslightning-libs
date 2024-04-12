@@ -36,7 +36,7 @@ import {
     TokenAccountNotFoundError,
     TOKEN_PROGRAM_ID,
     createSyncNativeInstruction,
-    getAssociatedTokenAddress, createTransferInstruction
+    getAssociatedTokenAddress, createTransferInstruction, createAssociatedTokenAccountIdempotentInstruction
 } from "@solana/spl-token";
 import {SolanaFeeEstimator} from "../../utils/SolanaFeeEstimator";
 import {SwapProgram} from "./programTypes";
@@ -89,7 +89,7 @@ const ESCROW_STATE_RENT_EXEMPT = 2658720;
 const CUCosts = {
     CLAIM: 25000,
     CLAIM_PAY_OUT: 50000,
-    INIT: 50000,
+    INIT: 90000,
     INIT_PAY_IN: 50000,
     WRAP_SOL: 10000,
     DATA_REMOVE: 50000,
@@ -403,6 +403,15 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         return swapData.offerer.equals(this.signer.publicKey);
     }
 
+    getATAOrNull(ata: PublicKey): Promise<Account> {
+        return getAccount(this.signer.connection, ata).catch(e => {
+            if(e instanceof TokenAccountNotFoundError) {
+                return null;
+            }
+            throw e;
+        });
+    }
+
     async getBalance(token: TokenAddress, inContract: boolean): Promise<BN> {
         if(inContract) {
             const tokenAccount: IdlAccounts<SwapProgram>["userAccount"] = await this.program.account.userAccount.fetchNullable(this.SwapUserVault(this.signer.publicKey, token));
@@ -411,12 +420,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         } else {
             const ata: PublicKey = getAssociatedTokenAddressSync(token, this.signer.publicKey);
             const [ataAccount, balance] = await Promise.all<[Promise<Account>, Promise<number>]>([
-                getAccount(this.signer.connection, ata).catch(e => {
-                    if(e instanceof TokenAccountNotFoundError) {
-                        return null;
-                    }
-                    throw e;
-                }),
+                this.getATAOrNull(ata),
                 (token!=null && token.equals(WSOL_ADDRESS)) ? this.signer.connection.getBalance(this.signer.publicKey) : Promise.resolve(null)
             ]);
 
@@ -610,9 +614,35 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         const ix = await this.getInitInstruction(swapData, new BN(timeout));
 
-        SolanaSwapProgram.applyFeeRate(tx, CUCosts.INIT_PAY_IN, feeRate);
+        const hashArr = feeRate==null ? [] : feeRate.split("#");
+
+        let computeBudget = CUCosts.INIT_PAY_IN;
+        const instructions: TransactionInstruction[] = [];
+
+        if(hashArr.length>1) {
+            const arr = hashArr[1].split(";");
+            if(arr.length>1) {
+                const balance = new BN(arr[1]);
+                if(balance.lt(swapData.amount)) {
+                    computeBudget += CUCosts.WRAP_SOL;
+                    if(arr[0]==="1") {
+                        computeBudget += CUCosts.ATA_INIT;
+                        instructions.push(createAssociatedTokenAccountInstruction(swapData.offerer, swapData.offererAta, swapData.offerer, swapData.token));
+                    }
+                    instructions.push(SystemProgram.transfer({
+                        fromPubkey: swapData.offerer,
+                        toPubkey: swapData.offererAta,
+                        lamports: BigInt(swapData.amount.sub(balance).toString(10))
+                    }));
+                    instructions.push(createSyncNativeInstruction(swapData.offererAta));
+                }
+            }
+        }
+
+        SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
+        instructions.forEach(ix => tx.add(ix));
         tx.add(ix);
-        SolanaSwapProgram.applyFeeRateEnd(tx, CUCosts.INIT_PAY_IN, feeRate);
+        SolanaSwapProgram.applyFeeRateEnd(tx, computeBudget, feeRate);
 
         return tx;
 
@@ -769,6 +799,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         let result = await this.getInitInstruction(swapData, new BN(timeout));
 
         SolanaSwapProgram.applyFeeRate(tx, CUCosts.INIT, feeRate);
+        tx.add(createAssociatedTokenAccountIdempotentInstruction(swapData.claimer, swapData.claimerAta, swapData.claimer, swapData.token));
         tx.add(result);
         SolanaSwapProgram.applyFeeRateEnd(tx, CUCosts.INIT, feeRate);
 
@@ -1346,16 +1377,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         if(!skipAtaCheck) {
             if(swapData.isPayOut()) {
-                const account = await tryWithRetries<Account>(async () => {
-                    try {
-                        return await getAccount(this.signer.connection, swapData.claimerAta);
-                    } catch (e) {
-                        if(e instanceof TokenAccountNotFoundError) {
-                            return null;
-                        }
-                        throw e;
-                    }
-                }, this.retryPolicy);
+                const account = await tryWithRetries<Account>(() => this.getATAOrNull(swapData.claimerAta), this.retryPolicy);
 
                 if(account==null) {
                     if(!initAta) throw new SwapDataVerificationError("ATA not initialized");
@@ -1473,16 +1495,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         let ataInitIx: TransactionInstruction;
         if(swapData.isPayOut()) {
 
-            const account = await tryWithRetries<Account>(async () => {
-                try {
-                    return await getAccount(this.signer.connection, swapData.claimerAta);
-                } catch (e) {
-                    if(e instanceof TokenAccountNotFoundError) {
-                        return null;
-                    }
-                    throw e;
-                }
-            }, this.retryPolicy);
+            const account = await tryWithRetries<Account>(() => this.getATAOrNull(swapData.claimerAta), this.retryPolicy);
 
             if(account==null) {
                 if(!initAta) throw new SwapDataVerificationError("ATA not initialized");
@@ -1758,16 +1771,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
             ata = getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
 
-            const ataAccount = await tryWithRetries<Account>(async () => {
-                try {
-                    return await getAccount(this.signer.connection, ata);
-                } catch (e) {
-                    if(e instanceof TokenAccountNotFoundError) {
-                        return null;
-                    }
-                    throw e;
-                }
-            }, this.retryPolicy);
+            const ataAccount = await tryWithRetries<Account>(() => this.getATAOrNull(ata), this.retryPolicy);
 
             if(ataAccount==null) {
                 if(!initAta) throw new SwapDataVerificationError("ATA is not initialized!");
@@ -1868,16 +1872,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
             ata = getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
 
-            const ataAccount = await tryWithRetries<Account>(async () => {
-                try {
-                    return await getAccount(this.signer.connection, ata);
-                } catch (e) {
-                    if(e instanceof TokenAccountNotFoundError) {
-                        return null;
-                    }
-                    throw e;
-                }
-            }, this.retryPolicy);
+            const ataAccount = await tryWithRetries<Account>(() => this.getATAOrNull(ata), this.retryPolicy);
 
             if(ataAccount==null) {
                 if(!initAta) throw new SwapDataVerificationError("ATA is not initialized!");
@@ -1967,69 +1962,63 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         const block = await tryWithRetries(() => this.getParsedBlock(parseInt(slotNumber)), this.retryPolicy);
 
-        if(swapData.token.equals(WSOL_ADDRESS)) {
-            let balance = new BN(0);
-            let accountExists = false;
-            try {
-                const ataAcc = await tryWithRetries<Account>(async () => {
-                    try {
-                        return await getAccount(this.signer.connection, ata);
-                    } catch (e) {
-                        if(e instanceof TokenAccountNotFoundError) {
-                            return null;
-                        }
-                        throw e;
+        if(feeRate==null || feeRate.split("#").length<2) {
+            if(swapData.token.equals(WSOL_ADDRESS)) {
+                let balance = new BN(0);
+                let accountExists = false;
+                try {
+                    const ataAcc = await tryWithRetries<Account>(() => this.getATAOrNull(ata), this.retryPolicy);
+
+                    if(ataAcc!=null) {
+                        accountExists = true;
+                        balance = balance.add(new BN(ataAcc.amount.toString()));
                     }
-                }, this.retryPolicy);
+                } catch (e) {}
+                if(balance.lt(swapData.amount)) {
+                    const tx = new Transaction();
+                    tx.feePayer = swapData.offerer;
 
-                if(ataAcc!=null) {
-                    accountExists = true;
-                    balance = balance.add(new BN(ataAcc.amount.toString()));
+                    let computeBudget: number = CUCosts.WRAP_SOL;
+                    //Need to wrap some more
+                    const remainder = swapData.amount.sub(balance);
+                    if(!accountExists) {
+                        //Need to create account
+                        computeBudget += CUCosts.ATA_INIT;
+                        SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
+                        tx.add(createAssociatedTokenAccountInstruction(this.signer.publicKey, ata, this.signer.publicKey, swapData.token));
+                    } else {
+                        SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
+                    }
+                    tx.add(SystemProgram.transfer({
+                        fromPubkey: this.signer.publicKey,
+                        toPubkey: ata,
+                        lamports: remainder.toNumber()
+                    }));
+                    tx.add(createSyncNativeInstruction(ata));
+
+                    SolanaSwapProgram.applyFeeRateEnd(tx, computeBudget, feeRate);
+
+                    tx.recentBlockhash = block.blockhash;
+                    tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
+
+                    txs.push({
+                        tx,
+                        signers: []
+                    });
                 }
-            } catch (e) {}
-            if(balance.lt(swapData.amount)) {
-                const tx = new Transaction();
-                tx.feePayer = swapData.offerer;
-
-                let computeBudget: number = CUCosts.WRAP_SOL;
-                //Need to wrap some more
-                const remainder = swapData.amount.sub(balance);
-                if(!accountExists) {
-                    //Need to create account
-                    computeBudget += CUCosts.ATA_INIT;
-                    SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
-                    tx.add(createAssociatedTokenAccountInstruction(this.signer.publicKey, ata, this.signer.publicKey, swapData.token));
-                } else {
-                    SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
-                }
-                tx.add(SystemProgram.transfer({
-                    fromPubkey: this.signer.publicKey,
-                    toPubkey: ata,
-                    lamports: remainder.toNumber()
-                }));
-                tx.add(createSyncNativeInstruction(ata));
-
-                SolanaSwapProgram.applyFeeRateEnd(tx, computeBudget, feeRate);
-
-                tx.recentBlockhash = block.blockhash;
-                tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
-
-                txs.push({
-                    tx,
-                    signers: []
-                });
             }
-
         }
 
-        const tx = new Transaction();
-        tx.feePayer = swapData.offerer;
+        const tx = await this.getClaimInitMessage(swapData, prefix, timeout, feeRate);
 
-        const ix = await this.getInitInstruction(swapData, new BN(timeout));
-
-        SolanaSwapProgram.applyFeeRate(tx, CUCosts.INIT_PAY_IN, feeRate);
-        tx.add(ix);
-        SolanaSwapProgram.applyFeeRateEnd(tx, CUCosts.INIT_PAY_IN, feeRate);
+        // const tx = new Transaction();
+        // tx.feePayer = swapData.offerer;
+        //
+        // const ix = await this.getInitInstruction(swapData, new BN(timeout));
+        //
+        // SolanaSwapProgram.applyFeeRate(tx, CUCosts.INIT_PAY_IN, feeRate);
+        // tx.add(ix);
+        // SolanaSwapProgram.applyFeeRateEnd(tx, CUCosts.INIT_PAY_IN, feeRate);
 
         tx.recentBlockhash = block.blockhash;
         tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
@@ -2070,28 +2059,19 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         const claimerAta = getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
 
-        //Create claimerAta if it doesn't exist
-        const account = await tryWithRetries<Account>(async () => {
-            try {
-                return await getAccount(this.signer.connection, claimerAta);
-            } catch (e) {
-                if(e instanceof TokenAccountNotFoundError) {
-                    return null;
-                }
-                throw e;
-            }
-        }, this.retryPolicy);
-        if(account==null) {
-            const tx = new Transaction();
-            tx.feePayer = swapData.claimer;
-            SolanaSwapProgram.applyFeeRate(tx, CUCosts.ATA_INIT, feeRate);
-            tx.add(createAssociatedTokenAccountInstruction(this.signer.publicKey, claimerAta, this.signer.publicKey, swapData.token));
-            SolanaSwapProgram.applyFeeRateEnd(tx, CUCosts.ATA_INIT, feeRate);
-            tx.recentBlockhash = block.blockhash;
-            tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
-
-            txns.push({tx, signers: []});
-        }
+        // //Create claimerAta if it doesn't exist
+        // const account = await tryWithRetries<Account>(() => this.getATAOrNull(claimerAta), this.retryPolicy);
+        // if(account==null) {
+        //     const tx = new Transaction();
+        //     tx.feePayer = swapData.claimer;
+        //     SolanaSwapProgram.applyFeeRate(tx, CUCosts.ATA_INIT, feeRate);
+        //     tx.add(createAssociatedTokenAccountInstruction(this.signer.publicKey, claimerAta, this.signer.publicKey, swapData.token));
+        //     SolanaSwapProgram.applyFeeRateEnd(tx, CUCosts.ATA_INIT, feeRate);
+        //     tx.recentBlockhash = block.blockhash;
+        //     tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
+        //
+        //     txns.push({tx, signers: []});
+        // }
 
         const tx = new Transaction();
         tx.feePayer = swapData.claimer;
@@ -2099,6 +2079,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         const result = await this.getInitInstruction(swapData, new BN(timeout));
 
         SolanaSwapProgram.applyFeeRate(tx, CUCosts.INIT, feeRate);
+        tx.add(createAssociatedTokenAccountIdempotentInstruction(this.signer.publicKey, claimerAta, this.signer.publicKey, swapData.token));
         tx.add(result);
         SolanaSwapProgram.applyFeeRateEnd(tx, CUCosts.INIT, feeRate);
 
@@ -2176,6 +2157,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
     static applyFeeRate(tx: Transaction, computeBudget: number, feeRate: string): boolean {
         if(feeRate==null) return false;
 
+        const hashArr = feeRate.split("#");
+        if(hashArr.length>1) {
+            feeRate = hashArr[0];
+        }
+
         if(computeBudget!=null) tx.add(ComputeBudgetProgram.setComputeUnitLimit({
             units: computeBudget,
         }));
@@ -2193,6 +2179,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
     static applyFeeRateEnd(tx: Transaction, computeBudget: number, feeRate: string): boolean {
         if(feeRate==null) return false;
+
+        const hashArr = feeRate.split("#");
+        if(hashArr.length>1) {
+            feeRate = hashArr[0];
+        }
 
         //Check if bribe is included
         const arr = feeRate.split(";");
@@ -2220,20 +2211,34 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
     static getFeePerCU(feeRate: string): string {
         if(feeRate==null) return null;
+
+        const hashArr = feeRate.split("#");
+        if(hashArr.length>1) {
+            feeRate = hashArr[0];
+        }
+
         const arr = feeRate.split(";");
         return arr.length>1 ? arr[0] : feeRate;
     }
 
     static getStaticFee(feeRate: string): string {
         if(feeRate==null) return null;
+
+        const hashArr = feeRate.split("#");
+        if(hashArr.length>1) {
+            feeRate = hashArr[0];
+        }
+
         const arr = feeRate.split(";");
         return arr.length>2 ? arr[1] : "0";
     }
 
-    async getInitPayInFeeRate(offerer: string, claimer: string, token: PublicKey, paymentHash?: string): Promise<string> {
+    getInitPayInFeeRate(offerer: string, claimer: string, token: PublicKey, paymentHash?: string): Promise<string> {
 
-        const offererATA = await getAssociatedTokenAddress(token, new PublicKey(offerer));
-        const userData = this.SwapUserVault(new PublicKey(claimer), token);
+        const offererPubkey = new PublicKey(offerer);
+        const claimerPubkey = new PublicKey(claimer);
+        const offererATA = getAssociatedTokenAddressSync(token, offererPubkey);
+        const userData = this.SwapUserVault(claimerPubkey, token);
         const vault = this.SwapVault(token);
 
         const accounts = [
@@ -2248,13 +2253,36 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             accounts.push(escrowState);
         }
 
-        return await this.getFeeRate(accounts);
+        const offererAta = getAssociatedTokenAddressSync(token, offererPubkey);
+
+        return Promise.all([
+            this.getFeeRate(accounts),
+            token.equals(WSOL_ADDRESS) ? this.getATAOrNull(offererAta) : Promise.resolve(null)
+        ]).then(([feeRate, _account]) => {
+            if(token.equals(WSOL_ADDRESS)) {
+                let balance: BN;
+                let accountExists: boolean;
+                const account: Account = _account;
+                if(account!=null) {
+                    accountExists = true;
+                    balance = new BN(account.amount.toString());
+                } else {
+                    accountExists = false;
+                    balance = new BN(0);
+                }
+                return feeRate+"#"+(accountExists ? "0" : "1")+";"+balance.toString(10);
+            } else {
+                return feeRate;
+            }
+        });
 
     }
 
     getInitFeeRate(offerer: string, claimer: string, token: PublicKey, paymentHash?: string): Promise<string> {
 
-        const userData = this.SwapUserVault(new PublicKey(offerer), token);
+        const offererPubkey = new PublicKey(offerer);
+        const claimerPubkey = new PublicKey(claimer);
+        const userData = this.SwapUserVault(offererPubkey, token);
 
         const accounts = [
             new PublicKey(claimer),
@@ -2265,6 +2293,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             accounts.push(escrowState);
         }
 
+        // return Promise.all([
+        //     this.getFeeRate(accounts),
+        //     this.getATAOrNull(getAssociatedTokenAddressSync(token, claimerPubkey))
+        // ]).then(([feeRate, acc]) => {
+        //     if(acc==null) return feeRate+"#1";
+        //     return feeRate;
+        // });
         return this.getFeeRate(accounts);
 
     }
@@ -2454,16 +2489,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
 
-        const account = await tryWithRetries<Account>(async () => {
-            try {
-                return await getAccount(this.signer.connection, ata);
-            } catch (e) {
-                if(e instanceof TokenAccountNotFoundError) {
-                    return null;
-                }
-                throw e;
-            }
-        }, this.retryPolicy);
+        const account = await tryWithRetries<Account>(() => this.getATAOrNull(ata), this.retryPolicy);
         if(account==null) {
             tx.add(
                 createAssociatedTokenAccountInstruction(this.signer.publicKey, ata, this.signer.publicKey, token)
@@ -2519,16 +2545,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             let accountExists: boolean = false;
             let balance: BN = new BN(0);
 
-            const ataAcc = await tryWithRetries<Account>(async () => {
-                try {
-                    return await getAccount(this.signer.connection, ata);
-                } catch (e) {
-                    if(e instanceof TokenAccountNotFoundError) {
-                        return null;
-                    }
-                    throw e;
-                }
-            }, this.retryPolicy);
+            const ataAcc = await tryWithRetries<Account>(() => this.getATAOrNull(ata), this.retryPolicy);
             if(ataAcc!=null) {
                 accountExists = true;
                 balance = balance.add(new BN(ataAcc.amount.toString()));
@@ -2583,16 +2600,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         if(WSOL_ADDRESS.equals(token)) {
             const wsolAta = getAssociatedTokenAddressSync(token, this.signer.publicKey, false);
-            const account = await tryWithRetries<Account>(async () => {
-                try {
-                    return await getAccount(this.signer.connection, wsolAta);
-                } catch (e) {
-                    if(e instanceof TokenAccountNotFoundError) {
-                        return null;
-                    }
-                    throw e;
-                }
-            }, this.retryPolicy);
+            const account = await tryWithRetries<Account>(() => this.getATAOrNull(wsolAta), this.retryPolicy);
 
             const tx = new Transaction();
             tx.feePayer = this.signer.publicKey;
@@ -2640,16 +2648,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
 
-        const account = await tryWithRetries<Account>(async () => {
-            try {
-                return await getAccount(this.signer.connection, dstAta);
-            } catch (e) {
-                if(e instanceof TokenAccountNotFoundError) {
-                    return null;
-                }
-                throw e;
-            }
-        }, this.retryPolicy);
+        const account = await tryWithRetries<Account>(() => this.getATAOrNull(dstAta), this.retryPolicy);
         console.log("Account ATA: ", account);
         if(account==null) {
             tx.add(
