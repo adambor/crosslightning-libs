@@ -2481,19 +2481,22 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
     async txsWithdraw(token: PublicKey, amount: BN, feeRate?: string): Promise<SolTx[]> {
         const ata = await getAssociatedTokenAddress(token, this.signer.publicKey);
 
-        const computeBudget = CUCosts.WITHDRAW;
         feeRate = feeRate || await this.getFeeRate([this.signer.publicKey, ata, this.SwapUserVault(this.signer.publicKey, token), this.SwapVault(token)]);
 
         const tx = new Transaction();
         tx.feePayer = this.signer.publicKey;
 
-        SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
+        let computeBudget = CUCosts.WITHDRAW;
 
         const account = await tryWithRetries<Account>(() => this.getATAOrNull(ata), this.retryPolicy);
         if(account==null) {
+            computeBudget += CUCosts.ATA_INIT;
+            SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
             tx.add(
                 createAssociatedTokenAccountInstruction(this.signer.publicKey, ata, this.signer.publicKey, token)
             );
+        } else {
+            SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
         }
 
         let ix = await this.program.methods
@@ -2534,12 +2537,9 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         const ata = await getAssociatedTokenAddress(token, this.signer.publicKey);
         
         feeRate = feeRate || await this.getFeeRate([this.signer.publicKey, ata, this.SwapUserVault(this.signer.publicKey, token), this.SwapVault(token)]);
-        const computeBudget = CUCosts.DEPOSIT;
 
-        const tx = new Transaction();
-        tx.feePayer = this.signer.publicKey;
-
-        SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
+        let computeBudget = CUCosts.DEPOSIT;
+        const ixs: TransactionInstruction[] = [];
 
         if(WSOL_ADDRESS.equals(token)) {
             let accountExists: boolean = false;
@@ -2551,21 +2551,23 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 balance = balance.add(new BN(ataAcc.amount.toString()));
             }
             if(balance.lt(amount)) {
+                computeBudget += CUCosts.WRAP_SOL;
                 const remainder = amount.sub(balance);
                 if(!accountExists) {
                     //Need to create account
-                    tx.add(createAssociatedTokenAccountInstruction(this.signer.publicKey, ata, this.signer.publicKey, token));
+                    computeBudget += CUCosts.ATA_INIT;
+                    ixs.push(createAssociatedTokenAccountInstruction(this.signer.publicKey, ata, this.signer.publicKey, token));
                 }
-                tx.add(SystemProgram.transfer({
+                ixs.push(SystemProgram.transfer({
                     fromPubkey: this.signer.publicKey,
                     toPubkey: ata,
                     lamports: remainder.toNumber()
                 }));
-                tx.add(createSyncNativeInstruction(ata));
+                ixs.push(createSyncNativeInstruction(ata));
             }
         }
 
-        let depositIx = await this.program.methods
+        const depositIx = await this.program.methods
             .deposit(new BN(amount))
             .accounts({
                 signer: this.signer.publicKey,
@@ -2579,8 +2581,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             })
             .instruction();
 
-        tx.add(depositIx);
+        const tx = new Transaction();
+        tx.feePayer = this.signer.publicKey;
 
+        SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
+        ixs.forEach(ix => tx.add(ix));
+        tx.add(depositIx);
         SolanaSwapProgram.applyFeeRateEnd(tx, computeBudget, feeRate);
 
         return [{
@@ -2596,7 +2602,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
     async txsTransfer(token: PublicKey, amount: BN, dstAddress: string, feeRate?: string): Promise<SolTx[]> {
         const recipient = new PublicKey(dstAddress);
 
-        const computeBudget = CUCosts.TRANSFER;
+        let computeBudget = CUCosts.TRANSFER;
 
         if(WSOL_ADDRESS.equals(token)) {
             const wsolAta = getAssociatedTokenAddressSync(token, this.signer.publicKey, false);
@@ -2605,16 +2611,17 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             const tx = new Transaction();
             tx.feePayer = this.signer.publicKey;
 
-            SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
-
             if(account!=null) {
                 feeRate = feeRate || await this.getFeeRate([this.signer.publicKey, recipient, wsolAta]);
+                computeBudget += CUCosts.ATA_CLOSE;
+                SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
                 //Unwrap
                 tx.add(
                     createCloseAccountInstruction(wsolAta, this.signer.publicKey, this.signer.publicKey)
                 );
             } else {
                 feeRate = feeRate || await this.getFeeRate([this.signer.publicKey, recipient]);
+                SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
             }
 
             tx.add(
