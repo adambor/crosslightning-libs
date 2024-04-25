@@ -37,6 +37,13 @@ export type BtcBlockWithTxs = {
     tx: BtcTx[]
 };
 
+export type BtcSyncInfo = {
+    ibd: boolean,
+    headers: number,
+    blocks: number,
+    verificationProgress: number
+}
+
 export interface BitcoinRpc<T extends BtcBlock> {
 
     isInMainChain(blockhash: string): Promise<boolean>;
@@ -52,5 +59,7 @@ export interface BitcoinRpc<T extends BtcBlock> {
     getBlockWithTransactions(blockhash: string): Promise<BtcBlockWithTxs>;
 
     getTipHeight(): Promise<number>;
+
+    getSyncInfo(): Promise<BtcSyncInfo>;
 
 }

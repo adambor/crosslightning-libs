@@ -1,4 +1,4 @@
-import {BitcoinRpc, BtcBlockWithTxs, BtcTx} from "crosslightning-base";
+import {BitcoinRpc, BtcBlockWithTxs, BtcSyncInfo, BtcTx} from "crosslightning-base";
 import {MempoolBitcoinBlock} from "./MempoolBitcoinBlock";
 import {ChainUtils} from "./ChainUtils";
 
@@ -74,6 +74,17 @@ export class MempoolBitcoinRpc implements BitcoinRpc<MempoolBitcoinBlock> {
 
     getBlockWithTransactions(blockhash: string): Promise<BtcBlockWithTxs> {
         throw new Error("Unsupported.");
+    }
+
+    getSyncInfo(): Promise<BtcSyncInfo> {
+        return ChainUtils.getTipBlockHeight().then(tipHeight => {
+            return {
+                verificationProgress: 1,
+                blocks: tipHeight,
+                headers: tipHeight,
+                ibd: false
+            };
+        });
     }
 
 }
