@@ -524,6 +524,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         //Check if paid or what
         const signatures = await signaturesPromise;
 
+        abortController.signal.throwIfAborted();
+
         for(let sig of signatures) {
             const tx = await this.signer.connection.getTransaction(sig.signature, {
                 commitment: "confirmed",

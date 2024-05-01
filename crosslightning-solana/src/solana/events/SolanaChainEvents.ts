@@ -1,5 +1,13 @@
 import {SolanaSwapData} from "../swaps/SolanaSwapData";
-import {Message, ParsedMessage, ParsedTransactionWithMeta, PartiallyDecodedInstruction, PublicKey, TransactionResponse} from "@solana/web3.js";
+import {
+    ConfirmedSignatureInfo,
+    Message,
+    ParsedMessage,
+    ParsedTransactionWithMeta,
+    PartiallyDecodedInstruction,
+    PublicKey,
+    TransactionResponse
+} from "@solana/web3.js";
 import {AnchorProvider, Event} from "@coral-xyz/anchor";
 import * as fs from "fs/promises";
 import {SolanaSwapProgram} from "../swaps/SolanaSwapProgram";
@@ -83,17 +91,28 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
         this.wsTxFetchRetryTimeout = wsTxFetchRetryTimeout || WS_TX_FETCH_RETRY_TIMEOUT;
     }
 
-    private async getLastSignature() {
+    private async getLastSignature(): Promise<{
+        signature: string,
+        slot: number
+    }> {
         try {
-            const txt = await fs.readFile(this.directory+BLOCKHEIGHT_FILENAME);
-            return txt.toString();
+            const txt = (await fs.readFile(this.directory+BLOCKHEIGHT_FILENAME)).toString();
+            const arr = txt.split(";");
+            if(arr.length<2) return {
+                signature: txt,
+                slot: 0
+            };
+            return {
+                signature: arr[0],
+                slot: parseInt(arr[1])
+            };
         } catch (e) {
             return null;
         }
     }
 
-    private saveLastSignature(lastSignture: string): Promise<void> {
-        return fs.writeFile(this.directory+BLOCKHEIGHT_FILENAME, lastSignture);
+    private saveLastSignature(lastSignture: string, slot: number): Promise<void> {
+        return fs.writeFile(this.directory+BLOCKHEIGHT_FILENAME, lastSignture+";"+slot);
     }
 
     private async processEvent(eventObject : EventObject) {
@@ -286,14 +305,14 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
     private async checkEvents() {
         const lastSignature = await this.getLastSignature();
 
-        let signatures = null;
+        let signatures: ConfirmedSignatureInfo[] = null;
 
         if(lastSignature==null) {
             signatures = await this.signer.connection.getSignaturesForAddress(this.solanaSwapProgram.program.programId, {
                 limit: 1
             }, "confirmed");
             if(signatures.length>0) {
-                await this.saveLastSignature(signatures[0].signature);
+                await this.saveLastSignature(signatures[0].signature, signatures[0].slot);
             }
             return;
         }
@@ -302,13 +321,18 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
         while(fetched==null || fetched.length===this.logFetchLimit) {
             if(signatures==null) {
                 fetched = await this.signer.connection.getSignaturesForAddress(this.solanaSwapProgram.program.programId, {
-                    until: lastSignature,
+                    until: lastSignature.signature,
                     limit: this.logFetchLimit
                 }, "confirmed");
+                //Check if newest returned signature (index 0) is older than the latest signature's slot, this is a sanity check
+                if(fetched.length>0 && fetched[0].slot<lastSignature.slot) {
+                    console.log("[Solana Events POLL] Sanity check triggered, returned signature slot height is older than latest!");
+                    return;
+                }
             } else {
                 fetched = await this.signer.connection.getSignaturesForAddress(this.solanaSwapProgram.program.programId, {
                     before: signatures[signatures.length-1].signature,
-                    until: lastSignature,
+                    until: lastSignature.signature,
                     limit: this.logFetchLimit
                 }, "confirmed");
             }
@@ -319,41 +343,41 @@ export class SolanaChainEvents implements ChainEvents<SolanaSwapData> {
             }
         }
 
-        let lastSuccessfulSignature = null;
+        let lastSuccessfulSignature: {signature: string, slot: number} = null;
 
         try {
             for(let i=signatures.length-1;i>=0;i--) {
-                const txSignature = signatures[i].signature;
+                const txSignature = signatures[i];
 
                 const signatureHandlerObj: {
                     promise: Promise<boolean>
-                } = this.signaturesProcessing[txSignature];
+                } = this.signaturesProcessing[txSignature.signature];
                 if(signatureHandlerObj!=null) {
                     if(await signatureHandlerObj.promise) {
                         lastSuccessfulSignature = txSignature;
-                        delete this.signaturesProcessing[txSignature];
+                        delete this.signaturesProcessing[txSignature.signature];
                         continue;
                     }
-                    delete this.signaturesProcessing[txSignature];
+                    delete this.signaturesProcessing[txSignature.signature];
                 }
 
                 console.log("[Solana Events POLL] Process signature: ", txSignature);
 
-                const processPromise: Promise<boolean> = this.fetchTxAndProcessEvent(signatures[i].signature);
-                this.signaturesProcessing[txSignature] = {
+                const processPromise: Promise<boolean> = this.fetchTxAndProcessEvent(txSignature.signature);
+                this.signaturesProcessing[txSignature.signature] = {
                     promise: processPromise
                 };
                 const result = await processPromise;
                 if(!result) throw new Error("Failed to process signature: "+txSignature);
                 lastSuccessfulSignature = txSignature;
-                delete this.signaturesProcessing[txSignature];
+                delete this.signaturesProcessing[txSignature.signature];
             }
         } catch (e) {
             console.error(e);
         }
 
         if(lastSuccessfulSignature!=null) {
-            await this.saveLastSignature(lastSuccessfulSignature);
+            await this.saveLastSignature(lastSuccessfulSignature.signature, lastSignature.slot);
         }
     }
 

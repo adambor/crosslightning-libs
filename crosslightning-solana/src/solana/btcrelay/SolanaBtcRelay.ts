@@ -450,7 +450,7 @@ export class SolanaBtcRelay<B extends BtcBlock> implements BtcRelay<SolanaBtcSto
             .submitForkHeaders(
                 blockHeaderObj,
                 storedHeader,
-                forkId,
+                new BN(forkId),
                 false
             )
             .accounts({
