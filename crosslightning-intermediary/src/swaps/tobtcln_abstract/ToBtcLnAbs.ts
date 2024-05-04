@@ -407,17 +407,6 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
             const amountBD = new BN(decodedPR.satoshis);
 
-            if(amountBD.lt(this.config.min)) {
-                console.error("[To BTC-LN: Solana.Initialize] Low payment amount: "+amountBD.toString(10)+" minimum: "+this.config.min.toString(10));
-                await markAsNonPayable();
-                return;
-            }
-            if(amountBD.gt(this.config.max)) {
-                console.error("[To BTC-LN: Solana.Initialize] High payment amount: "+amountBD.toString(10)+" maximum: "+this.config.max.toString(10));
-                await markAsNonPayable();
-                return;
-            }
-
             const maxFee = invoiceData.maxFee;
 
             const maxUsableCLTVdelta = expiryTimestamp.sub(currentTimestamp).sub(this.config.gracePeriod).div(this.config.bitcoinBlocktime.mul(this.config.safetyFactor));
