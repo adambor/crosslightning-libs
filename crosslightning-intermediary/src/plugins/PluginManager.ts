@@ -1,40 +1,65 @@
-import {BtcRelay, ChainEvents, SwapContract, SwapData} from "crosslightning-base";
+import {BitcoinRpc, BtcRelay, ChainEvents, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
 import {IPlugin} from "./IPlugin";
-import {FromBtcLnRequestType, FromBtcRequestType, SwapHandler, ToBtcLnRequestType, ToBtcRequestType} from "..";
+import {
+    FromBtcLnRequestType,
+    FromBtcRequestType,
+    ISwapPrice,
+    SwapHandler,
+    ToBtcLnRequestType,
+    ToBtcRequestType
+} from "..";
 import {SwapHandlerSwap} from "../swaps/SwapHandlerSwap";
 import {AuthenticatedLnd} from "lightning";
 import {IParamReader} from "../utils/paramcoders/IParamReader";
 import * as BN from "bn.js";
+import * as fs from "fs";
+import {Command, createCommand} from "crosslightning-server-base";
 
 
 export class PluginManager {
 
-    static plugins: IPlugin<any>[] = [];
+    static plugins: Map<string, IPlugin<any>> = new Map();
 
-    static registerPlugin(plugin: IPlugin<any>) {
-        PluginManager.plugins.push(plugin);
+    static registerPlugin(name: string, plugin: IPlugin<any>) {
+        PluginManager.plugins.set(name, plugin);
     }
 
-    static unregisterPlugin(plugin: IPlugin<any>) {
-        const index = PluginManager.plugins.indexOf(plugin);
-        if(index>-1) {
-            PluginManager.plugins.splice(index, 1);
-        }
+    static unregisterPlugin(name: string): boolean {
+        return PluginManager.plugins.delete(name);
     }
 
     static async enable<T extends SwapData>(
         swapContract: SwapContract<T, any, any, any>,
         btcRelay: BtcRelay<any, any, any>,
         chainEvents: ChainEvents<T>,
-        lnd: AuthenticatedLnd
-    ) {
-        for(let plugin of PluginManager.plugins) {
+
+        bitcoinRpc: BitcoinRpc<any>,
+        lnd: AuthenticatedLnd,
+
+        swapPricing: ISwapPrice,
+        tokens: {
+            [ticker: string]: {address: TokenAddress, decimals: number}
+        },
+
+        directory: string
+    ): Promise<void> {
+        try {
+            fs.mkdirSync(directory);
+        } catch (e) {}
+        for(let [name, plugin] of PluginManager.plugins.entries()) {
             try {
+                try {
+                    fs.mkdirSync(directory+"/"+name);
+                } catch (e) {}
                 await plugin.onEnable(
                     swapContract,
                     btcRelay,
                     chainEvents,
-                    lnd
+                    bitcoinRpc,
+                    lnd,
+                    swapPricing,
+                    tokens,
+                    directory+"/"+name
                 );
             } catch (e) {
                 console.error("Plugin ENABLE error: ", plugin.name);
@@ -44,7 +69,7 @@ export class PluginManager {
     }
 
     static async disable() {
-        for(let plugin of PluginManager.plugins) {
+        for(let plugin of PluginManager.plugins.values()) {
             try {
                 await plugin.onDisable();
             } catch (e) {
@@ -55,7 +80,7 @@ export class PluginManager {
     }
 
     static async serviceInitialize<T extends SwapData>(handler: SwapHandler<any, T>) {
-        for(let plugin of PluginManager.plugins) {
+        for(let plugin of PluginManager.plugins.values()) {
             try {
                 await plugin.onServiceInitialize(handler);
             } catch (e) {
@@ -66,7 +91,7 @@ export class PluginManager {
     }
 
     static async onHttpServerStarted(httpServer: any): Promise<void> {
-        for(let plugin of PluginManager.plugins) {
+        for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.onHttpServerStarted!=null) await plugin.onHttpServerStarted(httpServer);
             } catch (e) {
@@ -77,7 +102,7 @@ export class PluginManager {
     }
 
     static async swapStateChange<T extends SwapData>(swap: SwapHandlerSwap<T>, oldState?: any) {
-        for(let plugin of PluginManager.plugins) {
+        for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.onSwapStateChange!=null) await plugin.onSwapStateChange(swap);
             } catch (e) {
@@ -88,7 +113,7 @@ export class PluginManager {
     }
 
     static async swapCreate<T extends SwapData>(swap: SwapHandlerSwap<T>) {
-        for(let plugin of PluginManager.plugins) {
+        for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.onSwapCreate!=null) await plugin.onSwapCreate(swap);
             } catch (e) {
@@ -99,7 +124,7 @@ export class PluginManager {
     }
 
     static async swapRemove<T extends SwapData>(swap: SwapHandlerSwap<T>) {
-        for(let plugin of PluginManager.plugins) {
+        for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.onSwapRemove!=null) await plugin.onSwapRemove(swap);
             } catch (e) {
@@ -111,7 +136,7 @@ export class PluginManager {
 
     static async onSwapRequestToBtcLn?(req: Request & {paramReader: IParamReader}, requestData: ToBtcLnRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}> {
         let fees: {baseFee: BN, feePPM: BN} = {baseFee: null, feePPM: null};
-        for(let plugin of PluginManager.plugins) {
+        for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.onSwapRequestToBtcLn!=null) {
                     const result = await plugin.onSwapRequestToBtcLn(req, requestData, swapMetadata);
@@ -133,7 +158,7 @@ export class PluginManager {
 
     static async onSwapRequestToBtc?(req: Request & {paramReader: IParamReader}, requestData: ToBtcRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}> {
         let fees: {baseFee: BN, feePPM: BN} = {baseFee: null, feePPM: null};
-        for(let plugin of PluginManager.plugins) {
+        for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.onSwapRequestToBtc!=null) {
                     const result = await plugin.onSwapRequestToBtc(req, requestData, swapMetadata);
@@ -155,7 +180,7 @@ export class PluginManager {
 
     static async onSwapRequestFromBtcLn?(req: Request & {paramReader: IParamReader}, requestData: FromBtcLnRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}> {
         let fees: {baseFee: BN, feePPM: BN} = {baseFee: null, feePPM: null};
-        for(let plugin of PluginManager.plugins) {
+        for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.onSwapRequestFromBtcLn!=null) {
                     const result = await plugin.onSwapRequestFromBtcLn(req, requestData, swapMetadata);
@@ -177,7 +202,7 @@ export class PluginManager {
 
     static async onSwapRequestFromBtc?(req: Request & {paramReader: IParamReader}, requestData: FromBtcRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}> {
         let fees: {baseFee: BN, feePPM: BN} = {baseFee: null, feePPM: null};
-        for(let plugin of PluginManager.plugins) {
+        for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.onSwapRequestFromBtc!=null) {
                     const result = await plugin.onSwapRequestFromBtc(req, requestData, swapMetadata);
@@ -200,7 +225,7 @@ export class PluginManager {
     static getWhitelistedTxIds(): Set<string> {
         const whitelist: Set<string> = new Set<string>();
 
-        for(let plugin of PluginManager.plugins) {
+        for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.getWhitelistedTxIds!=null) {
                     const result: string[] = plugin.getWhitelistedTxIds();
