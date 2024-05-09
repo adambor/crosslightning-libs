@@ -638,6 +638,12 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
             if(pricePrefetchPromise!=null) console.log("[From BTC-LN: REST.payInvoice] Pre-fetching swap price!");
 
+            lncli.getWalletInfo({lnd: this.LND}).then(resp => responseStream.writeParams({
+                lnPublicKey: resp.public_key
+            })).catch(e => {
+                console.error("From BTC-LN: REST.getWalletInfo", e);
+            });
+
             let amountBD: BN;
             if(parsedBody.exactOut) {
                 amountBD = await this.swapPricing.getToBtcSwapAmount(parsedBody.amount, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
