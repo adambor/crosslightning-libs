@@ -2,11 +2,22 @@ import * as bolt11 from "bolt11";
 import {ToBTCLNSwap} from "./ToBTCLNSwap";
 import {IToBTCWrapper} from "../IToBTCWrapper";
 import {IWrapperStorage} from "../../../storage/IWrapperStorage";
-import {ClientSwapContract, LNURLPay, LNURLPayParamsWithUrl} from "../../ClientSwapContract";
+import {AmountData, ClientSwapContract, LNURLPay, LNURLPayParamsWithUrl} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {UserError} from "../../../errors/UserError";
 import {ChainEvents, SwapData, TokenAddress} from "crosslightning-base";
 import * as EventEmitter from "events";
+import {Intermediary} from "../../../intermediaries/Intermediary";
+import {ToBTCOptions} from "../onchain/ToBTCWrapper";
+import * as dns from "node:dns";
+
+export type ToBTCLNOptions = {
+    expirySeconds: number,
+    maxFee?: BN,
+    reqId?: string,
+    requiredTotal?: BN,
+    expiryTimestamp?: BN,
+}
 
 export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
 
@@ -33,28 +44,29 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
      * Returns a newly created swap, paying for 'bolt11PayRequest' - a bitcoin LN invoice
      *
      * @param bolt11PayRequest  BOLT11 payment request (bitcoin lightning invoice) you wish to pay
-     * @param expirySeconds     Swap expiration in seconds, setting this too low might lead to unsuccessful payments, too high and you might lose access to your funds for longer than necessary
-     * @param url               Intermediary/Counterparty swap service url
-     * @param maxBaseFee        Max base fee for the payment routing
-     * @param maxPPMFee         Max proportional fee PPM (per million 0.1% == 1000) for routing
-     * @param requiredToken     Token that we want to send
-     * @param requiredKey       Required key of the Intermediary
-     * @param requiredBaseFee   Desired base fee reported by the swap intermediary
-     * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
-     * @param additionalParams  Additional parameters sent to the LP when creating the swap
+     * @param amountData            Amount of token & amount to swap
+     * @param lps                   LPs (liquidity providers) to get the quotes from
+     * @param options               Quote options
+     * @param additionalParams      Additional parameters sent to the LP when creating the swap
+     * @param abortSignal           Abort signal for aborting the process
      */
-    async create(
+    create(
         bolt11PayRequest: string,
-        expirySeconds: number,
-        url: string,
-        maxBaseFee?: BN,
-        maxPPMFee?: BN,
-        requiredToken?: TokenAddress,
-        requiredKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN,
-        additionalParams?: Record<string, any>
-    ): Promise<ToBTCLNSwap<T>> {
+        amountData: {
+            token: TokenAddress
+        },
+        lps: Intermediary[],
+        options: {
+            expirySeconds: number,
+            maxRoutingBaseFee: BN,
+            maxRoutingPPM: BN
+        },
+        additionalParams?: Record<string, any>,
+        abortSignal?: AbortSignal
+    ): {
+        quote: Promise<ToBTCLNSwap<T>>,
+        intermediary: Intermediary
+    }[] {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
@@ -66,31 +78,44 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
 
         const sats = new BN(parsedPR.millisatoshis).div(new BN(1000));
 
-        const fee = this.calculateFeeForAmount(sats, maxBaseFee, maxPPMFee);
-
-        const result = await this.contract.payLightning(bolt11PayRequest, expirySeconds, fee, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, null, null, null, null, null, null, null, additionalParams);
-
-        const swap = new ToBTCLNSwap(
-            this,
+        const resultPromises = this.contract.payLightning(
             bolt11PayRequest,
-            result.data,
-            result.maxFee,
-            result.swapFee,
-            result.prefix,
-            result.timeout,
-            result.signature,
-            result.feeRate,
-            url,
-            result.confidence,
-            result.routingFeeSats,
-            result.expiry,
-            result.pricingInfo
+            amountData,
+            lps,
+            {
+                maxFee: this.calculateFeeForAmount(sats, options.maxRoutingBaseFee, options.maxRoutingPPM),
+                expirySeconds: options.expirySeconds
+            },
+            null,
+            additionalParams,
+            abortSignal
         );
 
-        await swap.save();
-        this.swapData[result.data.getHash()] = swap;
+        return resultPromises.map(data => {
+            return {
+                intermediary: data.intermediary,
+                quote: data.response.then(response => new ToBTCLNSwap<T>(
+                    this,
+                    bolt11PayRequest,
+                    response.data,
+                    response.fees.networkFee,
+                    response.fees.swapFee,
+                    response.authorization.prefix,
+                    response.authorization.timeout,
+                    response.authorization.signature,
+                    response.authorization.feeRate,
+                    data.intermediary.url+"/tobtcln",
+                    response.confidence,
+                    response.routingFeeSats,
+                    response.authorization.expiry,
+                    response.pricingInfo
+                ))
+            }
+        });
 
-        return swap;
+        //Swaps are saved when commit is called
+        // await swap.save();
+        // this.swapData[result.data.getHash()] = swap;
 
     }
 
@@ -98,90 +123,88 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
     /**
      * Returns a newly created swap, paying for LNURL-pay
      *
-     * @param lnurlPay          LNURL-pay link to use for payment
-     * @param amount            Amount in sats to pay
-     * @param comment           Optional comment for the payment request
-     * @param expirySeconds     Swap expiration in seconds, setting this too low might lead to unsuccessful payments, too high and you might lose access to your funds for longer than necessary
-     * @param url               Intermediary/Counterparty swap service url
-     * @param maxBaseFee        Max base fee for the payment routing
-     * @param maxPPMFee         Max proportional fee PPM (per million 0.1% == 1000) for routing
-     * @param requiredToken     Token that we want to send
-     * @param requiredKey       Required key of the Intermediary
-     * @param requiredBaseFee   Desired base fee reported by the swap intermediary
-     * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
-     * @param exactIn           Whether to do an exactIn swap instead of exactOut
-     * @param additionalParams  Additional parameters sent to the LP when creating the swap
+     * @param lnurlPay              LNURL-pay link to use for payment
+     * @param amountData            Amount of token & amount to swap
+     * @param lps                   LPs (liquidity providers) to get the quotes from
+     * @param options               Quote options
+     * @param additionalParams      Additional parameters sent to the LP when creating the swap
+     * @param abortSignal           Abort signal for aborting the process
      */
     async createViaLNURL(
         lnurlPay: string | LNURLPay,
-        amount: BN,
-        comment: string,
-        expirySeconds: number,
-        url: string,
-        maxBaseFee?: BN,
-        maxPPMFee?: BN,
-        requiredToken?: TokenAddress,
-        requiredKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN,
-        exactIn?: boolean,
-        additionalParams?: Record<string, any>
-    ): Promise<ToBTCLNSwap<T>> {
+        amountData: AmountData,
+        lps: Intermediary[],
+        options: {
+            expirySeconds: number,
+            maxRoutingBaseFee: BN,
+            maxRoutingPPM: BN,
+            comment: string
+        },
+        additionalParams?: Record<string, any>,
+        abortSignal?: AbortSignal
+    ): Promise<{
+        quote: Promise<ToBTCLNSwap<T>>,
+        intermediary: Intermediary
+    }[]> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
         let fee: Promise<BN>;
         let pricePreFetch: Promise<BN>;
-        if(exactIn && maxBaseFee==null) {
-            pricePreFetch = this.contract.swapPrice.preFetchPrice(requiredToken);
+        if(amountData.exactIn && options.maxRoutingBaseFee==null) {
+            pricePreFetch = this.contract.swapPrice.preFetchPrice(amountData.token, abortSignal);
             fee = pricePreFetch.then(val => {
-                return this.contract.swapPrice.getFromBtcSwapAmount(new BN(this.contract.options.lightningBaseFee), requiredToken, null, val)
+                return this.contract.swapPrice.getFromBtcSwapAmount(new BN(this.contract.options.lightningBaseFee), amountData.token, abortSignal, val)
             }).then(_maxBaseFee => {
-                return this.calculateFeeForAmount(amount, _maxBaseFee, maxPPMFee);
+                return this.calculateFeeForAmount(amountData.amount, _maxBaseFee, options.maxRoutingPPM);
             });
         } else {
-            fee = Promise.resolve(this.calculateFeeForAmount(amount, maxBaseFee, maxPPMFee));
+            fee = Promise.resolve(this.calculateFeeForAmount(amountData.amount, options.maxRoutingBaseFee, options.maxRoutingPPM));
         }
 
-        const result = await this.contract.payLightningLNURL(
+        const resultPromises = await this.contract.payLightningLNURL(
             typeof(lnurlPay)==="string" ? lnurlPay : lnurlPay.params,
-            amount,
-            comment,
-            expirySeconds,
-            fee,
-            url,
-            requiredToken,
-            requiredKey,
-            requiredBaseFee,
-            requiredFeePPM,
-            pricePreFetch,
-            exactIn,
-            additionalParams
+            amountData,
+            lps,
+            {
+                expirySeconds: options.expirySeconds,
+                comment: options.comment,
+            },
+            {
+                maxFeePromise: fee,
+                pricePreFetchPromise: pricePreFetch
+            },
+            additionalParams,
+            abortSignal
         );
 
-        const swap = new ToBTCLNSwap(
-            this,
-            result.invoice,
-            result.data,
-            result.maxFee,
-            result.swapFee,
-            result.prefix,
-            result.timeout,
-            result.signature,
-            result.feeRate,
-            url,
-            result.confidence,
-            result.routingFeeSats,
-            result.expiry,
-            result.pricingInfo,
-            typeof(lnurlPay)==="string" ? lnurlPay : lnurlPay.params.url,
-            result.successAction
-        );
+        return resultPromises.map(data => {
+            return {
+                quote: data.response.then(response => new ToBTCLNSwap<T>(
+                    this,
+                    response.invoice,
+                    response.data,
+                    response.fees.networkFee,
+                    response.fees.swapFee,
+                    response.authorization.prefix,
+                    response.authorization.timeout,
+                    response.authorization.signature,
+                    response.authorization.feeRate,
+                    data.intermediary.url+"/tobtcln",
+                    response.confidence,
+                    response.routingFeeSats,
+                    response.authorization.expiry,
+                    response.pricingInfo,
+                    typeof(lnurlPay)==="string" ? lnurlPay : lnurlPay.params.url,
+                    response.successAction
+                )),
+                intermediary: data.intermediary
+            }
+        });
 
-        await swap.save();
-        this.swapData[result.data.getHash()] = swap;
-
-        return swap;
+        //Swaps are saved when commit is called
+        // await swap.save();
+        // this.swapData[result.data.getHash()] = swap;
 
     }
 

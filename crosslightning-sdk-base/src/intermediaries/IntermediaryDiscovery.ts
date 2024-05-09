@@ -71,7 +71,7 @@ function getIntermediaryComparator(swapType: SwapType, tokenAddress: TokenAddres
 }
 
 const REGISTRY_URL = "https://api.github.com/repos/adambor/SolLightning-registry/contents/registry.json?ref=main";
-const BATCH_SIZE = 10;
+const BATCH_SIZE = 20;
 const TIMEOUT = 3000;
 
 export class IntermediaryDiscovery<T extends SwapData> {
@@ -136,17 +136,15 @@ export class IntermediaryDiscovery<T extends SwapData> {
 
         const nonce = randomBytes(32).toString("hex");
 
-        const response: Response = await tryWithRetries(() => {
-            return fetchWithTimeout(url+"/info", {
-                method: "POST",
-                body: JSON.stringify({
-                    nonce
-                }),
-                headers: {'Content-Type': 'application/json'},
-                signal: abortSignal,
-                timeout: this.httpRequestTimeout
-            })
-        },null, null, abortSignal);
+        const response: Response = await fetchWithTimeout(url+"/info", {
+            method: "POST",
+            body: JSON.stringify({
+                nonce
+            }),
+            headers: {'Content-Type': 'application/json'},
+            signal: abortSignal,
+            timeout: this.httpRequestTimeout
+        });
 
         if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
 
@@ -178,44 +176,7 @@ export class IntermediaryDiscovery<T extends SwapData> {
 
     }
 
-    async getReputation(node: {
-        url: string,
-        address: string,
-        info: InfoHandlerResponseEnvelope
-    }) {
-        const checkReputationTokens: Set<string> = new Set<string>();
-        if(node.info.services.TO_BTC!=null) {
-            if(node.info.services.TO_BTC.tokens!=null) for(let token of node.info.services.TO_BTC.tokens) {
-                checkReputationTokens.add(token);
-            }
-        }
-        if(node.info.services.TO_BTCLN!=null) {
-            if(node.info.services.TO_BTCLN.tokens!=null) for(let token of node.info.services.TO_BTCLN.tokens) {
-                checkReputationTokens.add(token);
-            }
-        }
-
-        const promises = [];
-        const reputation = {};
-        for(let token of checkReputationTokens) {
-            promises.push(tryWithRetries(() => this.swapContract.getIntermediaryReputation(node.address, this.swapContract.toTokenAddress(token))).then(result => {
-                reputation[token] = result;
-            }));
-        }
-
-        try {
-            await Promise.all(promises);
-        } catch (e) {
-            console.error(e);
-        }
-
-        return reputation;
-    }
-
-    async init(abortSignal?: AbortSignal) {
-
-        this.intermediaries = [];
-
+    async fetchIntermediaries(abortSignal?: AbortSignal): Promise<Intermediary[]> {
         const urls = await this.getIntermediaryUrls(abortSignal);
 
         const activeNodes: {
@@ -241,26 +202,30 @@ export class IntermediaryDiscovery<T extends SwapData> {
 
         if(promises.length>0) await Promise.all(promises);
 
-        promises = [];
-        for(let node of activeNodes) {
-            //Fetch reputation
-            promises.push(this.getReputation(node).then(reputation => {
-                const services: ServicesType = {};
+        if(activeNodes.length===0) throw new Error("No online intermediary found!");
 
-                for(let key in node.info.services) {
-                    services[swapHandlerTypeToSwapType(key as SwapHandlerType)] = node.info.services[key];
-                }
-
-                this.intermediaries.push(new Intermediary(node.url, node.address, services, reputation));
-            }));
-
-            if(promises.length>=BATCH_SIZE) {
-                await Promise.all(promises);
-                promises = [];
+        return activeNodes.map(node => {
+            const services: ServicesType = {};
+            for(let key in node.info.services) {
+                services[swapHandlerTypeToSwapType(key as SwapHandlerType)] = node.info.services[key];
             }
-        }
+            return new Intermediary(node.url, node.address, services);
+        });
+    }
 
-        if(promises.length>0) await Promise.all(promises);
+    async reloadIntermediaries(abortSignal?: AbortSignal): Promise<void> {
+
+        const fetchedIntermediaries = await tryWithRetries<Intermediary[]>(() => this.fetchIntermediaries(abortSignal), null, null, abortSignal);
+        this.intermediaries = fetchedIntermediaries;
+
+        console.log("Reloaded intermediaries: ", this.intermediaries);
+
+    }
+
+    async init(abortSignal?: AbortSignal): Promise<void> {
+
+        const fetchedIntermediaries = await tryWithRetries<Intermediary[]>(() => this.fetchIntermediaries(abortSignal), null, null, abortSignal);
+        this.intermediaries = fetchedIntermediaries;
 
         console.log("Swap intermediaries: ", this.intermediaries);
 

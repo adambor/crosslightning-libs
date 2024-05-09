@@ -87,7 +87,12 @@ export async function streamingFetchPromise<T extends RequestSchema>(url: string
             }
         }
 
-        await Promise.all(promises);
+        try {
+            await Promise.all(promises);
+        } catch (e) {
+            e._inputPromiseError = true;
+            throw e;
+        }
 
         if(signal!=null) signal.throwIfAborted();
 

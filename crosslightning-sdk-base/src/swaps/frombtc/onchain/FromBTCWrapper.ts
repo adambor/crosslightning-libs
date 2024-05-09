@@ -2,7 +2,7 @@ import {IFromBTCWrapper} from "../IFromBTCWrapper";
 import {IWrapperStorage} from "../../../storage/IWrapperStorage";
 import {FromBTCSwap, FromBTCSwapState} from "./FromBTCSwap";
 import {ChainUtils} from "../../../btc/ChainUtils";
-import {ClientSwapContract} from "../../ClientSwapContract";
+import {AmountData, ClientSwapContract} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {
     ChainEvents,
@@ -18,6 +18,13 @@ import {
 } from "crosslightning-base";
 import {tryWithRetries} from "../../../utils/RetryUtils";
 import * as EventEmitter from "events";
+import {Intermediary} from "../../../intermediaries/Intermediary";
+import {ToBTCOptions} from "../../tobtc/onchain/ToBTCWrapper";
+
+export type FromBTCOptions = {
+    feeSafetyFactor?: BN,
+    blockSafetyFactor?: number
+};
 
 export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
@@ -40,49 +47,55 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
     /**
      * Returns a newly created swap, receiving 'amount' on chain
      *
-     * @param amount            Amount you wish to receive in base units (satoshis)
-     * @param url               Intermediary/Counterparty swap service url
-     * @param requiredToken     Token that we want to receive
-     * @param requiredKey       Required key of the Intermediary
-     * @param requiredBaseFee   Desired base fee reported by the swap intermediary
-     * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
-     * @param exactOut          Whether to create an exact out swap instead of exact in
-     * @param additionalParams  Additional parameters sent to the LP when creating the swap
+     * @param amountData            Amount of token & amount to swap
+     * @param lps                   LPs (liquidity providers) to get the quotes from
+     * @param options               Quote options
+     * @param additionalParams      Additional parameters sent to the LP when creating the swap
+     * @param abortSignal           Abort signal for aborting the process
      */
-    async create(
-        amount: BN,
-        url: string,
-        requiredToken?: TokenAddress,
-        requiredKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN,
-        exactOut?: boolean,
-        additionalParams?: Record<string, any>
-    ): Promise<FromBTCSwap<T>> {
+    create(
+        amountData: AmountData,
+        lps: Intermediary[],
+        options?: FromBTCOptions,
+        additionalParams?: Record<string, any>,
+        abortSignal?: AbortSignal
+    ): {
+        quote: Promise<FromBTCSwap<T>>,
+        intermediary: Intermediary
+    }[] {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const result = await this.contract.receiveOnchain(amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, null, null, exactOut, additionalParams);
-
-        const swap = new FromBTCSwap(
-            this,
-            result.address,
-            result.amount,
-            url,
-            result.data,
-            result.swapFee,
-            result.prefix,
-            result.timeout,
-            result.signature,
-            result.feeRate,
-            result.expiry,
-            result.pricingInfo
+        const resultPromises = this.contract.receiveOnchain(
+            amountData,
+            lps,
+            options,
+            additionalParams,
+            abortSignal
         );
 
-        await swap.save();
-        this.swapData[result.data.getHash()] = swap;
+        return resultPromises.map(data => {
+            return {
+                quote: data.response.then(response => new FromBTCSwap(
+                    this,
+                    response.address,
+                    response.amount,
+                    data.intermediary.url+"/frombtc",
+                    response.data,
+                    response.fees.swapFee,
+                    response.authorization.prefix,
+                    response.authorization.timeout,
+                    response.authorization.signature,
+                    response.authorization.feeRate,
+                    response.authorization.expiry,
+                    response.pricingInfo
+                )),
+                intermediary: data.intermediary
+            }
+        });
 
-        return swap;
+        // await swap.save();
+        // this.swapData[result.data.getHash()] = swap;
 
     }
 

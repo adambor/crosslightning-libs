@@ -157,8 +157,10 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
         if(this.lnurl!=null && !this.prPosted) {
             this.callbackPromise = this.wrapper.contract.postInvoiceToLNURLWithdraw(this.pr, this.lnurlK1, this.lnurlCallback);
             this.prPosted = true;
-            await this.save();
         }
+
+        this.wrapper.swapData[this.getPaymentHash().toString("hex")] = this;
+        await this.save();
 
         let existingCallbackPromise;
 
@@ -635,10 +637,18 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T> {
     }
 
     getAddress(): string {
+        if(this.wrapper.swapData[this.getPaymentHash().toString("hex")]==null && this.state==FromBTCLNSwapState.PR_CREATED) {
+            this.wrapper.swapData[this.getPaymentHash().toString("hex")] = this;
+            this.save().catch(e => console.error(e));
+        }
         return this.pr;
     }
 
     getQrData(): string {
+        if(this.wrapper.swapData[this.getPaymentHash().toString("hex")]==null && this.state==FromBTCLNSwapState.PR_CREATED) {
+            this.wrapper.swapData[this.getPaymentHash().toString("hex")] = this;
+            this.save().catch(e => console.error(e));
+        }
         return "lightning:"+this.pr.toUpperCase();
     }
 

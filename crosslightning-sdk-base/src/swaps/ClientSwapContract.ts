@@ -29,6 +29,12 @@ import {
     verifySchema
 } from "../utils/paramcoders/SchemaVerifier";
 import {RequestBody, streamingFetchWithTimeoutPromise} from "../utils/paramcoders/client/StreamingFetchPromise";
+import {ToBTCOptions} from "./tobtc/onchain/ToBTCWrapper";
+import {Intermediary} from "../intermediaries/Intermediary";
+import {SwapType} from "./SwapType";
+import {FromBTCOptions} from "./frombtc/onchain/FromBTCWrapper";
+import {FromBTCLNOptions} from "./frombtc/ln/FromBTCLNWrapper";
+import {ToBTCLNOptions} from "./tobtc/ln/ToBTCLNWrapper";
 
 export class PaymentAuthError extends Error {
 
@@ -101,6 +107,85 @@ export type LNURLWithdraw= {
     min: BN,
     max: BN,
     params: LNURLWithdrawParamsWithUrl
+}
+
+export type AmountData = {
+    amount: BN,
+    token: TokenAddress,
+    exactIn?: boolean
+}
+
+export type ToBTCResponse<T> = {
+    amount: BN,
+    data: T,
+    fees: {
+        networkFee: BN,
+        swapFee: BN,
+        totalFee: BN
+    },
+    authorization: {
+        prefix: string,
+        timeout: string,
+        signature: string,
+        expiry: number,
+        feeRate?: any
+    }
+    pricingInfo: PriceInfoType
+};
+
+export type FromBTCResponse<T> = {
+    amount: BN,
+    data: T,
+    address: string,
+    fees: {
+        swapFee: BN
+    }
+    authorization: {
+        prefix: string,
+        timeout: string,
+        signature: string,
+        expiry: number,
+        feeRate?: any
+    },
+    pricingInfo: PriceInfoType
+}
+
+export type FromBTCLNResponse<T> = {
+    amount: BN,
+    secret: Buffer,
+    pr: string,
+    fees: {
+        swapFee: BN,
+        securityDeposit: BN,
+    },
+    authorization: {
+        feeRate?: any
+    },
+    pricingInfo: PriceInfoType,
+};
+
+export type ToBTCLNResponse<T> = {
+    confidence: string,
+    routingFeeSats: BN,
+    data: T,
+    fees: {
+        swapFee: BN,
+        networkFee: BN,
+        totalFee: BN
+    },
+    authorization: {
+        prefix: string,
+        timeout: string,
+        signature: string,
+        expiry: number,
+        feeRate?: any
+    },
+    pricingInfo: PriceInfoType
+};
+
+export type ToBTCLNLNURLResponse<T> = ToBTCLNResponse<T> & {
+    invoice: string,
+    successAction: LNURLPaySuccessAction
 }
 
 export const MAIL_REGEX = /(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|"(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21\x23-\x5b\x5d-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])*")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\[(?:(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9]))\.){3}(?:(2(5[0-5]|[0-4][0-9])|1[0-9][0-9]|[1-9]?[0-9])|[a-z0-9-]*[a-z0-9]:(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21-\x5a\x53-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])+)\])/;
@@ -280,7 +365,7 @@ export class ClientSwapContract<T extends SwapData> {
                 jsonBody,
                 preFetchSignatureVerificationData: _preFetchSignatureVerificationData
             }
-        }, null, null, signal);
+        }, null, (e) => e._inputPromiseError, signal);
 
         if(response.status!==200) {
             let resp: string;
@@ -480,31 +565,17 @@ export class ClientSwapContract<T extends SwapData> {
         return null;
     }
 
-    async payOnchain(
+    payOnchain(
         address: string,
-        amountOrTokens: BN,
-        confirmationTarget: number,
-        confirmations: number,
-        url: string,
-        requiredToken?: TokenAddress,
-        requiredClaimerKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN,
-        exactIn?: boolean,
-        additionalParams?: Record<string, any>
-    ): Promise<{
-        amount: BN,
-        networkFee: BN,
-        swapFee: BN,
-        totalFee: BN,
-        data: T,
-        prefix: string,
-        timeout: string,
-        signature: string,
-        expiry: number,
-        pricingInfo: PriceInfoType,
-        feeRate?: any
-    }> {
+        amountData: AmountData,
+        lps: Intermediary[],
+        options: ToBTCOptions,
+        additionalParams?: Record<string, any>,
+        abortSignal?: AbortSignal
+    ): {
+        response: Promise<ToBTCResponse<T>>,
+        intermediary: Intermediary
+    }[] {
         const firstPart = new BN(Math.floor((Date.now()/1000)) - 700000000);
 
         const nonceBuffer = Buffer.concat([
@@ -524,146 +595,152 @@ export class ClientSwapContract<T extends SwapData> {
         let hash: string;
         let amount: BN;
 
-        if(!exactIn) {
-            amount = amountOrTokens;
+        if(!amountData.exactIn) {
+            amount = amountData.amount;
 
             hash = this.swapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
 
             console.log("Generated hash: ", hash);
-
-            //This shall never happen with the provided entropy
-            // const payStatus = await tryWithRetries(() => this.swapContract.getPaymentHashStatus(hash));
-            //
-            // if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
-            //     throw new UserError("Invoice already being paid for or paid");
-            // }
         }
 
-        const abortController = new AbortController();
+        const _abortController = new AbortController();
+        if(abortSignal!=null) abortSignal.onabort = () => _abortController.abort(abortSignal.reason);
 
-        const pricePreFetchPromise = this.swapPrice.preFetchPrice==null || requiredToken==null ? null : this.swapPrice.preFetchPrice(requiredToken, abortController.signal).catch(e => {
+        const pricePreFetchPromise = this.swapPrice.preFetchPrice==null || amountData.token==null ? null : this.swapPrice.preFetchPrice(amountData.token, _abortController.signal).catch(e => {
             console.error(e);
             return null;
         });
 
-        const feeRatePromise: Promise<any> = this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
-            ? null
-            : tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, hash));
+        const feeRatePromise: Promise<any> = tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), null, amountData.token, hash), null, null, _abortController.signal);
 
-        const {parsedData, preFetchSignatureVerificationData} = await this.postWithRetries(url+"/payInvoice", {
-            ...additionalParams,
-            address,
-            amount: amountOrTokens.toString(10),
-            confirmationTarget,
-            confirmations,
-            nonce: nonce.toString(10),
-            token: requiredToken==null ? null : requiredToken.toString(),
-            offerer: this.swapContract.getAddress(),
-            exactIn,
-            feeRate: feeRatePromise==null ? null : feeRatePromise.then(val => val==null ? null : val.toString())
-        }, {
-            amount: FieldTypeEnum.BN,
-            address: FieldTypeEnum.String,
-            satsPervByte: FieldTypeEnum.BN,
-            networkFee: FieldTypeEnum.BN,
-            swapFee: FieldTypeEnum.BN,
-            totalFee: FieldTypeEnum.BN,
-            total: FieldTypeEnum.BN,
-            minRequiredExpiry: FieldTypeEnum.BN,
+        return lps.map(lp => {
+            return {
+                intermediary: lp,
+                response: (async () => {
+                    const abortController = new AbortController();
+                    _abortController.signal.addEventListener("abort", () => abortController.abort(_abortController.signal.reason));
 
-            data: FieldTypeEnum.Any,
+                    const {parsedData, preFetchSignatureVerificationData} = await this.postWithRetries(lp.url+"/tobtc/payInvoice", {
+                        ...additionalParams,
+                        address,
+                        amount: amountData.amount.toString(10),
+                        confirmationTarget: options.confirmationTarget,
+                        confirmations: options.confirmations,
+                        nonce: nonce.toString(10),
+                        token: amountData.token==null ? null : amountData.token.toString(),
+                        offerer: this.swapContract.getAddress(),
+                        exactIn: amountData.exactIn,
+                        feeRate: feeRatePromise==null ? null : feeRatePromise.then(val => val==null ? null : val.toString())
+                    }, {
+                        amount: FieldTypeEnum.BN,
+                        address: FieldTypeEnum.String,
+                        satsPervByte: FieldTypeEnum.BN,
+                        networkFee: FieldTypeEnum.BN,
+                        swapFee: FieldTypeEnum.BN,
+                        totalFee: FieldTypeEnum.BN,
+                        total: FieldTypeEnum.BN,
+                        minRequiredExpiry: FieldTypeEnum.BN,
 
-            prefix: FieldTypeEnum.String,
-            timeout: FieldTypeEnum.String,
-            signature: FieldTypeEnum.String
-        }, abortController.signal, true).catch(e => {
-            if(!abortController.signal.aborted) abortController.abort(e);
-            throw e;
+                        data: FieldTypeEnum.Any,
+
+                        prefix: FieldTypeEnum.String,
+                        timeout: FieldTypeEnum.String,
+                        signature: FieldTypeEnum.String
+                    }, abortController.signal, true).catch(e => {
+                        if(!abortController.signal.aborted) abortController.abort(e);
+                        throw e;
+                    });
+
+                    const total: BN = parsedData.total;
+
+                    if(amountData.exactIn) {
+                        if(!total.eq(amountData.amount)) {
+                            abortController.abort();
+                            throw new IntermediaryError("Invalid total returned");
+                        }
+                        amount = parsedData.amount;
+
+                        hash = this.swapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
+
+                        console.log("Generated hash: ", hash);
+                    }
+
+                    const swapFee: BN = parsedData.swapFee;
+                    const networkFee: BN = parsedData.networkFee;
+                    const totalFee: BN = parsedData.totalFee;
+
+                    if(!totalFee.eq(swapFee.add(networkFee))){
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid totalFee returned");
+                    }
+
+                    const data: T = new this.swapDataDeserializer(parsedData.data);
+                    this.swapContract.setUsAsOfferer(data);
+
+                    const maxAllowedExpiryDelta: BN = new BN(options.confirmations+options.confirmationTarget+this.options.maxExpectedOnchainSendGracePeriodBlocks).mul(new BN(this.options.maxExpectedOnchainSendSafetyFactor)).mul(new BN(this.options.bitcoinBlocktime))
+                    const currentTimestamp: BN = new BN(Math.floor(Date.now()/1000));
+                    const maxAllowedExpiryTimestamp: BN = currentTimestamp.add(maxAllowedExpiryDelta);
+
+                    if(data.getExpiry().gt(maxAllowedExpiryTimestamp)) {
+                        console.error("Expiry time returned: "+data.getExpiry()+" maxAllowed: "+maxAllowedExpiryTimestamp);
+                        abortController.abort();
+                        throw new IntermediaryError("Expiry time returned too high!");
+                    }
+
+                    if(
+                        !data.getAmount().eq(total) ||
+                        data.getHash()!==hash ||
+                        !data.getEscrowNonce().eq(nonce) ||
+                        data.getConfirmations()!==options.confirmations ||
+                        data.getType()!==ChainSwapType.CHAIN_NONCED
+                    ) {
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid data returned");
+                    }
+
+                    if(lp.address!=null) {
+                        if(data.getClaimer()!==lp.address) {
+                            abortController.abort();
+                            throw new IntermediaryError("Invalid data returned");
+                        }
+                    }
+
+                    const [pricingInfo, _] = await Promise.all([
+                        this.verifyReturnedPrice(true, data, amount, parsedData, amountData.token, new BN(lp.services[SwapType.TO_BTC].swapBaseFee), new BN(lp.services[SwapType.TO_BTC].swapFeePPM), pricePreFetchPromise, abortController.signal),
+                        this.verifyReturnedSignature(data, parsedData, feeRatePromise, preFetchSignatureVerificationData, abortController.signal)
+                    ]).catch(e => {
+                        abortController.abort();
+                        throw e;
+                    });
+
+                    return {
+                        amount,
+                        data,
+                        fees: {
+                            networkFee: parsedData.networkFee,
+                            swapFee: parsedData.swapFee,
+                            totalFee: parsedData.totalFee
+                        },
+                        authorization: {
+                            prefix: parsedData.prefix,
+                            timeout: parsedData.timeout,
+                            signature: parsedData.signature,
+                            expiry: await tryWithRetries(() => preFetchSignatureVerificationData.then(preFetchedData => this.swapContract.getClaimInitAuthorizationExpiry(data, parsedData.timeout, parsedData.prefix, parsedData.signature, preFetchedData))),
+                            feeRate: feeRatePromise==null ? null : await feeRatePromise,
+                        },
+                        pricingInfo
+                    };
+                })()
+            }
         });
 
-        const total: BN = parsedData.total;
-
-        if(exactIn) {
-            if(!total.eq(amountOrTokens)) {
-                abortController.abort();
-                throw new IntermediaryError("Invalid total returned");
-            }
-            amount = parsedData.amount;
-
-            hash = this.swapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
-
-            console.log("Generated hash: ", hash);
-        }
-
-        const swapFee: BN = parsedData.swapFee;
-        const networkFee: BN = parsedData.networkFee;
-        const totalFee: BN = parsedData.totalFee;
-
-        if(!totalFee.eq(swapFee.add(networkFee))){
-            abortController.abort();
-            throw new IntermediaryError("Invalid totalFee returned");
-        }
-
-        const data: T = new this.swapDataDeserializer(parsedData.data);
-        this.swapContract.setUsAsOfferer(data);
-
-        const maxAllowedExpiryDelta: BN = new BN(confirmations+confirmationTarget+this.options.maxExpectedOnchainSendGracePeriodBlocks).mul(new BN(this.options.maxExpectedOnchainSendSafetyFactor)).mul(new BN(this.options.bitcoinBlocktime))
-        const currentTimestamp: BN = new BN(Math.floor(Date.now()/1000));
-        const maxAllowedExpiryTimestamp: BN = currentTimestamp.add(maxAllowedExpiryDelta);
-
-        if(data.getExpiry().gt(maxAllowedExpiryTimestamp)) {
-            console.error("Expiry time returned: "+data.getExpiry()+" maxAllowed: "+maxAllowedExpiryTimestamp);
-            abortController.abort();
-            throw new IntermediaryError("Expiry time returned too high!");
-        }
-
-        if(
-            !data.getAmount().eq(total) ||
-            data.getHash()!==hash ||
-            !data.getEscrowNonce().eq(nonce) ||
-            data.getConfirmations()!==confirmations ||
-            data.getType()!==ChainSwapType.CHAIN_NONCED
-        ) {
-            abortController.abort();
-            throw new IntermediaryError("Invalid data returned");
-        }
-
-        if(requiredClaimerKey!=null) {
-            if(data.getClaimer()!==requiredClaimerKey) {
-                abortController.abort();
-                throw new IntermediaryError("Invalid data returned");
-            }
-        }
-
-        const [pricingInfo, _] = await Promise.all([
-            this.verifyReturnedPrice(true, data, amount, parsedData, requiredToken, requiredBaseFee, requiredFeePPM, pricePreFetchPromise, abortController.signal),
-            this.verifyReturnedSignature(data, parsedData, feeRatePromise, preFetchSignatureVerificationData, abortController.signal)
-        ]).catch(e => {
-            abortController.abort();
-            throw e;
-        });
-
-        return {
-            amount,
-            networkFee: parsedData.networkFee,
-            swapFee: parsedData.swapFee,
-            totalFee: parsedData.totalFee,
-            data,
-            prefix: parsedData.prefix,
-            timeout: parsedData.timeout,
-            signature: parsedData.signature,
-
-            expiry: await tryWithRetries(() => preFetchSignatureVerificationData.then(preFetchedData => this.swapContract.getClaimInitAuthorizationExpiry(data, parsedData.timeout, parsedData.prefix, parsedData.signature, preFetchedData))),
-
-            pricingInfo,
-            feeRate: feeRatePromise==null ? null : await feeRatePromise
-        };
     }
 
     private async getAndVerifyPrFromLNURL(
         payRequest: LNURLPayParamsWithUrl,
         amount: BN,
-        comment?: string
+        comment?: string,
+        abortSignal?: AbortSignal
     ): Promise<{
         invoice: string,
         parsedPR: PaymentRequestObject & { tagsObject: TagsObject; },
@@ -680,8 +757,9 @@ export class ClientSwapContract<T extends SwapData> {
 
         const response: Response = await tryWithRetries(() => fetchWithTimeout(payRequest.callback+queryParams, {
             method: "GET",
+            signal: abortSignal,
             timeout: this.options.getRequestTimeout
-        }));
+        }), null, null, abortSignal);
 
         if(!response.ok) {
             let resp: string;
@@ -751,283 +829,304 @@ export class ClientSwapContract<T extends SwapData> {
 
     private async payLightningLNURLExactIn(
         payRequest: LNURLPayParamsWithUrl,
-        amount: BN,
-        comment: string,
-        expirySeconds: number,
-        maxFeePromise: Promise<BN>,
-        url: string,
-        requiredToken?: TokenAddress,
-        requiredClaimerKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN,
-        preFetchedPrice?: Promise<BN>,
-        additionalParams?: Record<string, any>
+        amountData: AmountData,
+        lps: Intermediary[],
+        options: ToBTCLNOptions & {comment: string},
+        preFetches?: {
+            feeRatePromise?: Promise<any>,
+            pricePreFetchPromise?: Promise<BN>,
+            preFetchSignatureVerificationData?: Promise<any>,
+            maxFeePromise?: Promise<BN>,
+            payStatusPromise?: Promise<SwapCommitStatus>
+        },
+        additionalParams?: Record<string, any>,
+        abortSignal?: AbortSignal
     ): Promise<{
-        confidence: string,
-        maxFee: BN,
-        swapFee: BN,
+        response: Promise<ToBTCLNLNURLResponse<T>>,
+        intermediary: Intermediary
+    }[]> {
+        if(!amountData.exactIn) throw new Error("Must be exactIn!");
+        if(options.expiryTimestamp==null) options.expiryTimestamp = new BN(Math.floor(Date.now()/1000)+options.expirySeconds);
 
-        routingFeeSats: BN,
+        const _abortController = new AbortController();
+        if(abortSignal!=null) abortSignal.addEventListener("abort", () => _abortController.abort(abortSignal.reason));
 
-        data: T,
+        const dummyInvoicePromise = this.getAndVerifyPrFromLNURL(payRequest, new BN(payRequest.minSendable).div(new BN(1000)), null, _abortController.signal);
 
-        prefix: string,
-        timeout: string,
-        signature: string,
-        nonce: number,
+        //Pre-fetch fee rate
+        if(preFetches.feeRatePromise==null) preFetches.feeRatePromise = tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), null, amountData.token, null), null, null, _abortController.signal);
+        preFetches.feeRatePromise.catch(e => {
+            _abortController.abort(e);
+        });
 
-        invoice: string,
-        successAction: LNURLPaySuccessAction,
+        if(preFetches.maxFeePromise!=null) preFetches.maxFeePromise.catch(e => {
+            _abortController.abort(e);
+        });
 
-        expiry: number,
+        const {invoice: dummyInvoice, parsedPR: parsedDummyPR} = await dummyInvoicePromise.catch(e => {
+            _abortController.abort(e);
+            throw e;
+        });
 
-        pricingInfo: PriceInfoType,
-        feeRate?: any
-    }> {
+        //Get max fee from the promise
+        if(preFetches.maxFeePromise!=null) options.maxFee = await preFetches.maxFeePromise;
 
-        const feeRatePromise = this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
-            ? null
-            : tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, null), null, null);
+        return lps.map(lp => {
+            return {
+                intermediary: lp,
+                response: (async () => {
+                    const lpPreFetches = {...preFetches};
 
-        const {invoice: dummyInvoice, parsedPR: parsedDummyPR} = await this.getAndVerifyPrFromLNURL(payRequest, new BN(payRequest.minSendable).div(new BN(1000)));
+                    const abortController = new AbortController();
+                    _abortController.signal.addEventListener("abort", () => abortController.abort(_abortController.signal.reason));
 
-        const expiryTimestamp = new BN(Math.floor(Date.now()/1000)+expirySeconds);
+                    const responseInitial: Response = await tryWithRetries(() => fetchWithTimeout(lp.url+"/tobtcln/payInvoice", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            ...additionalParams,
+                            pr: dummyInvoice,
+                            maxFee: options.maxFee.toString(),
+                            expiryTimestamp: options.expiryTimestamp.toString(10),
+                            token: amountData.token==null ? null : amountData.token.toString(),
+                            offerer: this.swapContract.getAddress(),
+                            exactIn: true,
+                            amount: amountData.amount.toString(10)
+                        }),
+                        signal: abortController.signal,
+                        headers: {'Content-Type': 'application/json'},
+                        timeout: this.options.postRequestTimeout
+                    }), null, null, abortController.signal);
 
-        const maxFee = await maxFeePromise;
+                    if(responseInitial.status!==200) {
+                        let resp: string;
+                        try {
+                            resp = await responseInitial.text();
+                        } catch (e) {
+                            throw new RequestError(responseInitial.statusText, responseInitial.status);
+                        }
+                        throw RequestError.parse(resp, responseInitial.status);
+                    }
 
-        const responseInitial: Response = await tryWithRetries(() => fetchWithTimeout(url+"/payInvoice", {
-            method: "POST",
-            body: JSON.stringify({
-                ...additionalParams,
-                pr: dummyInvoice,
-                maxFee: maxFee.toString(),
-                expiryTimestamp: expiryTimestamp.toString(10),
-                token: requiredToken==null ? null : requiredToken.toString(),
-                offerer: this.swapContract.getAddress(),
-                exactIn: true,
-                amount: amount.toString(10)
-            }),
-            headers: {'Content-Type': 'application/json'},
-            timeout: this.options.postRequestTimeout
-        }), null, null);
+                    const jsonBody = await responseInitial.json();
 
-        if(responseInitial.status!==200) {
-            let resp: string;
-            try {
-                resp = await responseInitial.text();
-            } catch (e) {
-                throw new RequestError(responseInitial.statusText, responseInitial.status);
+                    if(jsonBody.code!==20000) {
+                        throw RequestError.parse(JSON.stringify(jsonBody), 400);
+                    }
+
+                    if(jsonBody.data.reqId==null) {
+                        throw new IntermediaryError("Invalid reqId returned");
+                    }
+
+                    if(jsonBody.data.amount==null) {
+                        throw new IntermediaryError("Invalid amount returned");
+                    }
+
+                    const amountSats = new BN(jsonBody.data.amount);
+
+                    if(amountSats.isZero() || amountSats.isNeg()) {
+                        throw new IntermediaryError("Invalid amount returned (zero or negative)");
+                    }
+
+                    const min = new BN(payRequest.minSendable).div(new BN(1000));
+                    const max = new BN(payRequest.maxSendable).div(new BN(1000));
+
+                    if(amountSats.lt(min)) {
+                        throw new UserError("Amount less than minimum");
+                    }
+
+                    if(amountSats.gt(max)) {
+                        throw new UserError("Amount more than maximum");
+                    }
+
+                    options.reqId = jsonBody.data.reqId;
+
+                    if(lpPreFetches.preFetchSignatureVerificationData==null && jsonBody.signDataPrefetch!=null) {
+                        if((this.swapContract as any).preFetchForInitSignatureVerification!=null) {
+                            lpPreFetches.preFetchSignatureVerificationData = (this.swapContract as any).preFetchForInitSignatureVerification(jsonBody.signDataPrefetch).catch(e => {
+                                console.error(e);
+                                return null;
+                            });
+                        }
+                    }
+
+                    const {invoice, successAction} = await this.getAndVerifyPrFromLNURL(payRequest, amountSats, options.comment, abortController.signal);
+
+                    const resp = (await this.payLightning(
+                        invoice,
+                        amountData,
+                        [lp],
+                        options,
+                        lpPreFetches,
+                        additionalParams,
+                        abortController.signal
+                    )[0].response) as ToBTCLNLNURLResponse<T>;
+
+                    resp.invoice = invoice;
+                    resp.successAction = successAction;
+
+                    return resp;
+                })()
             }
-            throw RequestError.parse(resp, responseInitial.status);
-        }
-
-        const jsonBody = await responseInitial.json();
-
-        if(jsonBody.code!==20000) {
-            throw RequestError.parse(JSON.stringify(jsonBody), 400);
-        }
-
-        if(jsonBody.data.reqId==null) {
-            throw new IntermediaryError("Invalid reqId returned");
-        }
-
-        if(jsonBody.data.amount==null) {
-            throw new IntermediaryError("Invalid amount returned");
-        }
-
-        const amountSats = new BN(jsonBody.data.amount);
-
-        if(amountSats.isZero() || amountSats.isNeg()) {
-            throw new IntermediaryError("Invalid amount returned (zero or negative)");
-        }
-
-        const min = new BN(payRequest.minSendable).div(new BN(1000));
-        const max = new BN(payRequest.maxSendable).div(new BN(1000));
-
-        if(amountSats.lt(min)) {
-            throw new UserError("Amount less than minimum");
-        }
-
-        if(amountSats.gt(max)) {
-            throw new UserError("Amount more than maximum");
-        }
-
-        let preFetchSignatureVerificationData: Promise<any>;
-        if(jsonBody.signDataPrefetch!=null) {
-            if((this.swapContract as any).preFetchForInitSignatureVerification!=null) {
-                preFetchSignatureVerificationData = (this.swapContract as any).preFetchForInitSignatureVerification(jsonBody.signDataPrefetch).catch(e => {
-                    console.error(e);
-                    return null;
-                });
-            }
-        }
-
-        const {invoice, successAction} = await this.getAndVerifyPrFromLNURL(payRequest, amountSats, comment);
-
-        const resp: any = await this.payLightning(
-            invoice,
-            expirySeconds,
-            maxFee,
-            url,
-            requiredToken,
-            requiredClaimerKey,
-            requiredBaseFee,
-            requiredFeePPM,
-            true,
-            jsonBody.data.reqId,
-            amount,
-            expiryTimestamp,
-            feeRatePromise,
-            preFetchedPrice,
-            preFetchSignatureVerificationData,
-            additionalParams
-        );
-
-        resp.invoice = invoice;
-        resp.successAction = successAction;
-
-        return resp;
+        });
 
     }
 
     async payLightningLNURL(
         lnurl: string | LNURLPayParamsWithUrl,
-        amount: BN,
-        comment: string,
-        expirySeconds: number,
-        maxFee: Promise<BN>,
-        url: string,
-        requiredToken?: TokenAddress,
-        requiredClaimerKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN,
-        preFetchedPrice?: Promise<BN>,
-        exactIn?: boolean,
-        additionalParams?: Record<string, any>
+        amountData: AmountData,
+        lps: Intermediary[],
+        options: ToBTCLNOptions & {comment: string},
+        _preFetches?: {
+            pricePreFetchPromise?: Promise<BN>,
+            maxFeePromise?: Promise<BN>
+        },
+        additionalParams?: Record<string, any>,
+        abortSignal?: AbortSignal
     ): Promise<{
-        confidence: string,
-        maxFee: BN,
-        swapFee: BN,
+        response: Promise<ToBTCLNLNURLResponse<T>>,
+        intermediary: Intermediary
+    }[]> {
 
-        routingFeeSats: BN,
+        const _abortController = new AbortController();
+        if(abortSignal!=null) abortSignal.addEventListener("abort", () => _abortController.abort(abortSignal.reason));
 
-        data: T,
+        const preFetches: {
+            feeRatePromise?: Promise<any>,
+            pricePreFetchPromise?: Promise<BN>,
+            preFetchSignatureVerificationData?: Promise<any>,
+            maxFeePromise?: Promise<BN>,
+            payStatusPromise?: Promise<SwapCommitStatus>
+        } = _preFetches;
 
-        prefix: string,
-        timeout: string,
-        signature: string,
-        nonce: number,
+        //Pre-fetch fee rate
+        preFetches.feeRatePromise = tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), null, amountData.token, null), null, null, _abortController.signal).catch(e => {
+            _abortController.abort(e);
+        });
 
-        invoice: string,
-        successAction: LNURLPaySuccessAction,
+        //Setup error handler for maxFeePromise
+        if(preFetches.maxFeePromise!=null) preFetches.maxFeePromise.catch(e => {
+            _abortController.abort(e);
+        });
 
-        expiry: number,
-
-        pricingInfo: PriceInfoType,
-        feeRate?: any
-    }> {
+        //Setup error handler for pricePrefetchPromise, this is a soft error, since price can be fetched again
+        if(preFetches.pricePreFetchPromise!=null) preFetches.pricePreFetchPromise.catch(e => {
+            console.error(e);
+        });
 
         let payRequest: LNURLPayParamsWithUrl;
         if(typeof(lnurl)==="string") {
-            let res: any = await this.getLNURL(lnurl);
+            let res: any = await this.getLNURL(lnurl).catch(e => {
+                _abortController.abort(e);
+                throw e;
+            });
+            _abortController.signal.throwIfAborted();
             if(res==null) {
-                throw new UserError("Invalid LNURL");
+                const error = new UserError("Invalid LNURL");
+                _abortController.abort(error);
+                throw error;
             }
             if(res.tag!=="payRequest") {
-                throw new UserError("Not a lnurl-pay");
+                const error = new UserError("Not a lnurl-pay");
+                _abortController.abort(error);
+                throw error;
             }
             payRequest = res;
         } else {
             payRequest = lnurl;
         }
 
-        if(comment!=null) {
-            if(payRequest.commentAllowed==null || comment.length>payRequest.commentAllowed) {
-                throw new UserError("Comment not allowed or too long");
+        if(options.comment!=null) {
+            if(payRequest.commentAllowed==null || options.comment.length>payRequest.commentAllowed) {
+                const error = new UserError("Comment not allowed or too long");
+                _abortController.abort(error);
+                throw error;
             }
         }
 
-        if(exactIn) {
-            return await this.payLightningLNURLExactIn(payRequest, amount, comment, expirySeconds, maxFee, url, requiredToken, requiredClaimerKey, requiredBaseFee, requiredFeePPM, preFetchedPrice, additionalParams);
+        if(amountData.exactIn) {
+            return await this.payLightningLNURLExactIn(
+                payRequest,
+                amountData,
+                lps,
+                options,
+                preFetches,
+                additionalParams,
+                _abortController.signal
+            );
         }
 
         const min = new BN(payRequest.minSendable).div(new BN(1000));
         const max = new BN(payRequest.maxSendable).div(new BN(1000));
 
-        if(amount.lt(min)) {
-            throw new UserError("Amount less than minimum");
+        if(amountData.amount.lt(min)) {
+            const error = new UserError("Amount less than minimum");
+            _abortController.abort(error);
+            throw error;
         }
 
-        if(amount.gt(max)) {
-            throw new UserError("Amount more than maximum");
+        if(amountData.amount.gt(max)) {
+            const error = new UserError("Amount more than maximum");
+            _abortController.abort(error);
+            throw error;
         }
 
-        const feeRatePromise = this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
-            ? null
-            : tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, null), null, null);
+        const {invoice, successAction, parsedPR} = await this.getAndVerifyPrFromLNURL(payRequest, amountData.amount, options.comment, _abortController.signal).catch(e => {
+            _abortController.abort(e);
+            throw e;
+        });
+        if(preFetches.payStatusPromise==null) preFetches.payStatusPromise = tryWithRetries(() => this.swapContract.getPaymentHashStatus(parsedPR.tagsObject.payment_hash), null, null, _abortController.signal).catch(e => {
+            _abortController.abort(e);
+        }) as Promise<SwapCommitStatus>;
 
-        const {invoice, successAction} = await this.getAndVerifyPrFromLNURL(payRequest, amount, comment);
+        if(preFetches.maxFeePromise!=null) options.maxFee = await preFetches.maxFeePromise;
 
-        const resp: any = await this.payLightning(
-            invoice,
-            expirySeconds,
-            await maxFee,
-            url,
-            requiredToken,
-            requiredClaimerKey,
-            requiredBaseFee,
-            requiredFeePPM,
-            false,
-            null,
-            null,
-            null,
-            feeRatePromise,
-            preFetchedPrice,
-            null,
-            additionalParams
-        );
+        _abortController.signal.throwIfAborted();
 
-        resp.invoice = invoice;
-        resp.successAction = successAction;
+        return lps.map(lp => {
+            const lpPreFetches = {...preFetches};
 
-        return resp;
+            return {
+                intermediary: lp,
+                response: this.payLightning(
+                    invoice,
+                    amountData,
+                    [lp],
+                    options,
+                    lpPreFetches,
+                    additionalParams,
+                    _abortController.signal
+                )[0].response.then((resp: ToBTCLNLNURLResponse<T>) => {
+                    resp.invoice = invoice;
+                    resp.successAction = successAction;
+                    return resp;
+                })
+            }
+        });
+
     }
 
-    async payLightning(
+    payLightning(
         bolt11PayReq: string,
-        expirySeconds: number,
-        maxFee: BN,
-        url: string,
-        requiredToken?: TokenAddress,
-        requiredClaimerKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN,
-        exactIn?: boolean,
-        reqId?: string,
-        requiredTotal?: BN,
-        expiryTimestamp?: BN,
-        feeRatePromise?: Promise<any>,
-        pricePreFetchPromise?: Promise<BN>,
-        preFetchSignatureVerificationData?: Promise<any>,
-        additionalParams?: Record<string, any>
-    ): Promise<{
-        confidence: string,
-        maxFee: BN,
-        swapFee: BN,
+        amountData: {
+            token: TokenAddress,
+            exactIn?: boolean,
+        },
+        lps: Intermediary[],
+        options: ToBTCLNOptions,
+        preFetches?: {
+            feeRatePromise?: Promise<any>,
+            pricePreFetchPromise?: Promise<BN>,
+            preFetchSignatureVerificationData?: Promise<any>,
+            payStatusPromise?: Promise<SwapCommitStatus>
+        },
+        additionalParams?: Record<string, any>,
+        abortSignal?: AbortSignal
+    ): {
+        response: Promise<ToBTCLNResponse<T>>,
+        intermediary: Intermediary
+    }[] {
+        if(preFetches==null) preFetches = {};
 
-        routingFeeSats: BN,
-
-        data: T,
-
-        prefix: string,
-        timeout: string,
-        signature: string,
-
-        expiry: number,
-
-        pricingInfo: PriceInfoType,
-        feeRate?: any
-    }> {
         const parsedPR = bolt11.decode(bolt11PayReq);
 
         if(parsedPR.satoshis==null) {
@@ -1035,155 +1134,162 @@ export class ClientSwapContract<T extends SwapData> {
         }
 
         const sats: BN = new BN(parsedPR.satoshis);
-        if(expiryTimestamp==null) expiryTimestamp = new BN(Math.floor(Date.now()/1000)+expirySeconds);
+        if(options.expiryTimestamp==null) options.expiryTimestamp = new BN(Math.floor(Date.now()/1000)+options.expirySeconds);
 
-        const abortController = new AbortController();
+        const _abortController = new AbortController();
+        if(abortSignal!=null) abortSignal.onabort = () => _abortController.abort(abortSignal.reason);
 
-        if(pricePreFetchPromise==null) pricePreFetchPromise = this.swapPrice.preFetchPrice==null || requiredToken==null ? null : this.swapPrice.preFetchPrice(requiredToken, abortController.signal);
-        pricePreFetchPromise = pricePreFetchPromise.catch(e => {
+        //Pre-fetches swap price
+        if(preFetches.pricePreFetchPromise==null) preFetches.pricePreFetchPromise = this.swapPrice.preFetchPrice==null || amountData.token==null ? null : this.swapPrice.preFetchPrice(amountData.token, _abortController.signal);
+        preFetches.pricePreFetchPromise = preFetches.pricePreFetchPromise.catch(e => {
             console.error(e);
             return null;
         });
 
-        const [_, parsedData] = await Promise.all([
-            (async () => {
-                const payStatus = await tryWithRetries(() => this.swapContract.getPaymentHashStatus(parsedPR.tagsObject.payment_hash), null, null, abortController.signal);
-
-                if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
-                    throw new UserError("Invoice already being paid for or paid");
-                }
-            })(),
-            (async () => {
-                if(feeRatePromise==null) feeRatePromise = this.swapContract.getInitPayInFeeRate==null || requiredClaimerKey==null || requiredToken==null
-                    ? null
-                    : tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), requiredClaimerKey, requiredToken, parsedPR.tagsObject.payment_hash), null, null, abortController.signal);
-
-                const {parsedData, preFetchSignatureVerificationData: _preFetchSignatureVerificationData} = await this.postWithRetries(url+(exactIn ? "/payInvoiceExactIn" : "/payInvoice"), {
-                    ...additionalParams,
-                    reqId,
-                    pr: bolt11PayReq,
-                    maxFee: maxFee.toString(),
-                    expiryTimestamp: expiryTimestamp.toString(10),
-                    token: requiredToken==null ? null : requiredToken.toString(),
-                    offerer: this.swapContract.getAddress(),
-                    amount: null,
-                    exactIn: !!exactIn,
-                    feeRate: feeRatePromise==null ? null : feeRatePromise.then(val => val==null ? null : val.toString())
-                }, {
-                    maxFee: FieldTypeEnum.BN,
-                    swapFee: FieldTypeEnum.BN,
-                    total: FieldTypeEnum.BN,
-                    confidence: FieldTypeEnum.Number,
-                    address: FieldTypeEnum.String,
-
-                    routingFeeSats: FieldTypeEnum.BN,
-
-                    data: FieldTypeEnum.Any,
-
-                    prefix: FieldTypeEnum.String,
-                    timeout: FieldTypeEnum.String,
-                    signature: FieldTypeEnum.String
-                }, abortController.signal, preFetchSignatureVerificationData==null);
-
-                if(_preFetchSignatureVerificationData!=null) preFetchSignatureVerificationData = _preFetchSignatureVerificationData;
-
-                return parsedData;
-            })()
-        ]).catch(e => {
-            abortController.abort(e);
-            throw e;
+        //Check if invoice with the same hash was already processed
+        if(preFetches.payStatusPromise==null) preFetches.payStatusPromise = tryWithRetries(() => this.swapContract.getPaymentHashStatus(parsedPR.tagsObject.payment_hash), null, null, _abortController.signal);
+        preFetches.payStatusPromise.then(payStatus => {
+            if(payStatus!==SwapCommitStatus.NOT_COMMITED) {
+                throw new UserError("Invoice already being paid for or paid");
+            }
+        }).catch(e => {
+            _abortController.abort(e);
         });
 
-        const routingFeeSats = parsedData.routingFeeSats;
+        //Pre-fetch fee rate, this is instantly consumed by the this.postWithRetries, so doesn't require error handler
+        if(preFetches.feeRatePromise==null) preFetches.feeRatePromise = tryWithRetries(() => this.swapContract.getInitPayInFeeRate(this.swapContract.getAddress(), null, amountData.token, parsedPR.tagsObject.payment_hash), null, null, _abortController.signal);
 
-        if(routingFeeSats.gt(maxFee)) {
-            throw new IntermediaryError("Invalid max fee sats returned");
-        }
+        return lps.map(lp => {
+            return {
+                intermediary: lp,
+                response: (async () => {
+                    const abortController = new AbortController();
+                    _abortController.signal.addEventListener("abort", () => abortController.abort(_abortController.signal.reason));
 
-        const maxFeeInToken = parsedData.maxFee;
-        const swapFee = parsedData.swapFee;
+                    const lpPreFetches = {...preFetches};
 
-        const total = parsedData.total;
+                    const {parsedData, preFetchSignatureVerificationData: _preFetchSignatureVerificationData} = await this.postWithRetries(lp.url+"/tobtcln"+(amountData.exactIn ? "/payInvoiceExactIn" : "/payInvoice"), {
+                        ...additionalParams,
+                        reqId: options.reqId,
+                        pr: bolt11PayReq,
+                        maxFee: options.maxFee.toString(),
+                        expiryTimestamp: options.expiryTimestamp.toString(10),
+                        token: amountData.token==null ? null : amountData.token.toString(),
+                        offerer: this.swapContract.getAddress(),
+                        amount: null,
+                        exactIn: !!amountData.exactIn,
+                        feeRate: lpPreFetches.feeRatePromise==null ? null : lpPreFetches.feeRatePromise.then(val => val==null ? null : val.toString())
+                    }, {
+                        maxFee: FieldTypeEnum.BN,
+                        swapFee: FieldTypeEnum.BN,
+                        total: FieldTypeEnum.BN,
+                        confidence: FieldTypeEnum.Number,
+                        address: FieldTypeEnum.String,
 
-        const data: T = new this.swapDataDeserializer(parsedData.data);
-        this.swapContract.setUsAsOfferer(data);
+                        routingFeeSats: FieldTypeEnum.BN,
 
-        console.log("Parsed data: ", data);
+                        data: FieldTypeEnum.Any,
 
-        if(requiredTotal!=null) {
-            if(!total.eq(requiredTotal)) {
-                abortController.abort();
-                throw new IntermediaryError("Invalid data returned - total amount");
+                        prefix: FieldTypeEnum.String,
+                        timeout: FieldTypeEnum.String,
+                        signature: FieldTypeEnum.String
+                    }, abortController.signal, lpPreFetches.preFetchSignatureVerificationData==null);
+
+                    if(_preFetchSignatureVerificationData!=null) lpPreFetches.preFetchSignatureVerificationData = _preFetchSignatureVerificationData;
+
+                    const routingFeeSats = parsedData.routingFeeSats;
+
+                    if(routingFeeSats.gt(options.maxFee)) {
+                        throw new IntermediaryError("Invalid max fee sats returned");
+                    }
+
+                    const maxFeeInToken = parsedData.maxFee;
+                    const swapFee = parsedData.swapFee;
+
+                    const total = parsedData.total;
+
+                    const data: T = new this.swapDataDeserializer(parsedData.data);
+                    this.swapContract.setUsAsOfferer(data);
+
+                    console.log("Parsed data: ", data);
+
+                    if(options.requiredTotal!=null) {
+                        if(!total.eq(options.requiredTotal)) {
+                            abortController.abort();
+                            throw new IntermediaryError("Invalid data returned - total amount");
+                        }
+                    }
+
+                    if(!data.getAmount().eq(total)) {
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid data returned - amount");
+                    }
+
+                    if(data.getHash()!==parsedPR.tagsObject.payment_hash) {
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid data returned - paymentHash");
+                    }
+
+                    if(!data.getEscrowNonce().eq(new BN(0))) {
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid data returned - nonce");
+                    }
+
+                    if(data.getConfirmations()!==0) {
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid data returned - confirmations");
+                    }
+
+                    if(!data.getExpiry().eq(options.expiryTimestamp)) {
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid data returned - expiry");
+                    }
+
+                    if(data.getType()!==ChainSwapType.HTLC) {
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid data returned - type");
+                    }
+
+                    if(lp.address!=null) {
+                        if(data.getClaimer()!==lp.address) {
+                            abortController.abort();
+                            throw new IntermediaryError("Invalid data returned");
+                        }
+                    }
+
+                    const [pricingInfo] = await Promise.all([
+                        this.verifyReturnedPrice(true, data, sats, {
+                            networkFee: parsedData.maxFee,
+                            swapFee: parsedData.swapFee,
+                            totalFee: parsedData.maxFee.add(parsedData.swapFee)
+                        }, amountData.token, new BN(lp.services[SwapType.TO_BTCLN].swapBaseFee), new BN(lp.services[SwapType.TO_BTCLN].swapFeePPM), lpPreFetches.pricePreFetchPromise, abortController.signal),
+                        this.verifyReturnedSignature(data, parsedData, lpPreFetches.feeRatePromise, lpPreFetches.preFetchSignatureVerificationData, abortController.signal)
+                    ]).catch(e => {
+                        abortController.abort();
+                        throw e;
+                    });
+
+                    return {
+                        confidence: parsedData.confidence.toString(),
+                        routingFeeSats,
+                        data,
+                        fees: {
+                            networkFee: maxFeeInToken,
+                            swapFee: swapFee,
+                            totalFee: swapFee.add(maxFeeInToken)
+                        },
+                        authorization: {
+                            prefix: parsedData.prefix,
+                            timeout: parsedData.timeout,
+                            signature: parsedData.signature,
+                            expiry: await tryWithRetries(() => lpPreFetches.preFetchSignatureVerificationData.then(val => this.swapContract.getClaimInitAuthorizationExpiry(data, parsedData.timeout, parsedData.prefix, parsedData.signature, val))),
+                            feeRate: lpPreFetches.feeRatePromise==null ? null : await lpPreFetches.feeRatePromise
+                        },
+                        pricingInfo
+                    };
+                })()
             }
-        }
-
-        if(!data.getAmount().eq(total)) {
-            abortController.abort();
-            throw new IntermediaryError("Invalid data returned - amount");
-        }
-
-        if(data.getHash()!==parsedPR.tagsObject.payment_hash) {
-            abortController.abort();
-            throw new IntermediaryError("Invalid data returned - paymentHash");
-        }
-
-        if(!data.getEscrowNonce().eq(new BN(0))) {
-            abortController.abort();
-            throw new IntermediaryError("Invalid data returned - nonce");
-        }
-
-        if(data.getConfirmations()!==0) {
-            abortController.abort();
-            throw new IntermediaryError("Invalid data returned - confirmations");
-        }
-
-        if(!data.getExpiry().eq(expiryTimestamp)) {
-            abortController.abort();
-            throw new IntermediaryError("Invalid data returned - expiry");
-        }
-
-        if(data.getType()!==ChainSwapType.HTLC) {
-            abortController.abort();
-            throw new IntermediaryError("Invalid data returned - type");
-        }
-
-        if(requiredClaimerKey!=null) {
-            if(data.getClaimer()!==requiredClaimerKey) {
-                abortController.abort();
-                throw new IntermediaryError("Invalid data returned");
-            }
-        }
-
-        const [pricingInfo] = await Promise.all([
-            this.verifyReturnedPrice(true, data, sats, {
-                networkFee: parsedData.maxFee,
-                swapFee: parsedData.swapFee,
-                totalFee: parsedData.maxFee.add(parsedData.swapFee)
-            }, requiredToken, requiredBaseFee, requiredFeePPM, pricePreFetchPromise, abortController.signal),
-            this.verifyReturnedSignature(data, parsedData, feeRatePromise, preFetchSignatureVerificationData, abortController.signal)
-        ]).catch(e => {
-            abortController.abort();
-            throw e;
         });
-
-        return {
-            confidence: parsedData.confidence.toString(),
-            maxFee: maxFeeInToken,
-            swapFee: swapFee,
-
-            routingFeeSats,
-
-            data,
-
-            prefix: parsedData.prefix,
-            timeout: parsedData.timeout,
-            signature: parsedData.signature,
-
-            expiry: await tryWithRetries(() => preFetchSignatureVerificationData.then(val => this.swapContract.getClaimInitAuthorizationExpiry(data, parsedData.timeout, parsedData.prefix, parsedData.signature, val))),
-
-            pricingInfo,
-            feeRate: feeRatePromise==null ? null : await feeRatePromise
-        }
     }
 
     async getRefundAuthorization(data: T, url: string): Promise<{
@@ -1311,237 +1417,243 @@ export class ClientSwapContract<T extends SwapData> {
         throw new AbortError();
     }
 
-    async receiveOnchain(
-        amountOrTokens: BN,
-        url: string,
-        requiredToken?: string,
-        requiredOffererKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN,
-        feeSafetyFactor?: BN,
-        blockSafetyFactor?: number,
-        exactOut?: boolean,
-        additionalParams?: Record<string, any>
-    ): Promise<{
-        amount: BN,
-        address: string,
-        swapFee: BN,
-        data: T,
-        prefix: string,
-        timeout: string,
-        signature: string,
-        expiry: number,
-        pricingInfo: PriceInfoType,
-        feeRate?: any
-    }> {
+    receiveOnchain(
+        amountData: AmountData,
+        lps: Intermediary[],
+        options?: FromBTCOptions,
+        additionalParams?: Record<string, any>,
+        abortSignal?: AbortSignal
+    ): {
+        response: Promise<FromBTCResponse<T>>,
+        intermediary: Intermediary
+    }[] {
+        if(options==null) options = {};
 
-        const abortController = new AbortController();
+        const _abortController = new AbortController();
+        if(abortSignal!=null) abortSignal.onabort = () => _abortController.abort(abortSignal.reason);
 
         const sequence: BN = new BN(randomBytes(8));
 
-        //Prefetch price & liquidity
-        const liquidityPromise: Promise<BN> = requiredToken==null || requiredOffererKey==null ?
-            null :
-            tryWithRetries(() => this.swapContract.getIntermediaryBalance(requiredOffererKey, requiredToken), null, null, abortController.signal).catch(e => {
-                abortController.abort(e);
-                return null;
-            });
-
-        const pricePrefetchPromise: Promise<BN> = requiredToken==null || this.swapPrice.preFetchPrice==null ? null : this.swapPrice.preFetchPrice(requiredToken, abortController.signal).catch(e => {
+        //Prefetch price
+        const pricePrefetchPromise: Promise<BN> = amountData.token==null || this.swapPrice.preFetchPrice==null ? null : this.swapPrice.preFetchPrice(amountData.token, _abortController.signal).catch(e => {
             console.error(e);
             return null;
         });
 
-        const dummySwapData = requiredOffererKey==null || requiredToken==null ? null : await this.swapContract.createSwapData(
-            ChainSwapType.CHAIN,
-            requiredOffererKey,
-            this.swapContract.getAddress(),
-            requiredToken,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            false,
-            true,
-            null,
-            null
-        );
-
-        abortController.signal.throwIfAborted();
-
-        const feeRatePromise: Promise<any> = (this.swapContract.getInitFeeRate==null || requiredOffererKey==null || requiredToken==null
-            ? Promise.resolve<any>(null)
-            : tryWithRetries<any>(() => this.swapContract.getInitFeeRate(requiredOffererKey, this.swapContract.getAddress(), requiredToken), null, null, abortController.signal));
-
-        const initData: Promise<[BN, { blockheight: number, commitHash: string, chainWork: Buffer }, number, BN]> = Promise.all([
-            tryWithRetries<BN>(() => this.btcRelay.getFeePerBlock().then(val => val.mul(feeSafetyFactor || new BN(2))), null, null, abortController.signal),
+        const initData: Promise<[BN, { blockheight: number, commitHash: string, chainWork: Buffer }, number]> = Promise.all([
+            tryWithRetries<BN>(() => this.btcRelay.getFeePerBlock().then(val => val.mul(options.feeSafetyFactor || new BN(2))), null, null, _abortController.signal),
 
             tryWithRetries<{
                 blockheight: number,
                 commitHash: string,
                 chainWork: Buffer
-            }>(() => this.btcRelay.getTipData(), null, null, abortController.signal),
+            }>(() => this.btcRelay.getTipData(), null, null, _abortController.signal),
 
-            tryWithRetries<number>(() => this.btcRpc.getTipHeight(), null, null, abortController.signal),
-
-            tryWithRetries<BN>(() => {
-                if((this.swapContract as any).getRawClaimFee!=null) {
-                    //Workaround for sol
-                    return (this.swapContract as any).getRawClaimFee(dummySwapData);
-                } else {
-                    return this.swapContract.getClaimFee(dummySwapData).then(value => value.mul(feeSafetyFactor || new BN(2)));
-                }
-            }, null, null, abortController.signal)
+            tryWithRetries<number>(() => this.btcRpc.getTipHeight(), null, null, _abortController.signal)
         ]);
 
-        blockSafetyFactor = blockSafetyFactor || 2;
-        const startTimestamp = new BN(Math.floor(Date.now()/1000));
+        const feeRatePromise: Promise<any> = tryWithRetries<any>(() => this.swapContract.getInitFeeRate(null, this.swapContract.getAddress(), amountData.token), null, null, _abortController.signal);
 
-        const {parsedData, preFetchSignatureVerificationData} = await this.postWithRetries(url+"/getAddress", {
-            ...additionalParams,
-            address: this.swapContract.getAddress(),
-            amount: amountOrTokens.toString(),
-            token: requiredToken==null ? null : requiredToken.toString(),
+        const claimFeeRatePromise: Promise<BN> = tryWithRetries<BN>(async () => {
+            const dummySwapData = await this.swapContract.createSwapData(
+                ChainSwapType.CHAIN,
+                null,
+                this.swapContract.getAddress(),
+                amountData.token,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                true,
+                null,
+                null
+            );
+            if((this.swapContract as any).getRawClaimFee!=null) {
+                //Workaround for sol
+                return await (this.swapContract as any).getRawClaimFee(dummySwapData);
+            } else {
+                return await this.swapContract.getClaimFee(dummySwapData).then(value => value.mul(options.feeSafetyFactor || new BN(2)));
+            }
+        }, null, null, _abortController.signal);
 
-            exactOut,
-            sequence: sequence.toString(10),
+        return lps.map(lp => {
+            return {
+                intermediary: lp,
+                response: (async () => {
+                    const abortController = new AbortController();
+                    _abortController.signal.addEventListener("abort", () => abortController.abort(_abortController.signal.reason));
 
-            claimerBounty: initData.then(([feePerBlock, btcRelayData, currentBtcBlock, addFee]) => {
-                const currentBtcRelayBlock = btcRelayData.blockheight;
-                const addBlock = Math.max(currentBtcBlock-currentBtcRelayBlock, 0);
-                return {
-                    feePerBlock: feePerBlock.toString(10),
-                    safetyFactor: blockSafetyFactor,
-                    startTimestamp: startTimestamp.toString(10),
-                    addBlock,
-                    addFee: addFee.toString(10)
-                };
-            }),
-            feeRate: feeRatePromise==null ? null : feeRatePromise.then(val => val==null ? null : val.toString())
-        }, {
-            amount: FieldTypeEnum.BN,
-            btcAddress: FieldTypeEnum.String,
-            address: FieldTypeEnum.String,
-            swapFee: FieldTypeEnum.BN,
-            total: FieldTypeEnum.BN,
+                    //Prefetch liquidity
+                    const liquidityPromise: Promise<BN> = amountData.token==null || lp.address==null ?
+                        null :
+                        tryWithRetries(() => this.swapContract.getIntermediaryBalance(lp.address, amountData.token), null, null, abortController.signal).catch(e => {
+                            abortController.abort(e);
+                            return null;
+                        });
 
-            data: FieldTypeEnum.Any,
+                    options.blockSafetyFactor = options.blockSafetyFactor || 2;
+                    const startTimestamp = new BN(Math.floor(Date.now()/1000));
 
-            prefix: FieldTypeEnum.String,
-            timeout: FieldTypeEnum.String,
-            signature: FieldTypeEnum.String
-        }, abortController.signal, true).catch(e => {
-            if(!abortController.signal.aborted) abortController.abort(e);
-            throw e;
+                    const {parsedData, preFetchSignatureVerificationData} = await this.postWithRetries(lp.url+"/frombtc/getAddress", {
+                        ...additionalParams,
+                        address: this.swapContract.getAddress(),
+                        amount: amountData.amount.toString(),
+                        token: amountData.token==null ? null : amountData.token.toString(),
+
+                        exactOut: !amountData.exactIn,
+                        sequence: sequence.toString(10),
+
+                        claimerBounty:
+                            Promise.all([
+                                initData,
+                                claimFeeRatePromise
+                            ]).then(([
+                                         [feePerBlock, btcRelayData, currentBtcBlock],
+                                         addFee
+                                     ]) => {
+                                const currentBtcRelayBlock = btcRelayData.blockheight;
+                                const addBlock = Math.max(currentBtcBlock-currentBtcRelayBlock, 0);
+                                return {
+                                    feePerBlock: feePerBlock.toString(10),
+                                    safetyFactor: options.blockSafetyFactor,
+                                    startTimestamp: startTimestamp.toString(10),
+                                    addBlock,
+                                    addFee: addFee.toString(10)
+                                };
+                            }),
+                        feeRate: feeRatePromise==null ? null : feeRatePromise.then(val => val==null ? null : val.toString())
+                    }, {
+                        amount: FieldTypeEnum.BN,
+                        btcAddress: FieldTypeEnum.String,
+                        address: FieldTypeEnum.String,
+                        swapFee: FieldTypeEnum.BN,
+                        total: FieldTypeEnum.BN,
+
+                        data: FieldTypeEnum.Any,
+
+                        prefix: FieldTypeEnum.String,
+                        timeout: FieldTypeEnum.String,
+                        signature: FieldTypeEnum.String
+                    }, abortController.signal, true).catch(e => {
+                        if(!abortController.signal.aborted) abortController.abort(e);
+                        throw e;
+                    });
+
+                    const addFee = await claimFeeRatePromise;
+                    const [feePerBlock, btcRelayData, currentBtcBlock] = await initData;
+                    const currentBtcRelayBlock = btcRelayData.blockheight;
+                    const addBlock = Math.max(currentBtcBlock-currentBtcRelayBlock, 0);
+
+                    const data: T = new this.swapDataDeserializer(parsedData.data);
+                    this.swapContract.setUsAsClaimer(data);
+
+                    console.log("Swap data returned: ", data);
+
+                    const tsDelta = data.getExpiry().sub(startTimestamp);
+                    const blocksDelta = tsDelta.div(new BN(this.options.bitcoinBlocktime)).mul(new BN(options.blockSafetyFactor));
+                    const totalBlock = blocksDelta.add(new BN(addBlock));
+                    const totalClaimerBounty = addFee.add(totalBlock.mul(feePerBlock));
+
+                    let amount: BN;
+                    if(!amountData.exactIn) {
+                        if(!data.getAmount().eq(amountData.amount)) {
+                            abortController.abort();
+                            throw new IntermediaryError("Invalid amount returned");
+                        }
+                        amount = parsedData.amount;
+                    } else {
+                        if(!parsedData.amount.eq(amountData.amount)) {
+                            abortController.abort();
+                            throw new IntermediaryError("Invalid amount returned");
+                        }
+                        amount = amountData.amount;
+                    }
+
+                    if(!data.getClaimerBounty().eq(totalClaimerBounty)) {
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid claimer bounty");
+                    }
+
+                    if(data.getConfirmations()>this.options.maxConfirmations) {
+                        abortController.abort();
+                        throw new IntermediaryError("Requires too many confirmations");
+                    }
+
+                    if(data.getType()!=ChainSwapType.CHAIN) {
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid type of the swap");
+                    }
+
+                    if(!data.getSequence().eq(sequence)) {
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid swap sequence");
+                    }
+
+                    //Check that we have enough time to send the TX and for it to confirm
+                    const expiry = this.getOnchainSendTimeout(data);
+                    const currentTimestamp = new BN(Math.floor(Date.now()/1000));
+
+                    if(expiry.sub(currentTimestamp).lt(new BN(this.options.minSendWindow))) {
+                        abortController.abort();
+                        throw new IntermediaryError("Send window too low");
+                    }
+
+                    const lockingScript = bitcoin.address.toOutputScript(parsedData.btcAddress, this.options.bitcoinNetwork);
+
+                    const desiredHash = this.swapContract.getHashForOnchain(lockingScript, amount, new BN(0));
+
+                    const suppliedHash = Buffer.from(data.getHash(),"hex");
+
+                    if(!desiredHash.equals(suppliedHash)) {
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid payment hash returned!");
+                    }
+
+                    if(lp.address!=null) {
+                        if(data.getOfferer()!==lp.address) {
+                            abortController.abort();
+                            throw new IntermediaryError("Invalid data returned");
+                        }
+                    }
+
+                    const swapFee = parsedData.swapFee;
+
+                    const [_, pricingInfo] = await Promise.all([
+                        //Get intermediary's liquidity
+                        (liquidityPromise || tryWithRetries(() => this.swapContract.getIntermediaryBalance(data.getOfferer(), data.getToken()), null, null, abortController.signal)).then(liquidity => {
+                            if(liquidity.lt(data.getAmount())) {
+                                throw new IntermediaryError("Intermediary doesn't have enough liquidity");
+                            }
+                        }),
+                        this.verifyReturnedPrice(false, data, amount, parsedData, amountData.token, new BN(lp.services[SwapType.FROM_BTC].swapBaseFee), new BN(lp.services[SwapType.FROM_BTC].swapFeePPM), pricePrefetchPromise, abortController.signal),
+                        this.verifyReturnedSignature(data, parsedData, feeRatePromise, preFetchSignatureVerificationData, abortController.signal)
+                    ]).catch(e => {
+                        abortController.abort(e);
+                        throw e;
+                    });
+
+                    return {
+                        amount,
+                        data,
+                        address: parsedData.btcAddress,
+                        fees: {
+                            swapFee
+                        },
+                        authorization: {
+                            prefix: parsedData.prefix,
+                            timeout: parsedData.timeout,
+                            signature: parsedData.signature,
+                            expiry: await tryWithRetries(() => preFetchSignatureVerificationData.then(val => this.swapContract.getInitAuthorizationExpiry(data, parsedData.timeout, parsedData.prefix, parsedData.signature, val))),
+                            feeRate: feeRatePromise==null ? null : await feeRatePromise
+                        },
+                        pricingInfo,
+                    };
+                })()
+            }
         });
-
-        const [feePerBlock, btcRelayData, currentBtcBlock, addFee] = await initData;
-        const currentBtcRelayBlock = btcRelayData.blockheight;
-        const addBlock = Math.max(currentBtcBlock-currentBtcRelayBlock, 0);
-
-        const data: T = new this.swapDataDeserializer(parsedData.data);
-        this.swapContract.setUsAsClaimer(data);
-
-        console.log("Swap data returned: ", data);
-
-        const tsDelta = data.getExpiry().sub(startTimestamp);
-        const blocksDelta = tsDelta.div(new BN(this.options.bitcoinBlocktime)).mul(new BN(blockSafetyFactor));
-        const totalBlock = blocksDelta.add(new BN(addBlock));
-        const totalClaimerBounty = addFee.add(totalBlock.mul(feePerBlock));
-
-        let amount: BN;
-        if(exactOut) {
-            if(!data.getAmount().eq(amountOrTokens)) {
-                abortController.abort();
-                throw new IntermediaryError("Invalid amount returned");
-            }
-            amount = parsedData.amount;
-        } else {
-            if(!parsedData.amount.eq(amountOrTokens)) {
-                abortController.abort();
-                throw new IntermediaryError("Invalid amount returned");
-            }
-            amount = amountOrTokens;
-        }
-
-        if(!data.getClaimerBounty().eq(totalClaimerBounty)) {
-            abortController.abort();
-            throw new IntermediaryError("Invalid claimer bounty");
-        }
-
-        if(data.getConfirmations()>this.options.maxConfirmations) {
-            abortController.abort();
-            throw new IntermediaryError("Requires too many confirmations");
-        }
-
-        if(data.getType()!=ChainSwapType.CHAIN) {
-            abortController.abort();
-            throw new IntermediaryError("Invalid type of the swap");
-        }
-
-        if(!data.getSequence().eq(sequence)) {
-            abortController.abort();
-            throw new IntermediaryError("Invalid swap sequence");
-        }
-
-        //Check that we have enough time to send the TX and for it to confirm
-        const expiry = this.getOnchainSendTimeout(data);
-        const currentTimestamp = new BN(Math.floor(Date.now()/1000));
-
-        if(expiry.sub(currentTimestamp).lt(new BN(this.options.minSendWindow))) {
-            abortController.abort();
-            throw new IntermediaryError("Send window too low");
-        }
-
-        const lockingScript = bitcoin.address.toOutputScript(parsedData.btcAddress, this.options.bitcoinNetwork);
-
-        const desiredHash = this.swapContract.getHashForOnchain(lockingScript, amount, new BN(0));
-
-        const suppliedHash = Buffer.from(data.getHash(),"hex");
-
-        if(!desiredHash.equals(suppliedHash)) {
-            abortController.abort();
-            throw new IntermediaryError("Invalid payment hash returned!");
-        }
-
-        if(requiredOffererKey!=null) {
-            if(data.getOfferer()!==requiredOffererKey) {
-                abortController.abort();
-                throw new IntermediaryError("Invalid data returned");
-            }
-        }
-
-        const swapFee = parsedData.swapFee;
-
-        const [_, pricingInfo] = await Promise.all([
-            //Get intermediary's liquidity
-            (liquidityPromise || tryWithRetries(() => this.swapContract.getIntermediaryBalance(data.getOfferer(), data.getToken()), null, null, abortController.signal)).then(liquidity => {
-                if(liquidity.lt(data.getAmount())) {
-                    throw new IntermediaryError("Intermediary doesn't have enough liquidity");
-                }
-            }),
-            this.verifyReturnedPrice(false, data, amount, parsedData, requiredToken, requiredBaseFee, requiredFeePPM, pricePrefetchPromise, abortController.signal),
-            this.verifyReturnedSignature(data, parsedData, feeRatePromise, preFetchSignatureVerificationData, abortController.signal)
-        ]).catch(e => {
-            abortController.abort(e);
-            throw e;
-        });
-
-        return {
-            amount,
-            address: parsedData.btcAddress,
-            swapFee,
-            data,
-            prefix: parsedData.prefix,
-            timeout: parsedData.timeout,
-            signature: parsedData.signature,
-            expiry: await tryWithRetries(() => preFetchSignatureVerificationData.then(val => this.swapContract.getInitAuthorizationExpiry(data, parsedData.timeout, parsedData.prefix, parsedData.signature, val))),
-            pricingInfo,
-            feeRate: feeRatePromise==null ? null : await feeRatePromise
-        };
-
     }
 
     async postInvoiceToLNURLWithdraw(lnpr: string, k1: string, callbackUrl: string): Promise<void> {
@@ -1622,36 +1734,49 @@ export class ClientSwapContract<T extends SwapData> {
 
     async receiveLightningLNURL(
         lnurl: string | LNURLWithdrawParamsWithUrl,
-        amount: BN,
-        url: string,
-        requiredToken?: TokenAddress,
-        requiredKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN,
-        noInstantReceive?: boolean,
-        additionalParams?: Record<string, any>
+        amountData: AmountData,
+        lps: Intermediary[],
+        additionalParams?: Record<string, any>,
+        abortSignal?: AbortSignal
     ): Promise<{
-        secret: Buffer,
-        pr: string,
-        swapFee: BN,
-        total: BN,
-        intermediaryKey: string,
-        securityDeposit: BN,
-        withdrawRequest: LNURLWithdrawParamsWithUrl,
+        response: Promise<FromBTCLNResponse<T> & {withdrawRequest: LNURLWithdrawParamsWithUrl}>,
+        intermediary: Intermediary
+    }[]> {
+        if(!amountData.exactIn) throw new Error("Exact out swaps are not supported for LNURL-withdraw");
 
-        lnurlCallbackResult?: Promise<void>,
+        const abortController = new AbortController();
+        if(abortSignal!=null) abortSignal.addEventListener("abort", () => abortController.abort(abortSignal.reason));
 
-        pricingInfo: PriceInfoType,
-        feeRate?: any
-    }> {
+        const preFetches: {
+            pricePrefetchPromise: Promise<BN>,
+            feeRatePromise: Promise<any>
+        } = {
+            pricePrefetchPromise: amountData.token==null || this.swapPrice.preFetchPrice==null ? null : this.swapPrice.preFetchPrice(amountData.token, abortController.signal).catch(e => {
+                console.error(e);
+                return null;
+            }),
+            feeRatePromise: tryWithRetries<any>(() => this.swapContract.getInitFeeRate(null, this.swapContract.getAddress(), amountData.token), null, null, abortController.signal)
+        };
+        preFetches.feeRatePromise.catch(e => {
+            abortController.abort(e);
+        });
+
         let withdrawRequest: LNURLWithdrawParamsWithUrl;
         if(typeof(lnurl)==="string") {
-            let res: any = await this.getLNURL(lnurl);
+            let res: any = await this.getLNURL(lnurl).catch(e => {
+                abortController.abort(e);
+                throw e;
+            });
+            abortController.signal.throwIfAborted();
             if(res==null) {
-                throw new UserError("Invalid LNURL");
+                const error = new UserError("Invalid LNURL");
+                abortController.abort(error);
+                throw error;
             }
             if(res.tag!=="withdrawRequest") {
-                throw new UserError("Not a lnurl-withdrawal");
+                const error = new UserError("Not a lnurl-withdrawal");
+                abortController.abort(error);
+                throw error;
             }
             withdrawRequest = res;
         } else {
@@ -1661,52 +1786,49 @@ export class ClientSwapContract<T extends SwapData> {
         const min = new BN(withdrawRequest.minWithdrawable).div(new BN(1000));
         const max = new BN(withdrawRequest.maxWithdrawable).div(new BN(1000));
 
-
-        if(amount.lt(min)) {
-            throw new UserError("Amount less than minimum");
+        if(amountData.amount.lt(min)) {
+            const error = new UserError("Amount less than minimum");
+            abortController.abort(error);
+            throw error;
         }
 
-        if(amount.gt(max)) {
-            throw new UserError("Amount more than maximum");
+        if(amountData.amount.gt(max)) {
+            const error = new UserError("Amount more than maximum");
+            abortController.abort(error);
+            throw error;
         }
 
-        const resp = await this.receiveLightning(amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, null, null, additionalParams);
+        return this.receiveLightning(amountData, lps, null, preFetches, additionalParams, abortSignal).map(data => {
+            return {
+                response: data.response.then(val => {
+                    const resp = val as FromBTCLNResponse<T> & {withdrawRequest: LNURLWithdrawParamsWithUrl};
+                    resp.withdrawRequest = withdrawRequest;
+                    return resp;
+                }),
+                intermediary: data.intermediary
+            }
+        });
 
-        if(noInstantReceive) {
-            const anyResp: any = resp;
-            anyResp.withdrawRequest = withdrawRequest;
-            return anyResp;
-        }
-
-        const anyResp: any = resp;
-        anyResp.lnurlCallbackResult = this.postInvoiceToLNURLWithdraw(resp.pr, withdrawRequest.k1, withdrawRequest.callback);
-        anyResp.withdrawRequest = withdrawRequest;
-
-        return anyResp;
     }
 
-    async receiveLightning(
-        amountOrTokens: BN,
-        url: string,
-        requiredToken?: TokenAddress,
-        requiredKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN,
-        exactOut?: boolean,
-        descriptionHash?: Buffer,
-        additionalParams?: Record<string, any>
-    ): Promise<{
-        secret: Buffer,
-        pr: string,
-        swapFee: BN,
-        total: BN,
-        intermediaryKey: string,
-        securityDeposit: BN,
-        pricingInfo: PriceInfoType,
-        feeRate?: any
-    }> {
-        if(descriptionHash!=null) {
-            if(descriptionHash.length!==32) {
+    receiveLightning(
+        amountData: AmountData,
+        lps: Intermediary[],
+        options?: FromBTCLNOptions,
+        preFetches?: {
+            pricePrefetchPromise?: Promise<BN>,
+            feeRatePromise?: Promise<any>
+        },
+        additionalParams?: Record<string, any>,
+        abortSignal?: AbortSignal
+    ): {
+        response: Promise<FromBTCLNResponse<T>>,
+        intermediary: Intermediary
+    }[] {
+        if(options==null) options = {};
+        if(preFetches==null) preFetches = {};
+        if(options.descriptionHash!=null) {
+            if(options.descriptionHash.length!==32) {
                 throw new UserError("Invalid description hash length");
             }
         }
@@ -1715,110 +1837,133 @@ export class ClientSwapContract<T extends SwapData> {
 
         const paymentHash = createHash("sha256").update(secret).digest();
 
-        const abortController = new AbortController();
+        const _abortController = new AbortController();
+        if(abortSignal!=null) abortSignal.onabort = () => _abortController.abort(abortSignal.reason);
 
-        const liquidityPromise: Promise<BN> = requiredToken==null || requiredKey==null ?
-            null :
-            tryWithRetries(() => this.swapContract.getIntermediaryBalance(requiredKey, requiredToken), null, null, abortController.signal).catch(e => {
-                abortController.abort(e);
-                return null;
-            });
-        const pricePrefetchPromise: Promise<BN> = requiredToken==null || this.swapPrice.preFetchPrice==null ? null : this.swapPrice.preFetchPrice(requiredToken, abortController.signal).catch(e => {
+        if(preFetches.pricePrefetchPromise==null) preFetches.pricePrefetchPromise = amountData.token==null || this.swapPrice.preFetchPrice==null ? null : this.swapPrice.preFetchPrice(amountData.token, _abortController.signal);
+        preFetches.pricePrefetchPromise = preFetches.pricePrefetchPromise.catch(e => {
             console.error(e);
             return null;
-        });
+        })
 
-        const feeRatePromise: Promise<any> = this.swapContract.getInitFeeRate==null || requiredKey==null || requiredToken==null
-            ? null
-            : tryWithRetries<any>(() => this.swapContract.getInitFeeRate(requiredKey, this.swapContract.getAddress(), requiredToken));
+        //Pre-fetch fee rate
+        if(preFetches.feeRatePromise==null) preFetches.feeRatePromise = tryWithRetries<any>(() => this.swapContract.getInitFeeRate(null, this.swapContract.getAddress(), amountData.token), null, null, _abortController.signal);
+        preFetches.feeRatePromise.catch(e => {
+            _abortController.abort(e);
+        })
 
-        const {parsedData} = await this.postWithRetries(url+"/createInvoice", {
-            ...additionalParams,
-            paymentHash: paymentHash.toString("hex"),
-            amount: amountOrTokens.toString(),
-            address: this.swapContract.getAddress(),
-            token: requiredToken==null ? null : requiredToken.toString(),
-            descriptionHash: descriptionHash==null ? null : descriptionHash.toString("hex"),
-            exactOut,
-            feeRate: feeRatePromise==null ? null : feeRatePromise.then(val => val==null ? null : val.toString())
-        }, {
-            pr: FieldTypeEnum.String,
-            swapFee: FieldTypeEnum.BN,
-            total: FieldTypeEnum.BN,
-            intermediaryKey: FieldTypeEnum.String,
-            securityDeposit: FieldTypeEnum.BN
-        }, abortController.signal, false).catch(e => {
-            if(!abortController.signal.aborted) abortController.abort(e);
-            throw e;
-        });
-
-        if(requiredKey!=null && requiredKey!==parsedData.intermediaryKey) {
-            abortController.abort();
-            throw new IntermediaryError("Invalid intermediary address/pubkey");
-        }
-
-        const decodedPR = bolt11.decode(parsedData.pr);
-
-        if(descriptionHash!=null && decodedPR.tagsObject.purpose_commit_hash!==descriptionHash.toString("hex")) {
-            abortController.abort();
-            throw new IntermediaryError("Invalid pr returned - description hash");
-        }
-
-        let amount: BN;
-        if(exactOut) {
-            if(!parsedData.total.eq(amountOrTokens)) {
-                abortController.abort();
-                throw new IntermediaryError("Invalid amount returned");
-            }
-            amount = new BN(decodedPR.millisatoshis).div(new BN(1000));
-        } else {
-            if(!new BN(decodedPR.millisatoshis).div(new BN(1000)).eq(amountOrTokens)) {
-                abortController.abort();
-                throw new IntermediaryError("Invalid payment request returned, amount mismatch");
-            }
-            amount = amountOrTokens;
-        }
-
-        const total = parsedData.total;
-
-        if(requiredToken==null) {
+        return lps.map(lp => {
             return {
-                secret,
-                pr: parsedData.pr,
-                swapFee: parsedData.swapFee,
-                total: parsedData.total,
-                intermediaryKey: parsedData.intermediaryKey,
-                securityDeposit: parsedData.securityDeposit,
-                pricingInfo: null
-            };
-        }
+                intermediary: lp,
+                response: (async () => {
+                    const abortController = new AbortController();
+                    _abortController.signal.addEventListener("abort", () => abortController.abort(_abortController.signal.reason));
 
-        const [_, pricingInfo] = await Promise.all([
-            (liquidityPromise || tryWithRetries(() => this.swapContract.getIntermediaryBalance(parsedData.intermediaryKey, requiredToken), null, null, abortController.signal)).then(liquidity => {
-                if(liquidity.lt(total)) {
-                    throw new IntermediaryError("Intermediary doesn't have enough liquidity");
-                }
-            }),
-            this.verifyReturnedPrice(false, {
-                isToken: () => true,
-                getAmount: () => total,
-                getToken: () => requiredToken
-            }, amount, parsedData, requiredToken, requiredBaseFee, requiredFeePPM, pricePrefetchPromise, abortController.signal)
-        ]).catch(e => {
-            abortController.abort(e);
-            throw e;
+                    const liquidityPromise: Promise<BN> = amountData.token==null || lp.address==null ?
+                        null :
+                        tryWithRetries(() => this.swapContract.getIntermediaryBalance(lp.address, amountData.token), null, null, abortController.signal).catch(e => {
+                            abortController.abort(e);
+                            return null;
+                        });
+
+                    const {parsedData} = await this.postWithRetries(lp.url+"/frombtcln/createInvoice", {
+                        ...additionalParams,
+                        paymentHash: paymentHash.toString("hex"),
+                        amount: amountData.amount.toString(),
+                        address: this.swapContract.getAddress(),
+                        token: amountData.token==null ? null : amountData.token.toString(),
+                        descriptionHash: options.descriptionHash==null ? null : options.descriptionHash.toString("hex"),
+                        exactOut: !amountData.exactIn,
+                        feeRate: preFetches.feeRatePromise==null ? null : preFetches.feeRatePromise.then(val => val==null ? null : val.toString())
+                    }, {
+                        pr: FieldTypeEnum.String,
+                        swapFee: FieldTypeEnum.BN,
+                        total: FieldTypeEnum.BN,
+                        intermediaryKey: FieldTypeEnum.String,
+                        securityDeposit: FieldTypeEnum.BN
+                    }, abortController.signal, false).catch(e => {
+                        if(!abortController.signal.aborted) abortController.abort(e);
+                        throw e;
+                    });
+
+                    if(lp.address!=null && lp.address!==parsedData.intermediaryKey) {
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid intermediary address/pubkey");
+                    }
+
+                    const decodedPR = bolt11.decode(parsedData.pr);
+
+                    if(options.descriptionHash!=null && decodedPR.tagsObject.purpose_commit_hash!==options.descriptionHash.toString("hex")) {
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid pr returned - description hash");
+                    }
+
+                    let amount: BN;
+                    if(!amountData.exactIn) {
+                        if(!parsedData.total.eq(amountData.amount)) {
+                            abortController.abort();
+                            throw new IntermediaryError("Invalid amount returned");
+                        }
+                        amount = new BN(decodedPR.millisatoshis).div(new BN(1000));
+                    } else {
+                        if(!new BN(decodedPR.millisatoshis).div(new BN(1000)).eq(amountData.amount)) {
+                            abortController.abort();
+                            throw new IntermediaryError("Invalid payment request returned, amount mismatch");
+                        }
+                        amount = amountData.amount;
+                    }
+
+                    const total = parsedData.total;
+
+                    if(amountData.token==null) {
+                        return {
+                            amount: parsedData.total,
+                            secret,
+                            pr: parsedData.pr,
+                            fees: {
+                                swapFee: parsedData.swapFee,
+                                securityDeposit: parsedData.securityDeposit
+                            },
+                            authorization: {
+                                feeRate: preFetches.feeRatePromise==null ? null : await preFetches.feeRatePromise
+                            },
+                            pricingInfo: null
+                        };
+                    }
+
+                    const [_, pricingInfo] = await Promise.all([
+                        (liquidityPromise || tryWithRetries(() => this.swapContract.getIntermediaryBalance(parsedData.intermediaryKey, amountData.token), null, null, abortController.signal)).then(liquidity => {
+                            if(liquidity.lt(total)) {
+                                throw new IntermediaryError("Intermediary doesn't have enough liquidity");
+                            }
+                        }),
+                        this.verifyReturnedPrice(false, {
+                            isToken: () => true,
+                            getAmount: () => total,
+                            getToken: () => amountData.token
+                        }, amount, parsedData, amountData.token, new BN(lp.services[SwapType.FROM_BTCLN].swapBaseFee), new BN(lp.services[SwapType.FROM_BTCLN].swapFeePPM), preFetches.pricePrefetchPromise, abortController.signal)
+                    ]).catch(e => {
+                        abortController.abort(e);
+                        throw e;
+                    });
+
+                    return {
+                        amount: parsedData.total,
+                        secret,
+                        pr: parsedData.pr,
+                        fees: {
+                            swapFee: parsedData.swapFee,
+                            securityDeposit: parsedData.securityDeposit
+                        },
+                        authorization: {
+                            feeRate: preFetches.feeRatePromise==null ? null : await preFetches.feeRatePromise
+                        },
+                        pricingInfo
+                    };
+                })()
+            }
         });
 
-        return {
-            secret,
-            pr: parsedData.pr,
-            swapFee: parsedData.swapFee,
-            total: parsedData.total,
-            intermediaryKey: parsedData.intermediaryKey,
-            securityDeposit: parsedData.securityDeposit,
-            pricingInfo,
-            feeRate: feeRatePromise==null ? null : await feeRatePromise
-        };
     }
 
     async getPaymentAuthorization(

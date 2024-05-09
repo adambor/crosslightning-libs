@@ -1,16 +1,12 @@
 import {BitcoinNetwork} from "../btc/BitcoinNetwork";
 import {ISwapPrice} from "./ISwapPrice";
 import {IWrapperStorage} from "../storage/IWrapperStorage";
-import {ChainEvents, IStorageManager, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
+import {ChainEvents, IStorageManager, SwapContract, SwapData} from "crosslightning-base";
 import {ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";
 import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
 import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
 import {FromBTCWrapper} from "./frombtc/onchain/FromBTCWrapper";
-import {
-    ClientSwapContract,
-    LNURLPay,
-    LNURLWithdraw,
-} from "./ClientSwapContract";
+import {AmountData, ClientSwapContract, LNURLPay, LNURLWithdraw,} from "./ClientSwapContract";
 import {IntermediaryDiscovery} from "../intermediaries/IntermediaryDiscovery";
 import * as bitcoin from "bitcoinjs-lib";
 import * as bolt11 from "bolt11";
@@ -28,7 +24,6 @@ import {ChainUtils} from "../btc/ChainUtils";
 import {MempoolBitcoinRpc} from "../btc/MempoolBitcoinRpc";
 import {BtcRelay} from "crosslightning-base/dist";
 import {MempoolBtcRelaySynchronizer} from "../btc/synchronizer/MempoolBtcRelaySynchronizer";
-import {LocalWrapperStorage} from "../storage/LocalWrapperStorage";
 import {OutOfBoundsError} from "../errors/OutOfBoundsError";
 import {IndexedDBWrapperStorage, Intermediary, LocalStorageManager} from "..";
 import {LnForGasWrapper} from "./swapforgas/ln/LnForGasWrapper";
@@ -265,54 +260,126 @@ export class Swapper<
         await this.frombtc.stop();
     }
 
-    async createSwap<S extends ISwap>(create: (candidate: Intermediary) => Promise<S>, amount: BN, tokenAddress: TokenAddressType, inBtc: boolean, swapType: SwapType): Promise<S> {
+    async createSwap<S extends ISwap>(
+        create: (candidates: Intermediary[], abortSignal: AbortSignal) => Promise<{
+            quote: Promise<S>,
+            intermediary: Intermediary
+        }[]>,
+        amountData: AmountData,
+        swapType: SwapType,
+        maxWaitTimeMS: number = 2000
+    ): Promise<S> {
         let candidates: Intermediary[];
+
+        const inBtc: boolean = swapType===SwapType.TO_BTCLN || swapType===SwapType.TO_BTC ? !amountData.exactIn : amountData.exactIn;
+
         if(!inBtc) {
             //Get candidates not based on the amount
-            candidates = this.intermediaryDiscovery.getSwapCandidates(swapType, tokenAddress);
+            candidates = this.intermediaryDiscovery.getSwapCandidates(swapType, amountData.token);
         } else {
-            candidates = this.intermediaryDiscovery.getSwapCandidates(swapType, tokenAddress, amount);
+            candidates = this.intermediaryDiscovery.getSwapCandidates(swapType, amountData.token, amountData.amount);
         }
-        if(candidates.length===0) throw new Error("No intermediary found!");
 
-        let min: BN;
-        let max: BN;
+        if(candidates.length===0)  {
+            console.log("No valid intermediary found, reloading intermediary database...");
+            await this.intermediaryDiscovery.reloadIntermediaries();
+            console.log("Intermediaries loaded!");
 
-        let swap: S;
-        let error;
-        for(let candidate of candidates) {
-            try {
-                swap = await create(candidate);
-                break;
-            } catch (e) {
-                if(e instanceof IntermediaryError) {
-                    //Blacklist that node
-                    this.intermediaryDiscovery.removeIntermediary(candidate);
-                }
-                if(e instanceof OutOfBoundsError) {
-                    if(min==null || max==null) {
-                        min = e.min;
-                        max = e.max;
-                    } else {
-                        min = BN.min(min, e.min);
-                        max = BN.max(max, e.max);
-                    }
-                }
-                console.error(e);
-                error = e;
+            if(!inBtc) {
+                //Get candidates not based on the amount
+                candidates = this.intermediaryDiscovery.getSwapCandidates(swapType, amountData.token);
+            } else {
+                candidates = this.intermediaryDiscovery.getSwapCandidates(swapType, amountData.token, amountData.amount);
             }
+
+            if(candidates.length===0) throw new Error("No intermediary found!");
         }
 
-        if(min!=null && max!=null) {
-            throw new OutOfBoundsError("Out of bounds", 400, min, max);
-        }
 
-        if(swap==null) {
-            if(error!=null) throw error;
-            throw new Error("No intermediary found!");
-        }
+        const abortController = new AbortController();
+        console.log("[Swapper] Swap candidates: ", candidates);
+        const quotePromises: {quote: Promise<S>, intermediary: Intermediary}[] = await create(candidates, abortController.signal);
 
-        return swap;
+        const quotes = await new Promise<{
+            quote: S,
+            intermediary: Intermediary
+        }[]>((resolve, reject) => {
+            let min: BN;
+            let max: BN;
+            let error: Error;
+            let numResolved = 0;
+            let quotes: {
+                quote: S,
+                intermediary: Intermediary
+            }[] = [];
+            let timeout: NodeJS.Timeout;
+
+            quotePromises.forEach(data => {
+                data.quote.then(quote => {
+                    if(numResolved===0) {
+                        timeout = setTimeout(() => {
+                            abortController.abort(new Error("Timed out waiting for quote!"));
+                            resolve(quotes);
+                        }, maxWaitTimeMS);
+                    }
+                    numResolved++;
+                    quotes.push({
+                        quote,
+                        intermediary: data.intermediary
+                    });
+                    if(numResolved===quotePromises.length) {
+                        clearTimeout(timeout);
+                        resolve(quotes);
+                        return;
+                    }
+                }).catch(e => {
+                    numResolved++;
+                    if(e instanceof IntermediaryError) {
+                        //Blacklist that node
+                        this.intermediaryDiscovery.removeIntermediary(data.intermediary);
+                    }
+                    if(e instanceof OutOfBoundsError) {
+                        if(min==null || max==null) {
+                            min = e.min;
+                            max = e.max;
+                        } else {
+                            min = BN.min(min, e.min);
+                            max = BN.max(max, e.max);
+                        }
+                    }
+                    console.error(data.intermediary.url+" error: ", e);
+                    error = e;
+
+                    if(numResolved===quotePromises.length) {
+                        if(timeout!=null) clearTimeout(timeout);
+                        if(quotes.length>0) {
+                            resolve(quotes);
+                            return;
+                        }
+                        if(min!=null && max!=null) {
+                            reject(new OutOfBoundsError("Out of bounds", 400, min, max));
+                            return;
+                        }
+                        reject(error);
+                    }
+                });
+            });
+        });
+
+        //TODO: Intermediary's reputation is not taken into account!
+        quotes.sort((a, b) => {
+            if(amountData.exactIn) {
+                //Compare outputs
+                return b.quote.getOutAmount().cmp(a.quote.getOutAmount());
+            } else {
+                //Compare inputs
+                return a.quote.getInAmount().cmp(b.quote.getInAmount());
+            }
+        });
+
+        console.log("Sorted quotes, best price to worst", quotes)
+
+        return quotes[0].quote;
     }
 
     /**
@@ -327,23 +394,25 @@ export class Swapper<
      * @param additionalParams      Additional parameters sent to the LP when creating the swap
      */
     createToBTCSwap(tokenAddress: TokenAddressType, address: string, amount: BN, confirmationTarget?: number, confirmations?: number, exactIn?: boolean, additionalParams?: Record<string, any>): Promise<ToBTCSwap<T>> {
-        return this.createSwap<ToBTCSwap<T>>(
-            (candidate: Intermediary) => this.tobtc.create(
-                address,
-                amount,
-                confirmationTarget || 3,
-                confirmations || 2,
-                candidate.url+"/tobtc",
-                tokenAddress,
-                candidate.address,
-                new BN(candidate.services[SwapType.TO_BTC].swapBaseFee),
-                new BN(candidate.services[SwapType.TO_BTC].swapFeePPM),
-                exactIn,
-                additionalParams
-            ),
+        if(confirmationTarget==null) confirmationTarget = 3;
+        if(confirmations==null) confirmations = 2;
+        const amountData = {
             amount,
-            tokenAddress,
-            !exactIn,
+            token: tokenAddress,
+            exactIn
+        };
+        return this.createSwap<ToBTCSwap<T>>(
+            (candidates: Intermediary[], abortSignal) => Promise.resolve(this.tobtc.create(
+                address,
+                amountData,
+                candidates,
+                {
+                    confirmationTarget,
+                    confirmations
+                },
+                abortSignal
+            )),
+            amountData,
             SwapType.TO_BTC
         );
     }
@@ -360,23 +429,26 @@ export class Swapper<
      */
     async createToBTCLNSwap(tokenAddress: TokenAddressType, paymentRequest: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN, additionalParams?: Record<string, any>): Promise<ToBTCLNSwap<T>> {
         const parsedPR = bolt11.decode(paymentRequest);
-
+        const amountData = {
+            amount: new BN(parsedPR.millisatoshis).div(new BN(1000)),
+            token: tokenAddress,
+            exactIn: false
+        };
+        if(expirySeconds==null) expirySeconds = (3*24*3600);
         return this.createSwap<ToBTCLNSwap<T>>(
-            (candidate: Intermediary) => this.tobtcln.create(
+            (candidates: Intermediary[], abortSignal: AbortSignal) => Promise.resolve(this.tobtcln.create(
                 paymentRequest,
-                expirySeconds || (3*24*3600),
-                candidate.url+"/tobtcln",
-                maxRoutingBaseFee,
-                maxRoutingPPM,
-                tokenAddress,
-                candidate.address,
-                new BN(candidate.services[SwapType.TO_BTCLN].swapBaseFee),
-                new BN(candidate.services[SwapType.TO_BTCLN].swapFeePPM),
-                additionalParams
-            ),
-            new BN(parsedPR.millisatoshis).div(new BN(1000)),
-            tokenAddress,
-            true,
+                amountData,
+                candidates,
+                {
+                    expirySeconds,
+                    maxRoutingPPM,
+                    maxRoutingBaseFee
+                },
+                additionalParams,
+                abortSignal
+            )),
+            amountData,
             SwapType.TO_BTCLN
         );
     }
@@ -395,25 +467,27 @@ export class Swapper<
      * @param additionalParams      Additional parameters sent to the LP when creating the swap
      */
     async createToBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurlPay: string | LNURLPay, amount: BN, comment: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN, exactIn?: boolean, additionalParams?: Record<string, any>): Promise<ToBTCLNSwap<T>> {
-        return this.createSwap<ToBTCLNSwap<T>>(
-            (candidate: Intermediary) => this.tobtcln.createViaLNURL(
-                lnurlPay,
-                amount,
-                comment,
-                expirySeconds || (3*24*3600),
-                candidate.url+"/tobtcln",
-                maxRoutingBaseFee,
-                maxRoutingPPM,
-                tokenAddress,
-                candidate.address,
-                new BN(candidate.services[SwapType.TO_BTCLN].swapBaseFee),
-                new BN(candidate.services[SwapType.TO_BTCLN].swapFeePPM),
-                exactIn,
-                additionalParams
-            ),
+        const amountData = {
             amount,
-            tokenAddress,
-            !exactIn,
+            token: tokenAddress,
+            exactIn
+        };
+        if(expirySeconds==null) expirySeconds = (3*24*3600);
+        return this.createSwap<ToBTCLNSwap<T>>(
+            (candidates: Intermediary[], abortSignal: AbortSignal) => this.tobtcln.createViaLNURL(
+                lnurlPay,
+                amountData,
+                candidates,
+                {
+                    expirySeconds,
+                    comment,
+                    maxRoutingBaseFee,
+                    maxRoutingPPM
+                },
+                additionalParams,
+                abortSignal
+            ),
+            amountData,
             SwapType.TO_BTCLN
         );
     }
@@ -427,20 +501,21 @@ export class Swapper<
      * @param additionalParams      Additional parameters sent to the LP when creating the swap
      */
     async createFromBTCSwap(tokenAddress: TokenAddressType, amount: BN, exactOut?: boolean, additionalParams?: Record<string, any>): Promise<FromBTCSwap<T>> {
-        return this.createSwap<FromBTCSwap<T>>(
-            (candidate: Intermediary) => this.frombtc.create(
-                amount,
-                candidate.url+"/frombtc",
-                tokenAddress,
-                candidate.address,
-                new BN(candidate.services[SwapType.FROM_BTC].swapBaseFee),
-                new BN(candidate.services[SwapType.FROM_BTC].swapFeePPM),
-                exactOut,
-                additionalParams
-            ),
+        const amountData = {
             amount,
-            tokenAddress,
-            !exactOut,
+            token: tokenAddress,
+            exactIn: !exactOut
+        };
+
+        return this.createSwap<FromBTCSwap<T>>(
+            (candidates: Intermediary[], abortSignal: AbortSignal) => Promise.resolve(this.frombtc.create(
+                amountData,
+                candidates,
+                null,
+                additionalParams,
+                abortSignal
+            )),
+            amountData,
             SwapType.FROM_BTC
         );
     }
@@ -455,21 +530,23 @@ export class Swapper<
      * @param additionalParams  Additional parameters sent to the LP when creating the swap
      */
     async createFromBTCLNSwap(tokenAddress: TokenAddressType, amount: BN, exactOut?: boolean, descriptionHash?: Buffer, additionalParams?: Record<string, any>): Promise<FromBTCLNSwap<T>> {
-        return this.createSwap<FromBTCLNSwap<T>>(
-            (candidate: Intermediary) => this.frombtcln.create(
-                amount,
-                candidate.url+"/frombtcln",
-                tokenAddress,
-                candidate.address,
-                new BN(candidate.services[SwapType.FROM_BTCLN].swapBaseFee),
-                new BN(candidate.services[SwapType.FROM_BTCLN].swapFeePPM),
-                exactOut,
-                descriptionHash,
-                additionalParams
-            ),
+        const amountData = {
             amount,
-            tokenAddress,
-            !exactOut,
+            token: tokenAddress,
+            exactIn: !exactOut
+        };
+
+        return this.createSwap<FromBTCLNSwap<T>>(
+            (candidates: Intermediary[], abortSignal: AbortSignal) => Promise.resolve(this.frombtcln.create(
+                amountData,
+                candidates,
+                {
+                    descriptionHash
+                },
+                additionalParams,
+                abortSignal
+            )),
+            amountData,
             SwapType.FROM_BTCLN
         );
     }
@@ -480,25 +557,24 @@ export class Swapper<
      * @param tokenAddress      Token address to receive
      * @param lnurl             LNURL-withdraw to pull the funds from
      * @param amount            Amount to receive, in satoshis (bitcoin's smallest denomination)
-     * @param noInstantReceive  Flag to disable instantly posting the lightning PR to LN service for withdrawal, when set the lightning PR is sent to LN service when waitForPayment is called
      * @param additionalParams  Additional parameters sent to the LP when creating the swap
      */
-    async createFromBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurl: string | LNURLWithdraw, amount: BN, noInstantReceive?: boolean, additionalParams?: Record<string, any>): Promise<FromBTCLNSwap<T>> {
-        return this.createSwap<FromBTCLNSwap<T>>(
-            (candidate: Intermediary) => this.frombtcln.createViaLNURL(
-                lnurl,
-                amount,
-                candidate.url+"/frombtcln",
-                tokenAddress,
-                candidate.address,
-                new BN(candidate.services[SwapType.FROM_BTCLN].swapBaseFee),
-                new BN(candidate.services[SwapType.FROM_BTCLN].swapFeePPM),
-                noInstantReceive,
-                additionalParams
-            ),
+    async createFromBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurl: string | LNURLWithdraw, amount: BN, additionalParams?: Record<string, any>): Promise<FromBTCLNSwap<T>> {
+        const amountData = {
             amount,
-            tokenAddress,
-            true,
+            token: tokenAddress,
+            exactIn: true
+        };
+
+        return this.createSwap<FromBTCLNSwap<T>>(
+            (candidates: Intermediary[], abortSignal: AbortSignal) => this.frombtcln.createViaLNURL(
+                lnurl,
+                amountData,
+                candidates,
+                additionalParams,
+                abortSignal
+            ),
+            amountData,
             SwapType.FROM_BTCLN
         );
     }

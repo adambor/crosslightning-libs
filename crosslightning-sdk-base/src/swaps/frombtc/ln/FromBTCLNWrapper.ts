@@ -1,7 +1,7 @@
 import {FromBTCLNSwap, FromBTCLNSwapState} from "./FromBTCLNSwap";
 import {IFromBTCWrapper} from "../IFromBTCWrapper";
 import {IWrapperStorage} from "../../../storage/IWrapperStorage";
-import {ClientSwapContract, LNURLWithdraw, PaymentAuthError} from "../../ClientSwapContract";
+import {AmountData, ClientSwapContract, LNURLWithdraw, PaymentAuthError} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import * as bolt11 from "bolt11";
 import {
@@ -18,6 +18,12 @@ import {
 } from "crosslightning-base";
 import {tryWithRetries} from "../../../utils/RetryUtils";
 import * as EventEmitter from "events";
+import {Intermediary} from "../../../intermediaries/Intermediary";
+import {FromBTCOptions} from "../onchain/FromBTCWrapper";
+
+export type FromBTCLNOptions = {
+    descriptionHash?: Buffer
+};
 
 export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
@@ -37,163 +43,159 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
     /**
      * Returns a newly created swap, receiving 'amount' on lightning network
      *
-     * @param amount            Amount you wish to receive in base units (satoshis)
-     * @param url               Intermediary/Counterparty swap service url
-     * @param requiredToken     Token that we want to receive
-     * @param requiredKey       Required key of the Intermediary
-     * @param requiredBaseFee   Desired base fee reported by the swap intermediary
-     * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
-     * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
-     * @param exactOut          Whether to create an exact out swap instead of exact in
-     * @param descriptionHash   Description hash to use for the invoice
-     * @param additionalParams  Additional parameters sent to the LP when creating the swap
+     * @param amountData            Amount of token & amount to swap
+     * @param lps                   LPs (liquidity providers) to get the quotes from
+     * @param options               Quote options
+     * @param additionalParams      Additional parameters sent to the LP when creating the swap
+     * @param abortSignal           Abort signal for aborting the process
      */
-    async create(
-        amount: BN,
-        url: string,
-        requiredToken?: TokenAddress,
-        requiredKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN,
-        exactOut?: boolean,
-        descriptionHash?: Buffer,
-        additionalParams?: Record<string, any>
-    ): Promise<FromBTCLNSwap<T>> {
+    create(
+        amountData: AmountData,
+        lps: Intermediary[],
+        options: FromBTCLNOptions,
+        additionalParams?: Record<string, any>,
+        abortSignal?: AbortSignal
+    ): {
+        quote: Promise<FromBTCLNSwap<T>>,
+        intermediary: Intermediary
+    }[] {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const result = await this.contract.receiveLightning(
-            amount,
-            url,
-            requiredToken,
-            requiredKey,
-            requiredBaseFee,
-            requiredFeePPM,
-            exactOut,
-            descriptionHash,
-            additionalParams
+        const resultPromises = this.contract.receiveLightning(
+            amountData,
+            lps,
+            options,
+            null,
+            additionalParams,
+            abortSignal
         );
 
-        const parsed = bolt11.decode(result.pr);
+        return resultPromises.map(data => {
+            return {
+                intermediary: data.intermediary,
+                quote: data.response.then(response => {
+                    const parsed = bolt11.decode(response.pr);
+                    return this.contract.swapContract.createSwapData(
+                        ChainSwapType.HTLC,
+                        data.intermediary.address,
+                        this.contract.swapContract.getAddress(),
+                        amountData.token,
+                        response.amount,
+                        parsed.tagsObject.payment_hash,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false,
+                        true,
+                        response.fees.securityDeposit,
+                        new BN(0)
+                    ).then(swapData => new FromBTCLNSwap<T>(
+                        this,
+                        response.pr,
+                        response.secret,
+                        data.intermediary.url+"/frombtcln",
+                        swapData,
+                        response.fees.swapFee,
+                        null,
+                        null,
+                        response.amount,
+                        response.pricingInfo,
+                        response.authorization.feeRate,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null
+                    ))
+                })
+            }
+        });
 
-        const swapData: T = await this.contract.swapContract.createSwapData(
-            ChainSwapType.HTLC,
-            result.intermediaryKey,
-            this.contract.swapContract.getAddress(),
-            requiredToken,
-            result.total,
-            parsed.tagsObject.payment_hash,
-            null,
-            null,
-            null,
-            null,
-            false,
-            true,
-            result.securityDeposit,
-            new BN(0)
-        );
-
-        const total = result.total;
-
-        const swap = new FromBTCLNSwap<T>(
-            this,
-            result.pr,
-            result.secret,
-            url,
-            swapData,
-            result.swapFee,
-            requiredBaseFee,
-            requiredFeePPM,
-            total,
-            result.pricingInfo,
-            result.feeRate,
-            null,
-            null,
-            null,
-            null,
-            null
-        );
-
-        await swap.save();
-        this.swapData[swap.getPaymentHash().toString("hex")] = swap;
-        this.events.emit("swapCreated", swap);
-
-        return swap;
+        //Saved when waitForPayment is called
+        // await swap.save();
+        // this.swapData[swap.getPaymentHash().toString("hex")] = swap;
+        // this.events.emit("swapCreated", swap);
+        //
+        // return swap;
 
     }
 
     /**
      * Returns a newly created swap, receiving 'amount' from the lnurl-withdraw
      *
-     * @param lnurl             LNURL-withdraw to withdraw funds from
-     * @param amount            Amount you wish to receive in base units (satoshis)
-     * @param url               Intermediary/Counterparty swap service url
-     * @param requiredToken     Token that we want to receive
-     * @param requiredKey       Required key of the Intermediary
-     * @param requiredBaseFee   Desired base fee reported by the swap intermediary
-     * @param requiredFeePPM    Desired proportional fee report by the swap intermediary
-     * @param noInstantReceive  Flag to disable instantly posting the lightning PR to LN service for withdrawal, when set the lightning PR is sent to LN service when waitForPayment is called
-     * @param additionalParams  Additional parameters sent to the LP when creating the swap
+     * @param lnurl                 LNURL-withdraw to withdraw funds from
+     * @param amountData            Amount of token & amount to swap
+     * @param lps                   LPs (liquidity providers) to get the quotes from
+     * @param additionalParams      Additional parameters sent to the LP when creating the swap
+     * @param abortSignal           Abort signal for aborting the process
      */
     async createViaLNURL(
         lnurl: string | LNURLWithdraw,
-        amount: BN,
-        url: string,
-        requiredToken?: TokenAddress,
-        requiredKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN,
-        noInstantReceive?: boolean,
-        additionalParams?: Record<string, any>
-    ): Promise<FromBTCLNSwap<T>> {
+        amountData: AmountData,
+        lps: Intermediary[],
+        additionalParams?: Record<string, any>,
+        abortSignal?: AbortSignal
+    ): Promise<{
+        quote: Promise<FromBTCLNSwap<T>>,
+        intermediary: Intermediary
+    }[]> {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const result = await this.contract.receiveLightningLNURL(typeof(lnurl)==="string" ? lnurl : lnurl.params, amount, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, noInstantReceive, additionalParams);
-
-        const parsed = bolt11.decode(result.pr);
-
-        const swapData: T = await this.contract.swapContract.createSwapData(
-            ChainSwapType.HTLC,
-            result.intermediaryKey,
-            this.contract.swapContract.getAddress(),
-            requiredToken,
-            result.total,
-            parsed.tagsObject.payment_hash,
-            null,
-            null,
-            null,
-            null,
-            false,
-            true,
-            result.securityDeposit,
-            new BN(0)
+        const resultPromises = await this.contract.receiveLightningLNURL(
+            typeof(lnurl)==="string" ? lnurl : lnurl.params,
+            amountData,
+            lps,
+            additionalParams,
+            abortSignal
         );
 
-        const total = result.total;
+        return resultPromises.map(data => {
+            return {
+                intermediary: data.intermediary,
+                quote: data.response.then(response => {
+                    const parsed = bolt11.decode(response.pr);
+                    return this.contract.swapContract.createSwapData(
+                        ChainSwapType.HTLC,
+                        data.intermediary.address,
+                        this.contract.swapContract.getAddress(),
+                        amountData.token,
+                        response.amount,
+                        parsed.tagsObject.payment_hash,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false,
+                        true,
+                        response.fees.securityDeposit,
+                        new BN(0)
+                    ).then(swapData => new FromBTCLNSwap<T>(
+                        this,
+                        response.pr,
+                        response.secret,
+                        data.intermediary.url+"/frombtcln",
+                        swapData,
+                        response.fees.swapFee,
+                        null,
+                        null,
+                        response.amount,
+                        response.pricingInfo,
+                        response.authorization.feeRate,
+                        typeof(lnurl)==="string" ? lnurl : lnurl.params.url,
+                        null,
+                        response.withdrawRequest.k1,
+                        response.withdrawRequest.callback,
+                        false
+                    ))
+                })
+            }
+        });
 
-        const swap = new FromBTCLNSwap<T>(
-            this,
-            result.pr,
-            result.secret,
-            url,
-            swapData,
-            result.swapFee,
-            requiredBaseFee,
-            requiredFeePPM,
-            total,
-            result.pricingInfo,
-            result.feeRate,
-            typeof(lnurl)==="string" ? lnurl : lnurl.params.url,
-            result.lnurlCallbackResult,
-            result.withdrawRequest.k1,
-            result.withdrawRequest.callback,
-            !noInstantReceive
-        );
-
-        await swap.save();
-        this.swapData[swap.getPaymentHash().toString("hex")] = swap;
-
-        return swap;
+        //Saved when waitForPayment is called
+        // await swap.save();
+        // this.swapData[swap.getPaymentHash().toString("hex")] = swap;
 
     }
 

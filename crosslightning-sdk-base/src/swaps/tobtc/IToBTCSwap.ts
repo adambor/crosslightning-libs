@@ -151,6 +151,9 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
             throw new Error("Must be in CREATED state!");
         }
 
+        await this.save();
+        this.wrapper.swapData[this.data.getHash()] = this;
+
         console.log(this);
 
         let txResult;
@@ -188,6 +191,9 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
         if(this.state!==ToBTCSwapState.CREATED) {
             throw new Error("Must be in CREATED state!");
         }
+
+        await this.save();
+        this.wrapper.swapData[this.data.getHash()] = this;
 
         console.log(this);
 

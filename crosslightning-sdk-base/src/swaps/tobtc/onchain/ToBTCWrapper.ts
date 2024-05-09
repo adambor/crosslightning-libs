@@ -1,10 +1,16 @@
 import {ToBTCSwap} from "./ToBTCSwap";
 import {IToBTCWrapper} from "../IToBTCWrapper";
 import {IWrapperStorage} from "../../../storage/IWrapperStorage";
-import {ClientSwapContract} from "../../ClientSwapContract";
+import {AmountData, ClientSwapContract} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {ChainEvents, SwapData, TokenAddress} from "crosslightning-base";
 import * as EventEmitter from "events";
+import { Intermediary } from "../../../intermediaries/Intermediary";
+
+export type ToBTCOptions = {
+    confirmationTarget: number,
+    confirmations: number
+}
 
 export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T> {
 
@@ -20,60 +26,64 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T> {
     }
 
     /**
-     * Returns a newly created swap, paying for 'address' - a bitcoin address
+     * Returns quotes fetched from LPs, paying to an 'address' - a bitcoin address
      *
      * @param address               Bitcoin on-chain address you wish to pay to
-     * @param amount                Amount of bitcoin to send, in base units - satoshis
-     * @param confirmationTarget    Time preference of the transaction (in how many blocks should it confirm)
-     * @param confirmations         Confirmations required for intermediary to claim the funds from PTLC (this determines the safety of swap)
-     * @param url                   Intermediary/Counterparty swap service url
-     * @param requiredToken         Token that we want to send
-     * @param requiredKey           Required key of the Intermediary
-     * @param requiredBaseFee       Desired base fee reported by the swap intermediary
-     * @param requiredFeePPM        Desired proportional fee report by the swap intermediary
-     * @param exactIn               Whether the swap should be exact in instead of exact out
+     * @param amountData            Amount of token & amount to swap
+     * @param lps                   LPs (liquidity providers) to get the quotes from
+     * @param options               Quote options
      * @param additionalParams      Additional parameters sent to the LP when creating the swap
+     * @param abortSignal           Abort signal for aborting the process
      */
-    async create(
+    create(
         address: string,
-        amount: BN,
-        confirmationTarget: number,
-        confirmations: number,
-        url: string,
-        requiredToken?: TokenAddress,
-        requiredKey?: string,
-        requiredBaseFee?: BN,
-        requiredFeePPM?: BN,
-        exactIn?: boolean,
-        additionalParams?: Record<string, any>
-    ): Promise<ToBTCSwap<T>> {
+        amountData: AmountData,
+        lps: Intermediary[],
+        options: ToBTCOptions,
+        additionalParams?: Record<string, any>,
+        abortSignal?: AbortSignal
+    ): {
+        quote: Promise<ToBTCSwap<T>>,
+        intermediary: Intermediary
+    }[] {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const result = await this.contract.payOnchain(address, amount, confirmationTarget, confirmations, url, requiredToken, requiredKey, requiredBaseFee, requiredFeePPM, exactIn, additionalParams);
-
-        const swap = new ToBTCSwap(
-            this,
+        const resultPromises = this.contract.payOnchain(
             address,
-            result.amount,
-            confirmationTarget,
-            result.networkFee,
-            result.swapFee,
-            result.totalFee,
-            result.data,
-            result.prefix,
-            result.timeout,
-            result.signature,
-            result.feeRate,
-            url,
-            result.expiry,
-            result.pricingInfo
+            amountData,
+            lps,
+            options,
+            additionalParams,
+            abortSignal
         );
 
-        await swap.save();
-        this.swapData[result.data.getHash()] = swap;
+        return resultPromises.map(data => {
+            return {
+                quote: data.response.then(response => new ToBTCSwap<T>(
+                    this,
+                    address,
+                    response.amount,
+                    options.confirmationTarget,
+                    response.fees.networkFee,
+                    response.fees.swapFee,
+                    response.fees.totalFee,
+                    response.data,
+                    response.authorization.prefix,
+                    response.authorization.timeout,
+                    response.authorization.signature,
+                    response.authorization.feeRate,
+                    data.intermediary.url+"/tobtc",
+                    response.authorization.expiry,
+                    response.pricingInfo
+                )),
+                intermediary: data.intermediary
+            };
+        });
 
-        return swap;
+        //Swaps are saved when commit is called
+        // await swap.save();
+        // this.swapData[result.data.getHash()] = swap;
 
     }
 

@@ -205,6 +205,9 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
             throw new Error("Send window too low");
         }
 
+        await this.save();
+        this.wrapper.swapData[this.data.getHash()] = this;
+
         let txResult;
         try {
             txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.getTxoHash(), !noWaitForConfirmation, false, abortSignal, this.feeRate);
@@ -252,6 +255,9 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
         if(expiry.sub(currentTimestamp).lt(new BN(this.wrapper.contract.options.minSendWindow))) {
             throw new Error("Send window too low");
         }
+
+        await this.save();
+        this.wrapper.swapData[this.data.getHash()] = this;
 
         let txs: any[];
         try {
