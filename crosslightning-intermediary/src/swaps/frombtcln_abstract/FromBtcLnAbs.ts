@@ -595,8 +595,14 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                     return null;
                 }) : null);
 
-            const balancePrefetch = this.swapContract.getBalance(useToken, true).catch(e => {
+            const balancePrefetch: Promise<BN> = this.swapContract.getBalance(useToken, true).catch(e => {
                 console.error("From BTC-LN: REST.balancePrefetch", e);
+                abortController.abort(e);
+                return null;
+            });
+
+            const channelsPrefetch: Promise<{channels: any[]}> = lncli.getChannels({is_active: true, lnd: this.LND}).catch(e => {
+                console.error("From BTC-LN: REST.channelsPrefetch", e);
                 abortController.abort(e);
                 return null;
             });
@@ -748,6 +754,22 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 await responseStream.writeParamsAndEnd({
                     code: 20002,
                     msg: "Not enough liquidity"
+                });
+                return;
+            }
+
+            const channelsResponse = await channelsPrefetch;
+
+            abortController.signal.throwIfAborted();
+
+            let hasEnoughInboundLiquidity = false;
+            channelsResponse.channels.forEach(channel => {
+                if(new BN(channel.remote_balance).gte(amountBD)) hasEnoughInboundLiquidity = true;
+            });
+            if(!hasEnoughInboundLiquidity) {
+                await responseStream.writeParamsAndEnd({
+                    code: 20050,
+                    msg: "Not enough LN inbound liquidity"
                 });
                 return;
             }
