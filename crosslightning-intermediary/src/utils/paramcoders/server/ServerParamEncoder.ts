@@ -1,4 +1,4 @@
-import {Response} from "express";
+import {Response, Request} from "express";
 import {IParamWriter} from "../IParamWriter";
 import {ParamEncoder} from "../ParamEncoder";
 import {LegacyParamEncoder} from "../LegacyParamEncoder";
@@ -12,6 +12,19 @@ export class ServerParamEncoder {
 
     constructor(response: Response, statusCode: number, request: Request) {
         const legacy = !request.headers['accept'].includes("application/x-multiple-json");
+
+        let requestEnd = false;
+        let responseShouldEnd = false;
+        request.on("end", () => {
+            requestEnd = true;
+            if(responseShouldEnd && requestEnd) response.end();
+        });
+
+        const onEnd = () => {
+            responseShouldEnd = true;
+            if(responseShouldEnd && requestEnd) return new Promise<void>(resolve => response.end(() => resolve()));
+            return Promise.resolve();
+        };
 
         let firstWrite = false;
         if(legacy) {
@@ -28,7 +41,7 @@ export class ServerParamEncoder {
                     }
                     resolve();
                 }));
-            }, () => new Promise<void>(resolve => response.end(() => resolve())));
+            }, onEnd);
         } else {
             response.header("Content-Type", "application/x-multiple-json");
             this.paramWriter = new ParamEncoder((data: Buffer) => {
@@ -43,7 +56,7 @@ export class ServerParamEncoder {
                     }
                     resolve();
                 }));
-            }, () => new Promise<void>(resolve => response.end(() => resolve())));
+            }, onEnd);
         }
 
         this.response = response;
