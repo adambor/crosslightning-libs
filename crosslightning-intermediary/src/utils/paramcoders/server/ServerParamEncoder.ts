@@ -26,37 +26,28 @@ export class ServerParamEncoder {
             return Promise.resolve();
         };
 
+        const onWrite = (data: Buffer) => {
+            if(responseShouldEnd) return Promise.resolve();
+            if(firstWrite) {
+                response.writeHead(statusCode);
+                firstWrite = false;
+            }
+            return new Promise<void>((resolve, reject) => response.write(data, (error: any) => {
+                if(error!=null) {
+                    reject(error);
+                    return;
+                }
+                resolve();
+            }));
+        };
+
         let firstWrite = false;
         if(legacy) {
             response.header("Content-Type", "application/json");
-            this.paramWriter = new LegacyParamEncoder((data: Buffer) => {
-                if(firstWrite) {
-                    response.writeHead(statusCode);
-                    firstWrite = false;
-                }
-                return new Promise((resolve, reject) => response.write(data, (error: any) => {
-                    if(error!=null) {
-                        reject(error);
-                        return;
-                    }
-                    resolve();
-                }));
-            }, onEnd);
+            this.paramWriter = new LegacyParamEncoder(onWrite, onEnd);
         } else {
             response.header("Content-Type", "application/x-multiple-json");
-            this.paramWriter = new ParamEncoder((data: Buffer) => {
-                if(firstWrite) {
-                    response.writeHead(statusCode);
-                    firstWrite = false;
-                }
-                return new Promise((resolve, reject) => response.write(data, (error: any) => {
-                    if(error!=null) {
-                        reject(error);
-                        return;
-                    }
-                    resolve();
-                }));
-            }, onEnd);
+            this.paramWriter = new ParamEncoder(onWrite, onEnd);
         }
 
         this.response = response;
