@@ -3,29 +3,30 @@ import * as bitcoin from "bitcoinjs-lib";
 import {Response} from "cross-fetch";
 import {createHash, randomBytes} from "crypto-browserify";
 import * as bolt11 from "bolt11";
-import {ChainUtils, BitcoinTransaction} from "../btc/ChainUtils";
+import {decode, PaymentRequestObject, TagsObject} from "bolt11";
+import {BitcoinTransaction, ChainUtils} from "../btc/ChainUtils";
 import {UserError} from "../errors/UserError";
 import {IntermediaryError} from "../errors/IntermediaryError";
 import {ISwapPrice} from "./ISwapPrice";
-import {ChainSwapType, SignatureVerificationError, SwapCommitStatus, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
-import {BitcoinRpc, BtcRelay} from "crosslightning-base/dist";
 import {
-    findlnurl,
-    getParams,
-    LNURLPayParams,
-    LNURLPaySuccessAction,
-    LNURLWithdrawParams
-} from "js-lnurl/lib";
+    ChainSwapType,
+    SignatureVerificationError,
+    SwapCommitStatus,
+    SwapContract,
+    SwapData,
+    TokenAddress
+} from "crosslightning-base";
+import {BitcoinRpc, BtcRelay} from "crosslightning-base/dist";
+import {findlnurl, getParams, LNURLPayParams, LNURLPaySuccessAction, LNURLWithdrawParams} from "js-lnurl/lib";
 import {RequestError} from "../errors/RequestError";
 import {AbortError} from "../errors/AbortError";
 import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 import {PriceInfoType} from "./ISwap";
-import {PaymentRequestObject} from "bolt11";
-import {TagsObject} from "bolt11";
 import {
     FieldTypeEnum,
     RequestSchema,
     RequestSchemaResult,
+    RequestSchemaResultPromise,
     verifySchema
 } from "../utils/paramcoders/SchemaVerifier";
 import {RequestBody, streamingFetchWithTimeoutPromise} from "../utils/paramcoders/client/StreamingFetchPromise";
@@ -311,7 +312,18 @@ export class ClientSwapContract<T extends SwapData> {
         }
     }
 
-    private async postWithRetries<T extends RequestSchema>(url: string, body: RequestBody, dataSchema: T, signal: AbortSignal, doPrefetchData: boolean): Promise<{
+    private async postWithRetries<
+        T extends RequestSchema,
+        A extends RequestSchema = never
+    >(
+        url: string,
+        body: RequestBody,
+        dataSchema: T,
+        signal: AbortSignal,
+        doPrefetchData: boolean,
+        additionalSchema?: A,
+        responseBodyCbk?: (responseBody: RequestSchemaResultPromise<A>) => void
+    ): Promise<{
         parsedData: RequestSchemaResult<T>,
         preFetchSignatureVerificationData: Promise<any>
     }> {
@@ -322,12 +334,16 @@ export class ClientSwapContract<T extends SwapData> {
                 data: FieldTypeEnum.AnyOptional,
 
                 ...(doPrefetchData && this.swapContract.preFetchForInitSignatureVerification!=null ?
-                    {signDataPrefetch: FieldTypeEnum.AnyOptional} :{})
+                    {signDataPrefetch: FieldTypeEnum.AnyOptional} :{}),
+
+                ...(additionalSchema==null ? {} : additionalSchema)
             }, this.options.postRequestTimeout, signal);
 
             if(response.status!==200) return {
                 response
             };
+
+            if(responseBodyCbk!=null) responseBodyCbk(responseBody as RequestSchemaResultPromise<A>);
 
             let _preFetchSignatureVerificationData: Promise<any> = null;
             if(doPrefetchData) {
@@ -1624,6 +1640,7 @@ export class ClientSwapContract<T extends SwapData> {
                     const [_, pricingInfo] = await Promise.all([
                         //Get intermediary's liquidity
                         (liquidityPromise || tryWithRetries(() => this.swapContract.getIntermediaryBalance(data.getOfferer(), data.getToken()), null, null, abortController.signal)).then(liquidity => {
+                            lp.liquidity[amountData.token.toString()] = liquidity;
                             if(liquidity.lt(data.getAmount())) {
                                 throw new IntermediaryError("Intermediary doesn't have enough liquidity");
                             }
@@ -1866,6 +1883,12 @@ export class ClientSwapContract<T extends SwapData> {
                             return null;
                         });
 
+                    let nodeChannelCapacityPromise: Promise<{
+                        capacity: BN,
+                        pubkey: string,
+                        channels: number
+                    }>;
+
                     const {parsedData} = await this.postWithRetries(lp.url+"/frombtcln/createInvoice", {
                         ...additionalParams,
                         paymentHash: paymentHash.toString("hex"),
@@ -1881,8 +1904,18 @@ export class ClientSwapContract<T extends SwapData> {
                         total: FieldTypeEnum.BN,
                         intermediaryKey: FieldTypeEnum.String,
                         securityDeposit: FieldTypeEnum.BN
-                    }, abortController.signal, false).catch(e => {
-                        if(!abortController.signal.aborted) abortController.abort(e);
+                    }, abortController.signal, false, {
+                        lnPublicKey: FieldTypeEnum.StringOptional
+                    }, (responseBody) => {
+                        nodeChannelCapacityPromise = responseBody.lnPublicKey
+                            .then(lpPubkey => ChainUtils.getLNNodeInfo(lpPubkey))
+                            .then(data => data==null ? null : {pubkey: data.public_key, capacity: new BN(data.capacity), channels: data.active_channel_count})
+                            .catch(e => {
+                                console.error("LN node pubkey pre-fetch error: ",e);
+                                return undefined;
+                            });
+                    }).catch(e => {
+                        abortController.abort(e);
                         throw e;
                     });
 
@@ -1898,6 +1931,8 @@ export class ClientSwapContract<T extends SwapData> {
                         throw new IntermediaryError("Invalid pr returned - description hash");
                     }
 
+                    const invoiceSats = new BN(decodedPR.millisatoshis).div(new BN(1000));
+
                     let amount: BN;
                     if(!amountData.exactIn) {
                         if(!parsedData.total.eq(amountData.amount)) {
@@ -1906,11 +1941,48 @@ export class ClientSwapContract<T extends SwapData> {
                         }
                         amount = new BN(decodedPR.millisatoshis).div(new BN(1000));
                     } else {
-                        if(!new BN(decodedPR.millisatoshis).div(new BN(1000)).eq(amountData.amount)) {
+                        if(!invoiceSats.eq(amountData.amount)) {
                             abortController.abort();
                             throw new IntermediaryError("Invalid payment request returned, amount mismatch");
                         }
                         amount = amountData.amount;
+                    }
+
+                    let nodeChannelCapacity = await nodeChannelCapacityPromise;
+
+                    if(nodeChannelCapacity===undefined) {
+                        //Re-fetch
+                        nodeChannelCapacity = await tryWithRetries(
+                            () => ChainUtils.getLNNodeInfo(decodedPR.payeeNodeKey).then(data => data==null ? null : {pubkey: data.public_key, capacity: new BN(data.capacity), channels: data.active_channel_count}),
+                            null,
+                            null,
+                            abortController.signal
+                        );
+                    }
+
+                    if(nodeChannelCapacity===null) {
+                        abortController.abort();
+                        throw new IntermediaryError("LP's lightning node not found in the lightning network graph!");
+                    }
+
+                    lp.lnData = {
+                        publicKey: nodeChannelCapacity.pubkey,
+                        capacity: nodeChannelCapacity.capacity,
+                        numChannels: nodeChannelCapacity.channels
+                    }
+
+                    if(decodedPR.payeeNodeKey!==nodeChannelCapacity.pubkey) {
+                        abortController.abort();
+                        throw new IntermediaryError("Invalid pr returned - payee pubkey");
+                    }
+
+                    if(nodeChannelCapacity.capacity.lt(invoiceSats)) {
+                        abortController.abort();
+                        throw new IntermediaryError("LP's lightning node doesn't have enough inbound capacity for the swap!");
+                    }
+                    if(nodeChannelCapacity.capacity.div(new BN(2)).lt(invoiceSats)) {
+                        abortController.abort();
+                        throw new Error("LP's lightning node probably doesn't have enough inbound capacity for the swap!");
                     }
 
                     const total = parsedData.total;
@@ -1933,6 +2005,7 @@ export class ClientSwapContract<T extends SwapData> {
 
                     const [_, pricingInfo] = await Promise.all([
                         (liquidityPromise || tryWithRetries(() => this.swapContract.getIntermediaryBalance(parsedData.intermediaryKey, amountData.token), null, null, abortController.signal)).then(liquidity => {
+                            lp.liquidity[amountData.token.toString()] = liquidity;
                             if(liquidity.lt(total)) {
                                 throw new IntermediaryError("Intermediary doesn't have enough liquidity");
                             }

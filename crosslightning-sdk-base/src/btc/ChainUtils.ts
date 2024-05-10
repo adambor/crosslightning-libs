@@ -117,6 +117,52 @@ export class ChainUtils {
         timeout = _timeout;
     }
 
+    static async getLNNodeInfo(pubkey: string): Promise<{
+        public_key: string,
+        alias: string,
+        first_seen: number,
+        updated_at: number,
+        color: string,
+        sockets: string,
+        as_number: number,
+        city_id: number,
+        country_id: number,
+        subdivision_id: number,
+        longtitude: number,
+        latitude: number,
+        iso_code: string,
+        as_organization: string,
+        city: {[lang: string]: string},
+        country: {[lang: string]: string},
+        subdivision: {[lang: string]: string},
+        active_channel_count: number,
+        capacity: string,
+        opened_channel_count: number,
+        closed_channel_count: number
+    }> {
+
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"v1/lightning/nodes/"+pubkey, {
+            method: "GET",
+            timeout
+        }));
+
+        if(response.status!==200) {
+            let resp: string;
+            try {
+                resp = await response.text();
+                if(resp==="This node does not exist, or our node is not seeing it yet") return null;
+            } catch (e) {
+                throw new Error(response.statusText);
+            }
+            throw new Error(resp);
+        }
+
+        let jsonBody: any = await response.json();
+
+        return jsonBody;
+
+    }
+
     static async getTransaction(txId: string): Promise<BitcoinTransaction> {
 
         const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"tx/"+txId, {

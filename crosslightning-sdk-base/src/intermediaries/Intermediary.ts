@@ -21,12 +21,24 @@ export type ReputationType = {
     }
 };
 
+export type SCLiquidity = {
+    [token: string]: BN
+};
+
+export type LNChannelData = {
+    publicKey: string,
+    numChannels: number,
+    capacity: BN
+};
+
 export class Intermediary {
 
     readonly url: string;
     readonly address: string;
     readonly services: ServicesType;
     reputation: ReputationType;
+    liquidity: SCLiquidity = {};
+    lnData: LNChannelData;
 
     constructor(url: string, address: string, services: ServicesType, reputation: ReputationType = {}) {
         this.url = url;
@@ -35,17 +47,22 @@ export class Intermediary {
         this.reputation = reputation;
     }
 
-    async getReputation(swapContract: SwapContract<any, any, any, any>): Promise<ReputationType> {
-        const checkReputationTokens: Set<string> = new Set<string>();
-        if(this.services[SwapType.TO_BTC]!=null) {
-            if(this.services[SwapType.TO_BTC].tokens!=null) for(let token of this.services[SwapType.TO_BTC].tokens) {
-                checkReputationTokens.add(token);
+    async getReputation(swapContract: SwapContract<any, any, any, any>, tokens?: string[]): Promise<ReputationType> {
+        let checkReputationTokens: Set<string>;
+        if(tokens==null) {
+            checkReputationTokens = new Set<string>();
+            if(this.services[SwapType.TO_BTC]!=null) {
+                if(this.services[SwapType.TO_BTC].tokens!=null) for(let token of this.services[SwapType.TO_BTC].tokens) {
+                    checkReputationTokens.add(token);
+                }
             }
-        }
-        if(this.services[SwapType.TO_BTCLN]!=null) {
-            if(this.services[SwapType.TO_BTCLN].tokens!=null) for(let token of this.services[SwapType.TO_BTCLN].tokens) {
-                checkReputationTokens.add(token);
+            if(this.services[SwapType.TO_BTCLN]!=null) {
+                if(this.services[SwapType.TO_BTCLN].tokens!=null) for(let token of this.services[SwapType.TO_BTCLN].tokens) {
+                    checkReputationTokens.add(token);
+                }
             }
+        } else {
+            checkReputationTokens = new Set<string>(tokens);
         }
 
         const promises = [];
