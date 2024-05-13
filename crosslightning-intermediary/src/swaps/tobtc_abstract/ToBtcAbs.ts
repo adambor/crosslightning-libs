@@ -709,6 +709,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                     // console.error("[To BTC: Solana.Initialize] No invoice submitted");
                     continue;
                 }
+                savedInvoice.txIds.init = (event as any).meta?.txId;
 
                 if(savedInvoice.metadata!=null) savedInvoice.metadata.times.txReceived = Date.now();
 
@@ -727,6 +728,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                     console.error("[To BTC: Solana.ClaimEvent] No invoice submitted");
                     continue;
                 }
+                savedInvoice.txIds.claim = (event as any).meta?.txId;
 
                 console.log("[To BTC: Solana.ClaimEvent] Transaction confirmed! Event: ", event);
 
@@ -752,6 +754,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                     console.error("[To BTC: Solana.RefundEvent] No invoice submitted");
                     continue;
                 }
+                savedInvoice.txIds.refund = (event as any).meta?.txId;
 
                 console.log("[To BTC: Solana.RefundEvent] Transaction refunded! Event: ", event);
 

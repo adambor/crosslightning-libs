@@ -231,7 +231,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 console.log("[From BTC-LN: BTCLN.SettleHodlInvoice] Invoice settled, id: ", paymentHash.toString("hex"));
                 await this.removeSwapData(paymentHash.toString("hex"), null);
             } catch (e) {
-                console.error("[From BTC-LN: BTCLN.SettleHodlInvoice] Cannot cancel hodl invoice id: ", paymentHash.toString("hex"));
+                console.error("[From BTC-LN: BTCLN.SettleHodlInvoice] Cannot settle hodl invoice id: ", paymentHash.toString("hex"));
             }
         }
     }
@@ -268,6 +268,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
                 const isSwapFound = savedSwap != null;
                 if (isSwapFound) {
+                    savedSwap.txIds.init = (event as any).meta?.txId;
                     if(savedSwap.metadata!=null) savedSwap.metadata.times.initTxReceived = Date.now();
 
                     if(savedSwap.state===FromBtcLnSwapState.CREATED) {
@@ -294,6 +295,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 if (!isSwapFound) {
                     continue;
                 }
+
+                savedSwap.txIds.claim = (event as any).meta?.txId;
 
                 if(savedSwap.metadata!=null) savedSwap.metadata.times.claimTxReceived = Date.now();
 
@@ -333,6 +336,8 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
                 if (!isSwapFound) {
                     continue;
                 }
+
+                savedSwap.txIds.refund = (event as any).meta?.txId;
 
                 try {
                     await lncli.cancelHodlInvoice({

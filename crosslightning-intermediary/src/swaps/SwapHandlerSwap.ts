@@ -10,6 +10,11 @@ export class SwapHandlerSwap<T extends SwapData> extends Lockable implements Sto
         times: {[key: string]: number},
         [key: string]: any
     };
+    txIds: {
+        init?: string,
+        claim?: string,
+        refund?: string
+    } = {};
 
     constructor();
     constructor(obj: any);
@@ -19,13 +24,15 @@ export class SwapHandlerSwap<T extends SwapData> extends Lockable implements Sto
         if(obj!=null) {
             this.data = obj.data==null ? null : SwapData.deserialize(obj.data);
             this.metadata = obj.metadata;
+            this.txIds = obj.txIds || {};
         }
     }
 
     serialize(): any {
         return {
             data: this.data==null ? null : this.data.serialize(),
-            metadata: this.metadata
+            metadata: this.metadata,
+            txIds: this.txIds
         }
     }
 

@@ -226,6 +226,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
                 const isSwapFound = savedSwap != null;
                 if (isSwapFound) {
+                    savedSwap.txIds.init = (event as any).meta?.txId;
                     if(savedSwap.metadata!=null) savedSwap.metadata.times.initTxReceived = Date.now();
 
                     if(savedSwap.state===FromBtcSwapState.CREATED) {
@@ -248,6 +249,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                     continue;
                 }
 
+                savedSwap.txIds.claim = (event as any).meta?.txId;
                 if(savedSwap.metadata!=null) savedSwap.metadata.times.claimTxReceived = Date.now();
 
                 await savedSwap.setState(FromBtcSwapState.CLAIMED);
@@ -269,6 +271,8 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                 if (isSwapNotFound) {
                     continue;
                 }
+
+                savedSwap.txIds.refund = (event as any).meta?.txId;
 
                 await savedSwap.setState(FromBtcSwapState.REFUNDED);
                 await this.removeSwapData(event.paymentHash, event.sequence);
