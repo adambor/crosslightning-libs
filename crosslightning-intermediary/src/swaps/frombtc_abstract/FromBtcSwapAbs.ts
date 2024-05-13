@@ -21,6 +21,7 @@ export class FromBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
     readonly amount: BN;
     readonly swapFee: BN;
     authorizationExpiry: BN;
+    txId: string;
 
     constructor(address: string, amount: BN, swapFee: BN);
     constructor(obj: any);
@@ -39,6 +40,7 @@ export class FromBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
             this.amount = new BN(prOrObj.amount);
             this.swapFee = new BN(prOrObj.swapFee);
             this.authorizationExpiry = prOrObj.authorizationExpiry==null ? null : new BN(prOrObj.authorizationExpiry);
+            this.txId = prOrObj.txId;
         }
         this.type = SwapHandlerType.FROM_BTC;
     }
@@ -50,6 +52,7 @@ export class FromBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
         partialSerialized.amount = this.amount.toString(10);
         partialSerialized.swapFee = this.swapFee.toString(10);
         partialSerialized.authorizationExpiry = this.authorizationExpiry==null ? null : this.authorizationExpiry.toString(10);
+        partialSerialized.txId = this.txId;
         return partialSerialized;
     }
 

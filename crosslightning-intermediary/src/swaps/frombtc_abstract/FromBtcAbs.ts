@@ -249,6 +249,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
                     continue;
                 }
 
+                savedSwap.txId = Buffer.from(event.secret, "hex").reverse().toString("hex");
                 savedSwap.txIds.claim = (event as any).meta?.txId;
                 if(savedSwap.metadata!=null) savedSwap.metadata.times.claimTxReceived = Date.now();
 
