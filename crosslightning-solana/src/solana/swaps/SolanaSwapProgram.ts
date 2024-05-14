@@ -2194,16 +2194,6 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         if(computeBudget!=null) tx.add(ComputeBudgetProgram.setComputeUnitLimit({
             units: computeBudget,
         }));
-
-        //Check if bribe is included
-        const arr = feeRate.split(";");
-        if(arr.length>1) {
-
-        } else {
-            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports: BigInt(feeRate)
-            }));
-        }
     }
 
     static applyFeeRateEnd(tx: Transaction, computeBudget: number, feeRate: string): boolean {
@@ -2235,7 +2225,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 toPubkey: bribeAddress,
                 lamports: (BigInt(computeBudget || 200000)*cuPrice)/BigInt(1000000)
             }));
+            return;
         }
+        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+            microLamports: BigInt(feeRate)
+        }));
     }
 
     static getFeePerCU(feeRate: string): string {
