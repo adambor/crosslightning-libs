@@ -11,7 +11,7 @@ export class BinanceSwapPrice implements ISwapPrice {
         [address: string]: {
             pair: string,
             decimals: number,
-            invert: boolean
+            // invert: boolean
         }
     };
 
@@ -34,24 +34,21 @@ export class BinanceSwapPrice implements ISwapPrice {
         [address: string]: {
             pair: string,
             decimals: number,
-            invert: boolean
+            // invert: boolean
         }
     } {
         return {
             [usdcAddress]: {
-                pair: "BTCUSDC",
-                decimals: 6,
-                invert: true
+                pair: "!BTCUSDC",
+                decimals: 6
             },
             [usdtAddress]: {
-                pair: "BTCUSDT",
-                decimals: 6,
-                invert: true
+                pair: "!BTCUSDT",
+                decimals: 6
             },
             [wbtcAddress]: {
                 pair: "WBTCBTC",
-                decimals: 8,
-                invert: false
+                decimals: 8
             }
         };
     }
@@ -60,7 +57,7 @@ export class BinanceSwapPrice implements ISwapPrice {
         [address: string]: {
             pair: string,
             decimals: number,
-            invert: boolean
+            // invert: boolean
         }
     });
     constructor(url: string, usdcAddress?: string, usdtAddress?: string, solAddress?: string, wbtcAddress?: string)
@@ -69,36 +66,56 @@ export class BinanceSwapPrice implements ISwapPrice {
         [address: string]: {
             pair: string,
             decimals: number,
-            invert: boolean
+            // invert: boolean
         }
     }, usdtAddress?: string, solAddress?: string, wbtcAddress?: string) {
         this.url = url || "https://api.binance.com/api/v3";
         if(usdcAddressOrCoinmap==null || typeof(usdcAddressOrCoinmap)==="string") {
             this.COINS_MAP = {
                 [usdcAddressOrCoinmap as string]: {
-                    pair: "BTCUSDC",
+                    pair: "!BTCUSDC",
                     decimals: 6,
-                    invert: true
+                    // invert: true
                 },
                 [usdtAddress]: {
-                    pair: "BTCUSDT",
+                    pair: "!BTCUSDT",
                     decimals: 6,
-                    invert: true
+                    // invert: true
                 },
                 [solAddress]: {
                     pair: "SOLBTC",
                     decimals: 9,
-                    invert: false
+                    // invert: false
                 },
                 [wbtcAddress]: {
                     pair: "WBTCBTC",
                     decimals: 8,
-                    invert: false
+                    // invert: false
                 }
             };
         } else {
             this.COINS_MAP = usdcAddressOrCoinmap;
         }
+    }
+
+    async fetchPrice(pair: string) {
+        const response: Response = await fetch(this.url + "/ticker/price?symbol=" + pair, {
+            method: "GET"
+        });
+
+        if (response.status !== 200) {
+            let resp: string;
+            try {
+                resp = await response.text();
+            } catch (e) {
+                throw new Error(response.statusText);
+            }
+            throw new Error(resp);
+        }
+
+        let jsonBody: any = await response.json();
+
+        return parseFloat(jsonBody.price);
     }
 
     preFetchPrice(token: TokenAddress): Promise<BN> {
@@ -108,56 +125,59 @@ export class BinanceSwapPrice implements ISwapPrice {
 
         if(coin==null) throw new Error("Token not found");
 
-        return this.getPrice(coin.pair, coin.invert);
+        return this.getPrice(coin.pair);
     }
 
     /**
-     * Returns coin price in mSat
+     * Returns coin price in micro sat (uSat)
      *
      * @param pair
-     * @param invert
      */
-    async getPrice(pair: string, invert: boolean): Promise<BN> {
+    async getPrice(pair: string): Promise<BN> {
 
         if(pair.startsWith("$fixed-")) {
             const amt: number = parseFloat(pair.substring(7));
-            return new BN(Math.floor(amt*1000));
+            return new BN(Math.floor(amt*1000000));
         }
 
+        const arr = pair.split(";");
+
+        const promises = [];
         const cachedValue = this.cache[pair];
         if(cachedValue==null || cachedValue.expiry<Date.now()) {
-            const response: Response = await fetch(this.url+"/ticker/price?symbol="+pair, {
-                method: "GET"
-            });
-
-            if(response.status!==200) {
-                let resp: string;
-                try {
-                    resp = await response.text();
-                } catch (e) {
-                    throw new Error(response.statusText);
+            let resultPrice = 1;
+            for (let pair of arr) {
+                let invert = false
+                if (pair.startsWith("!")) {
+                    invert = true;
+                    pair = pair.substring(1);
                 }
-                throw new Error(resp);
+                const cachedValue = this.cache[pair];
+                if (cachedValue == null || cachedValue.expiry < Date.now()) {
+                    promises.push(this.fetchPrice(pair).then(price => {
+                        this.cache[pair] = {
+                            price,
+                            expiry: Date.now() + CACHE_DURATION
+                        };
+
+                        if (invert) {
+                            resultPrice /= price;
+                        } else {
+                            resultPrice *= price;
+                        }
+                    }));
+                }
             }
 
-            let jsonBody: any = await response.json();
-
-            const price: number = parseFloat(jsonBody.price);
+            await Promise.all(promises);
 
             this.cache[pair] = {
-                price,
-                expiry: Date.now()+CACHE_DURATION
+                price: resultPrice,
+                expiry: Date.now() + CACHE_DURATION
             };
         }
 
-        let result: BN;
-        if(invert) {
-            result = new BN(Math.floor((1/this.cache[pair].price)*100000000000));
-        } else {
-            result = new BN(Math.floor(this.cache[pair].price*100000000000));
-        }
-
-        return result;
+        return new BN(Math.floor(this.cache[pair].price*100000000000000));
     }
 
     async getFromBtcSwapAmount(fromAmount: BN, toToken: TokenAddress, roundUp?: boolean, preFetchedPrice?: BN): Promise<BN> {
@@ -167,11 +187,11 @@ export class BinanceSwapPrice implements ISwapPrice {
 
         if(coin==null) throw new Error("Token not found");
 
-        const price = preFetchedPrice || await this.getPrice(coin.pair, coin.invert);
+        const price = preFetchedPrice || await this.getPrice(coin.pair);
 
         return fromAmount
             .mul(new BN(10).pow(new BN(coin.decimals)))
-            .mul(new BN(1000)) //To msat
+            .mul(new BN(1000000)) //To usat
             .add(roundUp ? price.sub(new BN(1)) : new BN(0))
             .div(price)
     }
@@ -183,13 +203,13 @@ export class BinanceSwapPrice implements ISwapPrice {
 
         if(coin==null) throw new Error("Token not found");
 
-        const price = preFetchedPrice || await this.getPrice(coin.pair, coin.invert);
+        const price = preFetchedPrice || await this.getPrice(coin.pair);
 
         return fromAmount
             .mul(price)
             .div(new BN(10).pow(new BN(coin.decimals)))
-            .add(roundUp ? new BN(999) : new BN(0))
-            .div(new BN(1000));
+            .add(roundUp ? new BN(999999) : new BN(0))
+            .div(new BN(1000000));
     }
 
 }

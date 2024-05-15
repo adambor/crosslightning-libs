@@ -1284,15 +1284,15 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 }
 
                 if(data.state===ToBtcLnSwapState.NON_PAYABLE) {
-                    const isCommited = await this.swapContract.isCommited(data.data);
-
-                    if(!isCommited) {
-                        res.status(400).json({
-                            code: 20005,
-                            msg: "Not committed"
-                        });
-                        return;
-                    }
+                    // const isCommited = await this.swapContract.isCommited(data.data);
+                    //
+                    // if(!isCommited) {
+                    //     res.status(400).json({
+                    //         code: 20005,
+                    //         msg: "Not committed"
+                    //     });
+                    //     return;
+                    // }
 
                     const refundSigData = await this.swapContract.getRefundSignature(data.data, this.config.authorizationTimeout);
 
