@@ -3,7 +3,7 @@ import {AnchorProvider, BorshCoder, EventParser, IdlAccounts, IdlEvents, IdlType
 import * as BN from "bn.js";
 import {
     AccountInfo,
-    Commitment,
+    Commitment, ComputeBudgetInstruction,
     ComputeBudgetProgram,
     Ed25519Program,
     Keypair, ParsedAccountsModeBlockResponse,
@@ -1263,12 +1263,19 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 tx.tx.recentBlockhash = latestBlockData.blockhash;
                 tx.tx.lastValidBlockHeight = latestBlockData.lastValidBlockHeight;
             }
+
+            if(this.signer.signer==null && tx.tx.signatures.length===0) {
+                const foundIx = tx.tx.instructions.find(ix => ix.programId.equals(ComputeBudgetProgram.programId) && ComputeBudgetInstruction.decodeInstructionType(ix)==="SetComputeUnitPrice")
+                if(foundIx==null) tx.tx.instructions.splice(tx.tx.instructions.length-1, 0, ComputeBudgetProgram.setComputeUnitPrice({microLamports: 1}));
+            }
             tx.tx.feePayer = this.signer.publicKey;
             if(this.cbkBeforeTxSigned!=null) await this.cbkBeforeTxSigned(tx);
             if(tx.signers!=null && tx.signers.length>0) for(let signer of tx.signers) tx.tx.sign(signer);
         }
 
         const signedTxs = await this.signer.wallet.signAllTransactions(txs.map(e => e.tx));
+
+        console.trace("[SolanaSwapProgram]: sendAndConfirm");
 
         const options = {
             skipPreflight: true
@@ -1854,6 +1861,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         if(feeRate==null) feeRate = await this.getRefundFeeRate(swapData);
 
+        console.log("[SolanaSwapProgram] txsRefundsWithAuthorization: feeRate: ", feeRate);
+
         const tx = new Transaction();
         tx.feePayer = this.signer.publicKey;
 
@@ -1922,6 +1931,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             }
         }
         SolanaSwapProgram.applyFeeRateEnd(tx, computeBudget, feeRate);
+
+        console.log("[SolanaSwapProgram] txsRefundsWithAuthorization: constructed TX: ", tx);
 
         return [{
             tx,
@@ -2194,6 +2205,16 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         if(computeBudget!=null) tx.add(ComputeBudgetProgram.setComputeUnitLimit({
             units: computeBudget,
         }));
+
+        //Check if bribe is included
+        const arr = feeRate.split(";");
+        if(arr.length>1) {
+
+        } else {
+            tx.add(ComputeBudgetProgram.setComputeUnitPrice({
+                microLamports: BigInt(feeRate)
+            }));
+        }
     }
 
     static applyFeeRateEnd(tx: Transaction, computeBudget: number, feeRate: string): boolean {
@@ -2225,11 +2246,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 toPubkey: bribeAddress,
                 lamports: (BigInt(computeBudget || 200000)*cuPrice)/BigInt(1000000)
             }));
-            return;
         }
-        tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-            microLamports: BigInt(feeRate)
-        }));
     }
 
     static getFeePerCU(feeRate: string): string {
@@ -2721,9 +2738,11 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
     cbkBeforeTxSigned: (tx: SolTx) => Promise<void>;
 
     onBeforeTxSigned(callback: (tx: SolTx) => Promise<void>): void {
+        console.trace("[SolanaSwapProgram]: onBeforeTxSigned");
         this.cbkBeforeTxSigned = callback;
     }
     offBeforeTxSigned(callback: (tx: SolTx) => Promise<void>): boolean {
+        console.trace("[SolanaSwapProgram]: offBeforeTxSigned");
         this.cbkBeforeTxSigned = null;
         return true;
     }
