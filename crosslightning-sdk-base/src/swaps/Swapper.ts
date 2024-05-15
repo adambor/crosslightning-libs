@@ -1,7 +1,7 @@
 import {BitcoinNetwork} from "../btc/BitcoinNetwork";
 import {ISwapPrice} from "./ISwapPrice";
 import {IWrapperStorage} from "../storage/IWrapperStorage";
-import {ChainEvents, IStorageManager, SwapContract, SwapData} from "crosslightning-base";
+import {ChainEvents, IStorageManager, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
 import {ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";
 import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
 import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
@@ -258,6 +258,15 @@ export class Swapper<
         await this.tobtc.stop();
         await this.frombtcln.stop();
         await this.frombtc.stop();
+    }
+
+    getSupportedTokens(swapType: SwapType): Set<string> {
+        const set = new Set<string>();
+        this.intermediaryDiscovery.intermediaries.forEach(lp => {
+            if(lp.services[swapType]==null) return;
+            lp.services[swapType].tokens.forEach(token => set.add(token));
+        });
+        return set;
     }
 
     async createSwap<S extends ISwap>(

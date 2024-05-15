@@ -121,7 +121,7 @@ export class CoinPaprikaPriceProvider implements IPriceProvider {
 
         if(coinId.startsWith("$fixed-")) {
             const amt: number = parseFloat(coinId.substring(7));
-            return new BN(Math.floor(amt*1000));
+            return new BN(Math.floor(amt*1000000));
         }
 
         const response: Response = await fetchWithTimeout(this.url+"/tickers/"+coinId+"?quotes=BTC", {
@@ -144,8 +144,16 @@ export class CoinPaprikaPriceProvider implements IPriceProvider {
 
         const amt: number = jsonBody.quotes.BTC.price;
 
-        return new BN(amt*100000000000);
+        return new BN(amt*100000000000000);
 
+    }
+
+    getDecimals(tokenAddress: TokenAddress): number {
+        const coin = this.COINS_MAP[tokenAddress];
+
+        if(coin==null) throw new Error("Token not found");
+
+        return coin.coinId==="$ignore" ? -1 : coin.decimals;
     }
 
 }

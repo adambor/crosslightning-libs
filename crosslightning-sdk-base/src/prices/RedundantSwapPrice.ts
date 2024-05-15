@@ -6,11 +6,8 @@ import {CoinAddresses} from "./PricesTypes";
 import {tryWithRetries} from "../utils/RetryUtils";
 import {HttpResponseError} from "../errors/HttpResponseError";
 import {BinancePriceProvider} from "./BinancePriceProvider";
-import {BinanceSwapPrice} from "./BinanceSwapPrice";
 import {OKXPriceProvider} from "./OKXPriceProvider";
-import {OKXSwapPrice} from "./OKXSwapPrice";
 import {CoinGeckoPriceProvider} from "./CoinGeckoPriceProvider";
-import {CoinGeckoSwapPrice} from "./CoinGeckoSwapPrice";
 import {CoinPaprikaPriceProvider} from "./CoinPaprikaPriceProvider";
 
 function promiseAny(promises: Promise<any>[]): Promise<any> {
@@ -35,14 +32,63 @@ function promiseAny(promises: Promise<any>[]): Promise<any> {
 
 const CACHE_DURATION = 10000;
 
+function objectMap<I, O>(obj: {[key: string]: I}, func: (input: I, key: string) => O): {[key: string]: O} {
+    const resp: {[key: string]: O} = {};
+    for(let key in obj) {
+        resp[key] = func(obj[key], key);
+    }
+    return resp;
+}
+
+export type RedundantSwapPriceAssets = {
+    [ticker: string]: {
+        binancePair: string,
+        okxPair: string,
+        coinGeckoCoinId: string,
+        coinPaprikaCoinId: string,
+        decimals: number
+    }
+};
+
 export class RedundantSwapPrice extends ISwapPrice {
+
+    static createFromTokenMap(maxAllowedFeeDiffPPM: BN, assets: RedundantSwapPriceAssets, cacheTimeout?: number): RedundantSwapPrice {
+        const priceApis = [
+            new BinancePriceProvider(objectMap(assets, (input, key) => {
+                return input.binancePair==null ? null : {
+                    pair: input.binancePair,
+                    decimals: input.decimals
+                }
+            })),
+            new OKXPriceProvider(objectMap(assets, (input, key) => {
+                return input.okxPair==null ? null : {
+                    pair: input.okxPair,
+                    decimals: input.decimals
+                }
+            })),
+            new CoinGeckoPriceProvider(objectMap(assets, (input, key) => {
+                return input.coinGeckoCoinId==null ? null : {
+                    coinId: input.coinGeckoCoinId,
+                    decimals: input.decimals
+                }
+            })),
+            new CoinPaprikaPriceProvider(objectMap(assets, (input, key) => {
+                return input.coinPaprikaCoinId==null ? null : {
+                    coinId: input.coinPaprikaCoinId,
+                    decimals: input.decimals
+                }
+            }))
+        ];
+
+        return new RedundantSwapPrice(maxAllowedFeeDiffPPM, objectMap(assets, (input, key) => input.decimals), priceApis, cacheTimeout);
+    }
 
     static create(maxAllowedFeeDiffPPM: BN, cacheTimeout?: number, wbtcAdress?: string, usdcAddress?: string, usdtAddress?: string): RedundantSwapPrice {
 
         const priceApis = [
-            new BinancePriceProvider(BinanceSwapPrice.createCoinsMap(wbtcAdress, usdcAddress, usdtAddress)),
-            new OKXPriceProvider(OKXSwapPrice.createCoinsMap(wbtcAdress, usdcAddress, usdtAddress)),
-            new CoinGeckoPriceProvider(CoinGeckoSwapPrice.createCoinsMap(wbtcAdress, usdcAddress, usdtAddress)),
+            new BinancePriceProvider(BinancePriceProvider.createCoinsMap(wbtcAdress, usdcAddress, usdtAddress)),
+            new OKXPriceProvider(OKXPriceProvider.createCoinsMap(wbtcAdress, usdcAddress, usdtAddress)),
+            new CoinGeckoPriceProvider(CoinGeckoPriceProvider.createCoinsMap(wbtcAdress, usdcAddress, usdtAddress)),
             new CoinPaprikaPriceProvider(CoinPaprikaPriceProvider.createCoinsMap(wbtcAdress, usdcAddress, usdtAddress))
         ];
 
@@ -53,9 +99,9 @@ export class RedundantSwapPrice extends ISwapPrice {
     static createFromTokens(maxAllowedFeeDiffPPM: BN, tokens: CoinAddresses, cacheTimeout?: number, nativeTokenTicker?: string): RedundantSwapPrice {
 
         const priceApis = [
-            new BinancePriceProvider(BinanceSwapPrice.createCoinsMapFromTokens(tokens, nativeTokenTicker)),
-            new OKXPriceProvider(OKXSwapPrice.createCoinsMapFromTokens(tokens, nativeTokenTicker)),
-            new CoinGeckoPriceProvider(CoinGeckoSwapPrice.createCoinsMapFromTokens(tokens, nativeTokenTicker)),
+            new BinancePriceProvider(BinancePriceProvider.createCoinsMapFromTokens(tokens, nativeTokenTicker)),
+            new OKXPriceProvider(OKXPriceProvider.createCoinsMapFromTokens(tokens, nativeTokenTicker)),
+            new CoinGeckoPriceProvider(CoinGeckoPriceProvider.createCoinsMapFromTokens(tokens, nativeTokenTicker)),
             new CoinPaprikaPriceProvider(CoinPaprikaPriceProvider.createCoinsMapFromTokens(tokens, nativeTokenTicker))
         ];
 
@@ -154,7 +200,7 @@ export class RedundantSwapPrice extends ISwapPrice {
         return operational;
     }
 
-    _getPrice(token, abortSignal?: AbortSignal): Promise<BN> {
+    _getPrice(token: TokenAddress, abortSignal?: AbortSignal): Promise<BN> {
         return tryWithRetries(() => {
             const operationalPriceApi = this.getOperationalPriceApi();
             if(operationalPriceApi!=null) {
@@ -178,6 +224,7 @@ export class RedundantSwapPrice extends ISwapPrice {
             }
             return promiseAny(this.getMaybeOperationalPriceApis().map(obj =>
                 obj.priceApi.getPrice(token, abortSignal).then(price => {
+                    console.log("Price from: "+obj.priceApi.constructor.name+": ", price.toString(10));
                     obj.operational = true;
                     return price;
                 }).catch(e => {
@@ -232,7 +279,7 @@ export class RedundantSwapPrice extends ISwapPrice {
 
         return fromAmount
             .mul(new BN(10).pow(new BN(this.COINS_MAP[toToken.toString()])))
-            .mul(new BN(1000)) //To msat
+            .mul(new BN(1000000)) //To usat
             .div(price)
     }
 
@@ -243,7 +290,7 @@ export class RedundantSwapPrice extends ISwapPrice {
 
         return fromAmount
             .mul(price)
-            .div(new BN(1000))
+            .div(new BN(1000000))
             .div(new BN(10).pow(new BN(this.COINS_MAP[fromToken.toString()])));
     }
 

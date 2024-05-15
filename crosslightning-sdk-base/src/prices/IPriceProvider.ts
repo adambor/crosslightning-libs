@@ -7,9 +7,10 @@ export interface IPriceProvider {
     /**
      * Returns coin price in mSat
      *
-     * @param pair
-     * @param invert
+     * @param token
+     * @param abortSignal
      */
     getPrice(token: TokenAddress, abortSignal?: AbortSignal): Promise<BN>;
+    getDecimals(token: TokenAddress): number;
 
 }

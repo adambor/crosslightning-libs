@@ -1,13 +1,82 @@
-import {ISwapPrice} from "../swaps/ISwapPrice";
 import * as BN from "bn.js";
-import {Response} from "cross-fetch";
 import {TokenAddress} from "crosslightning-base";
-import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
-import {CoinAddresses} from "./PricesTypes";
+import {fetchWithTimeout} from "../utils/RetryUtils";
 import {IPriceProvider} from "./IPriceProvider";
-import {CoinGeckoCoinsMapType} from "./CoinGeckoSwapPrice";
+import {CoinAddresses} from "./PricesTypes";
+
+export type CoinGeckoCoinsMapType = {
+    [address: string]: {
+        coinId: string,
+        decimals: number
+    }
+};
 
 export class CoinGeckoPriceProvider implements IPriceProvider {
+
+    static createCoinsMap(wbtcAdress?: string, usdcAddress?: string, usdtAddress?: string): CoinGeckoCoinsMapType {
+
+        const coinMap = {
+            "So11111111111111111111111111111111111111112": {
+                coinId: "solana",
+                decimals: 9
+            }
+        };
+
+        if(wbtcAdress!=null) {
+            coinMap[wbtcAdress] = {
+                coinId: "wrapped-bitcoin",
+                decimals: 8
+            };
+        }
+        if(usdcAddress!=null) {
+            coinMap[usdcAddress] = {
+                coinId: "usd-coin",
+                decimals: 6
+            };
+        }
+        if(usdtAddress!=null) {
+            coinMap[usdtAddress] = {
+                coinId: "tether",
+                decimals: 6
+            };
+        }
+
+        return coinMap;
+
+    }
+
+    static createCoinsMapFromTokens(tokens: CoinAddresses, nativeTokenCoinGeckoId?: string): CoinGeckoCoinsMapType {
+
+        const coinMap = {};
+
+        if(tokens.WBTC!=null) {
+            coinMap[tokens.WBTC] = {
+                coinId: "wrapped-bitcoin",
+                decimals: 8
+            };
+        }
+        if(tokens.USDC!=null) {
+            coinMap[tokens.USDC] = {
+                coinId: "usd-coin",
+                decimals: 6
+            };
+        }
+        if(tokens.USDT!=null) {
+            coinMap[tokens.USDT] = {
+                coinId: "tether",
+                decimals: 6
+            };
+        }
+        if(tokens.ETH!=null || nativeTokenCoinGeckoId!=null) {
+            coinMap[tokens.ETH] = {
+                coinId: nativeTokenCoinGeckoId,
+                decimals: 18
+            };
+        }
+
+        return coinMap;
+
+    }
 
     url: string;
     COINS_MAP: CoinGeckoCoinsMapType = {
@@ -50,10 +119,10 @@ export class CoinGeckoPriceProvider implements IPriceProvider {
 
         if(coinId.startsWith("$fixed-")) {
             const amt: number = parseFloat(coinId.substring(7));
-            return new BN(Math.floor(amt*1000));
+            return new BN(Math.floor(amt*1000000));
         }
 
-        const response: Response = await fetchWithTimeout(this.url+"/simple/price?ids="+coinId+"&vs_currencies=sats&precision=3", {
+        const response: Response = await fetchWithTimeout(this.url+"/simple/price?ids="+coinId+"&vs_currencies=sats&precision=6", {
             method: "GET",
             timeout: this.httpRequestTimeout,
             signal: abortSignal
@@ -73,8 +142,16 @@ export class CoinGeckoPriceProvider implements IPriceProvider {
 
         const amt: number = jsonBody[coinId].sats;
 
-        return new BN(amt*1000);
+        return new BN(amt*1000000);
 
+    }
+
+    getDecimals(tokenAddress: TokenAddress): number {
+        const coin = this.COINS_MAP[tokenAddress];
+
+        if(coin==null) throw new Error("Token not found");
+
+        return coin.coinId==="$ignore" ? -1 : coin.decimals;
     }
 
 }
