@@ -535,7 +535,7 @@ export class FromBtcAbs<T extends SwapData> extends SwapHandler<FromBtcSwapAbs<T
 
             abortController.signal.throwIfAborted();
 
-            if(balance==null && total.gt(balance)) {
+            if(balance==null || total.gt(balance)) {
                 await responseStream.writeParamsAndEnd({
                     code: 20002,
                     msg: "Not enough liquidity"
