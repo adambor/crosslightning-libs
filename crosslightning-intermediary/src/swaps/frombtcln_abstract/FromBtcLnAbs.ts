@@ -416,7 +416,7 @@ export class FromBtcLnAbs<T extends SwapData> extends SwapHandler<FromBtcLnSwapA
 
         abortController.signal.throwIfAborted();
 
-        const hasEnoughBalance = balance.gte(sendAmount);
+        const hasEnoughBalance = balance!=null && balance.gte(sendAmount);
         if (!hasEnoughBalance) {
             await cancelAndRemove();
             console.error("[From BTC-LN: REST.GetInvoicePaymentAuth] ERROR Not enough balance on smart chain to honor the request");
