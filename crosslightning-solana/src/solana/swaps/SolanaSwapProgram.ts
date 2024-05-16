@@ -95,8 +95,8 @@ const CUCosts = {
     DATA_REMOVE: 50000,
     DATA_CREATE_AND_WRITE: 15000,
     DATA_WRITE: 15000,
-    CLAIM_ONCHAIN: 200000,
-    CLAIM_ONCHAIN_PAY_OUT: 200000,
+    CLAIM_ONCHAIN: 600000,
+    CLAIM_ONCHAIN_PAY_OUT: 600000,
     ATA_CLOSE: 10000,
     ATA_INIT: 40000,
     REFUND: 15000,
@@ -1708,12 +1708,25 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 .instruction();
         }
 
+        if(ataInitIx!=null) {
+            const ataInitTx = new Transaction();
+            ataInitTx.feePayer = this.signer.publicKey;
+
+            SolanaSwapProgram.applyFeeRate(ataInitTx, CUCosts.ATA_INIT, feeRate);
+            ataInitTx.add(ataInitIx);
+            SolanaSwapProgram.applyFeeRateEnd(ataInitTx, CUCosts.ATA_INIT, feeRate);
+
+            txs.push({
+                tx: ataInitTx,
+                signers: []
+            });
+        }
+
         const solanaTx = new Transaction();
         solanaTx.feePayer = this.signer.publicKey;
 
         solanaTx.add(verifyIx);
-        SolanaSwapProgram.applyFeeRate(solanaTx, computeBudget, feeRate);
-        if(ataInitIx!=null) solanaTx.add(ataInitIx);
+        // SolanaSwapProgram.applyFeeRate(solanaTx, computeBudget, feeRate);
         solanaTx.add(claimIx);
         SolanaSwapProgram.applyFeeRateEnd(solanaTx, computeBudget, feeRate);
 
