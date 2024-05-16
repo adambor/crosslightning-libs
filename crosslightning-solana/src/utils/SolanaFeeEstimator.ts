@@ -6,8 +6,7 @@ const MAX_FEE_AGE = 5000;
 export type FeeBribeData = {
     address: string,
     endpoint: string,
-    getBribeFee?: (original: BN) => BN,
-    getStaticFee?: (feeRate: BN) => BN
+    getBribeFee?: (original: BN) => BN
 };
 
 export class SolanaFeeEstimator {
@@ -19,6 +18,7 @@ export class SolanaFeeEstimator {
     private useHeliusApi: "yes" | "no" | "auto";
     private heliusApiSupported: boolean = true;
     private readonly bribeData?: FeeBribeData;
+    private readonly getStaticFee?: (original: BN) => BN;
 
     private blockFeeCache: {
         timestamp: number,
@@ -31,7 +31,8 @@ export class SolanaFeeEstimator {
         numSamples: number = 8,
         period: number = 150,
         useHeliusApi: "yes" | "no" | "auto" = "auto",
-        bribeData?: FeeBribeData
+        getStaticFee?: (feeRate: BN) => BN,
+        bribeData?: FeeBribeData,
     ) {
         this.connection = connection;
         this.maxFeeMicroLamports = new BN(maxFeeMicroLamports);
@@ -39,6 +40,7 @@ export class SolanaFeeEstimator {
         this.period = period;
         this.useHeliusApi = useHeliusApi;
         this.bribeData = bribeData;
+        this.getStaticFee = getStaticFee;
     }
 
     private async getBlockMeanFeeRate(slot: number): Promise<BN | null> {
@@ -201,8 +203,8 @@ export class SolanaFeeEstimator {
     getFeeRate(mutableAccounts: PublicKey[]): Promise<string> {
         return this._getFeeRate(mutableAccounts).then(e =>
             this.bribeData==null ?
-                e.toString(10) :
-                (this.bribeData.getBribeFee!=null ? this.bribeData.getBribeFee(e) : e).toString(10)+(this.bribeData.getStaticFee==null ? "" : ";"+this.bribeData.getStaticFee(e).toString(10))+";"+this.bribeData.address
+                e.toString(10)+";"+(this.getStaticFee==null ? "0" : this.getStaticFee(e).toString(10)) :
+                (this.bribeData.getBribeFee!=null ? this.bribeData.getBribeFee(e) : e).toString(10)+";"+(this.getStaticFee==null ? "0" : this.getStaticFee(e).toString(10))+";"+this.bribeData.address
         );
     }
 

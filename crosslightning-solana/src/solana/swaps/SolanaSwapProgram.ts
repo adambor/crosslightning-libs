@@ -2208,11 +2208,16 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         //Check if bribe is included
         const arr = feeRate.split(";");
-        if(arr.length>1) {
+        if(arr.length>2) {
 
         } else {
+            let fee: bigint = BigInt(arr[0]);
+            if(arr.length>1) {
+                const staticFee = BigInt(arr[1])*BigInt(1000000)/BigInt(computeBudget);
+                fee += staticFee;
+            }
             tx.add(ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports: BigInt(feeRate)
+                microLamports: fee
             }));
         }
     }
@@ -2237,15 +2242,6 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
                 lamports: staticFee + ((BigInt(computeBudget || 200000)*cuPrice)/BigInt(1000000))
             }));
             return;
-        }
-        if(arr.length>1) {
-            const cuPrice = BigInt(arr[0]);
-            const bribeAddress = new PublicKey(arr[1]);
-            tx.add(SystemProgram.transfer({
-                fromPubkey: tx.feePayer,
-                toPubkey: bribeAddress,
-                lamports: (BigInt(computeBudget || 200000)*cuPrice)/BigInt(1000000)
-            }));
         }
     }
 
