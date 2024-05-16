@@ -9,7 +9,7 @@ import {UserError} from "../errors/UserError";
 import {IntermediaryError} from "../errors/IntermediaryError";
 import {ISwapPrice} from "./ISwapPrice";
 import {
-    ChainSwapType,
+    ChainSwapType, IntermediaryReputationType,
     SignatureVerificationError,
     SwapCommitStatus,
     SwapContract,
@@ -636,6 +636,11 @@ export class ClientSwapContract<T extends SwapData> {
                     const abortController = new AbortController();
                     _abortController.signal.addEventListener("abort", () => abortController.abort(_abortController.signal.reason));
 
+                    const reputationPromise: Promise<IntermediaryReputationType> = tryWithRetries(() => this.swapContract.getIntermediaryReputation(lp.address, amountData.token), null, null, abortController.signal).catch(e => {
+                        abortController.abort(e);
+                        return null;
+                    });
+
                     const {parsedData, preFetchSignatureVerificationData} = await this.postWithRetries(lp.url+"/tobtc/payInvoice", {
                         ...additionalParams,
                         address,
@@ -720,6 +725,15 @@ export class ClientSwapContract<T extends SwapData> {
                             throw new IntermediaryError("Invalid data returned");
                         }
                     }
+
+                    const reputation = await reputationPromise;
+                    abortController.signal.throwIfAborted();
+
+                    if(reputation==null) {
+                        throw new IntermediaryError("Invalid data returned - invalid LP vault");
+                    }
+
+                    lp.reputation[amountData.token.toString()] = reputation;
 
                     const [pricingInfo, _] = await Promise.all([
                         this.verifyReturnedPrice(true, data, amount, parsedData, amountData.token, new BN(lp.services[SwapType.TO_BTC].swapBaseFee), new BN(lp.services[SwapType.TO_BTC].swapFeePPM), pricePreFetchPromise, abortController.signal),
@@ -1133,7 +1147,8 @@ export class ClientSwapContract<T extends SwapData> {
             feeRatePromise?: Promise<any>,
             pricePreFetchPromise?: Promise<BN>,
             preFetchSignatureVerificationData?: Promise<any>,
-            payStatusPromise?: Promise<SwapCommitStatus>
+            payStatusPromise?: Promise<SwapCommitStatus>,
+            reputationPromises?: {[lpAddress: string]: Promise<IntermediaryReputationType>}
         },
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
@@ -1183,6 +1198,14 @@ export class ClientSwapContract<T extends SwapData> {
                     _abortController.signal.addEventListener("abort", () => abortController.abort(_abortController.signal.reason));
 
                     const lpPreFetches = {...preFetches};
+
+                    if(lpPreFetches.reputationPromises==null) lpPreFetches.reputationPromises = {};
+                    if(lpPreFetches.reputationPromises[lp.address]==null) {
+                        lpPreFetches.reputationPromises[lp.address] = tryWithRetries(() => this.swapContract.getIntermediaryReputation(lp.address, amountData.token), null, null, abortController.signal).catch(e => {
+                            abortController.abort(e);
+                            return null;
+                        });
+                    }
 
                     const {parsedData, preFetchSignatureVerificationData: _preFetchSignatureVerificationData} = await this.postWithRetries(lp.url+"/tobtcln"+(amountData.exactIn ? "/payInvoiceExactIn" : "/payInvoice"), {
                         ...additionalParams,
@@ -1272,6 +1295,15 @@ export class ClientSwapContract<T extends SwapData> {
                             throw new IntermediaryError("Invalid data returned");
                         }
                     }
+
+                    const reputation = await lpPreFetches.reputationPromises[lp.address];
+                    abortController.signal.throwIfAborted();
+
+                    if(reputation==null) {
+                        throw new IntermediaryError("Invalid data returned - invalid LP vault");
+                    }
+
+                    lp.reputation[amountData.token.toString()] = reputation;
 
                     const [pricingInfo] = await Promise.all([
                         this.verifyReturnedPrice(true, data, sats, {

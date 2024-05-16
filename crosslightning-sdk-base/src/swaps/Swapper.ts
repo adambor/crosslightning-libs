@@ -31,7 +31,7 @@ import {LnForGasSwap} from "./swapforgas/ln/LnForGasSwap";
 import * as EventEmitter from "events";
 
 export type SwapperOptions<T extends SwapData> = {
-    intermediaryUrl?: string,
+    intermediaryUrl?: string | string[],
     //wbtcToken?: PublicKey,
     pricing?: ISwapPrice,
     registryUrl?: string,
@@ -130,7 +130,7 @@ export class Swapper<
         this.clientSwapContract = clientSwapContract;
 
         if(options.intermediaryUrl!=null) {
-            this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl, [options.intermediaryUrl], options.getRequestTimeout);
+            this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl, Array.isArray(options.intermediaryUrl) ? options.intermediaryUrl : [options.intermediaryUrl], options.getRequestTimeout);
         } else {
             this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl, null, options.getRequestTimeout);
         }
