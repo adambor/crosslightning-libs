@@ -85,7 +85,7 @@ export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
      */
     getOutAmount(): BN {
         const parsedPR = bolt11.decode(this.pr);
-        return new BN(parsedPR.satoshis);
+        return new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
     }
 
     serialize(): any {

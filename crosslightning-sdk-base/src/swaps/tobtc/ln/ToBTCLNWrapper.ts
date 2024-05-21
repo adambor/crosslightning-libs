@@ -72,11 +72,11 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
 
         const parsedPR = bolt11.decode(bolt11PayRequest);
 
-        if(parsedPR.satoshis==null) {
+        if(parsedPR.millisatoshis==null) {
             throw new UserError("Must be an invoice with amount!");
         }
 
-        const sats = new BN(parsedPR.millisatoshis).div(new BN(1000));
+        const sats = new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
 
         const resultPromises = this.contract.payLightning(
             bolt11PayRequest,

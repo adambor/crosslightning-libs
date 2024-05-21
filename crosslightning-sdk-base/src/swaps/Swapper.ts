@@ -161,7 +161,7 @@ export class Swapper<
     isValidLightningInvoice(lnpr: string): boolean {
         try {
             const parsed = bolt11.decode(lnpr);
-            if(parsed.satoshis!=null) return true;
+            if(parsed.millisatoshis!=null) return true;
         } catch (e) {}
         return false;
     }
@@ -191,7 +191,7 @@ export class Swapper<
      */
     static getLightningInvoiceValue(lnpr: string): BN {
         const parsed = bolt11.decode(lnpr);
-        if(parsed.satoshis!=null) return new BN(parsed.satoshis);
+        if(parsed.millisatoshis!=null) return new BN(parsed.millisatoshis).add(new BN(999)).div(new BN(1000));
         return null;
     }
 
@@ -439,7 +439,7 @@ export class Swapper<
     async createToBTCLNSwap(tokenAddress: TokenAddressType, paymentRequest: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN, additionalParams?: Record<string, any>): Promise<ToBTCLNSwap<T>> {
         const parsedPR = bolt11.decode(paymentRequest);
         const amountData = {
-            amount: new BN(parsedPR.millisatoshis).div(new BN(1000)),
+            amount: new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000)),
             token: tokenAddress,
             exactIn: false
         };

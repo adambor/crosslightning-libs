@@ -91,7 +91,7 @@ export class LnForGasSwap<T extends SwapData> implements StorageObject {
      */
     getInAmount(): BN {
         const parsed = bolt11.decode(this.pr);
-        return new BN(parsed.satoshis);
+        return new BN(parsed.millisatoshis).add(new BN(999)).div(new BN(1000));
     }
 
     serialize(): any{

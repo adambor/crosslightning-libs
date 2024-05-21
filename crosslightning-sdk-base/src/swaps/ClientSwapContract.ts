@@ -1160,11 +1160,11 @@ export class ClientSwapContract<T extends SwapData> {
 
         const parsedPR = bolt11.decode(bolt11PayReq);
 
-        if(parsedPR.satoshis==null) {
+        if(parsedPR.millisatoshis==null) {
             throw new UserError("Must be an invoice with amount");
         }
 
-        const sats: BN = new BN(parsedPR.satoshis);
+        const sats: BN = new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
         if(options.expiryTimestamp==null) options.expiryTimestamp = new BN(Math.floor(Date.now()/1000)+options.expirySeconds);
 
         const _abortController = new AbortController();
@@ -1759,7 +1759,8 @@ export class ClientSwapContract<T extends SwapData> {
         const min = new BN(withdrawRequest.minWithdrawable).div(new BN(1000));
         const max = new BN(withdrawRequest.maxWithdrawable).div(new BN(1000));
 
-        const amount = new BN(bolt11.decode(pr).millisatoshis).div(new BN(1000));
+        const parsedPR = bolt11.decode(pr);
+        const amount = new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
 
         if(amount.lt(min)) {
             throw new UserError("Amount less than minimum");
@@ -1963,7 +1964,7 @@ export class ClientSwapContract<T extends SwapData> {
                         throw new IntermediaryError("Invalid pr returned - description hash");
                     }
 
-                    const invoiceSats = new BN(decodedPR.millisatoshis).div(new BN(1000));
+                    const invoiceSats = new BN(decodedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
 
                     let amount: BN;
                     if(!amountData.exactIn) {
@@ -1971,9 +1972,9 @@ export class ClientSwapContract<T extends SwapData> {
                             abortController.abort();
                             throw new IntermediaryError("Invalid amount returned");
                         }
-                        amount = new BN(decodedPR.millisatoshis).div(new BN(1000));
+                        amount = invoiceSats;
                     } else {
-                        if(!invoiceSats.eq(amountData.amount)) {
+                        if(!new BN(decodedPR.millisatoshis).eq(amountData.amount.mul(new BN(1000)))) {
                             abortController.abort();
                             throw new IntermediaryError("Invalid payment request returned, amount mismatch");
                         }
@@ -2150,7 +2151,7 @@ export class ClientSwapContract<T extends SwapData> {
                         if(data.getAmount().lt(minOut)) throw new IntermediaryError("Invalid amount received");
                     } else {
                         if(this.swapPrice!=null && requiredBaseFee!=null && requiredFeePPM!=null) {
-                            const isValidAmount = await this.swapPrice.isValidAmountReceive(new BN(decodedPR.satoshis), requiredBaseFee, requiredFeePPM, data.getAmount(), requiredToken);
+                            const isValidAmount = await this.swapPrice.isValidAmountReceive(new BN(decodedPR.millisatoshis).add(new BN(999)).div(new BN(1000)), requiredBaseFee, requiredFeePPM, data.getAmount(), requiredToken);
                             if(!isValidAmount.isValid) {
                                 throw new IntermediaryError("Fee too high");
                             }
