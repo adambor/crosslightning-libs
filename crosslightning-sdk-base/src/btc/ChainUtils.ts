@@ -433,17 +433,21 @@ export class ChainUtils {
             const result = await ChainUtils.checkAddressTxos(address, txoHash);
             if(result!=null) {
                 let confirmations = 0;
+                let confirmationDelay = 0;
+
                 if(result.tx.status.confirmed) {
                     const tipHeight = await ChainUtils.getTipBlockHeight();
                     confirmations = tipHeight-result.tx.status.block_height+1;
-                }
-
-                let confirmationDelay = 0;
-                if(confirmations===0) {
-                    confirmationDelay = (await this.getTransactionConfirmationDelay(result.tx.fee/(result.tx.weight/4)));
-                    if(confirmationDelay!==-1) confirmationDelay += (requiredConfirmations-1)*BITCOIN_BLOCKTIME;
-                } else {
                     confirmationDelay = ((requiredConfirmations-confirmations)*BITCOIN_BLOCKTIME);
+                } else {
+                    //Get CPFP data
+                    const cpfpData = await ChainUtils.getCPFPData(result.tx.txid);
+                    if(cpfpData.effectiveFeePerVsize==null) {
+                        //Transaction is either confirmed in the meantime, or replaced
+                        continue;
+                    }
+                    confirmationDelay = (await this.getTransactionConfirmationDelay(cpfpData.effectiveFeePerVsize));
+                    if(confirmationDelay!==-1) confirmationDelay += (requiredConfirmations-1)*BITCOIN_BLOCKTIME;
                 }
 
                 if(stateUpdateCbk!=null) stateUpdateCbk(confirmations, result.tx.txid, result.vout, confirmationDelay);
