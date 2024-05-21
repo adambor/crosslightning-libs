@@ -81,4 +81,8 @@ export class ToBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
         await PluginManager.swapStateChange(this, oldState);
     }
 
+    getOutAmount(): BN {
+        return new BN(bolt11.decode(this.pr).millisatoshis).add(new BN(999)).div(new BN(1000));
+    }
+
 }

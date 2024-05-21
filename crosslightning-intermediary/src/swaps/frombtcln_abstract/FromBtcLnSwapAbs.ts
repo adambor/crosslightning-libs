@@ -3,6 +3,7 @@ import {Lockable, StorageObject, SwapData} from "crosslightning-base";
 import {SwapHandlerSwap} from "../SwapHandlerSwap";
 import {PluginManager} from "../../plugins/PluginManager";
 import {FromBtcSwapState, SwapHandlerType} from "../..";
+import * as bolt11 from "bolt11";
 
 export enum FromBtcLnSwapState {
     REFUNDED = -2,
@@ -69,6 +70,10 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
         const oldState = this.state;
         this.state = newState;
         return PluginManager.swapStateChange(this, oldState);
+    }
+
+    getInAmount(): BN {
+        return new BN(bolt11.decode(this.pr).millisatoshis).add(new BN(999)).div(new BN(1000));
     }
 
 }

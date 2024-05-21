@@ -399,13 +399,11 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             console.log("[To BTC-LN: Solana.Initialize] lightning payment request: ", lnPr);
             console.log("[To BTC-LN: Solana.Initialize] Decoded lightning payment request: ", decodedPR);
 
-            if(decodedPR.satoshis==null) {
+            if(decodedPR.millisatoshis==null) {
                 console.error("[To BTC-LN: Solana.Initialize] Invalid invoice with no amount");
                 await markAsNonPayable();
                 return;
             }
-
-            const amountBD = new BN(decodedPR.satoshis);
 
             const maxFee = invoiceData.maxFee;
 
@@ -626,7 +624,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             if(
                 parsedPR.payeeNodeKey!==parsedAuth.destination ||
                 parsedPR.tagsObject.min_final_cltv_expiry!==parsedAuth.cltvDelta ||
-                !new BN(parsedPR.millisatoshis).div(new BN(1000)).eq(parsedAuth.amount)
+                !new BN(parsedPR.millisatoshis).eq(parsedAuth.amount.mul(new BN(1000)))
             ) {
                 await responseStream.writeParamsAndEnd({
                     code: 20102,
@@ -884,7 +882,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
                 abortController.signal.throwIfAborted();
             } else {
-                amountBD = new BN(parsedPR.satoshis);
+                amountBD = new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
 
                 if(amountBD.lt(this.config.min)) {
                     await responseStream.writeParamsAndEnd({
