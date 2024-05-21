@@ -249,6 +249,40 @@ export class ChainUtils {
         }
     }
 
+    static async getCPFPData(txId: string): Promise<{
+        ancestors: {
+            txid: string,
+            fee: number,
+            weight: number
+        }[],
+        descendants: {
+            txid: string,
+            fee: number,
+            weight: number
+        }[],
+        effectiveFeePerVsize: number,
+        sigops: number,
+        adjustedVsize: number
+    }> {
+        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"v1/cpfp/"+txId, {
+            method: "GET",
+            timeout
+        }));
+
+        if(response.status!==200) {
+            let resp: string;
+            try {
+                resp = await response.text();
+            } catch (e) {
+                throw new Error(response.statusText);
+            }
+            throw new Error(resp);
+        }
+
+        let jsonBody: any = await response.json();
+        return jsonBody;
+    }
+
     static async getAddressUTXOs(address: string): Promise<{
         txid: string,
         vout: number,
