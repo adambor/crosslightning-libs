@@ -166,6 +166,12 @@ export class BinanceSwapPrice implements ISwapPrice {
                             resultPrice *= price;
                         }
                     }));
+                } else {
+                    if (invert) {
+                        resultPrice /= cachedValue.price;
+                    } else {
+                        resultPrice *= cachedValue.price;
+                    }
                 }
             }
 
