@@ -2207,6 +2207,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         return this.solanaFeeEstimator.getFeeRate(mutableAccounts);
     }
 
+    static getTransactionNonCUIxs(tx: Transaction): number {
+        let counter = 0;
+        for(let ix of tx.instructions) {
+            if(!ix.programId.equals(ComputeBudgetProgram.programId)) counter++;
+        }
+        return counter;
+    }
+
     //Has to be called after feePayer is set for the tx
     static applyFeeRate(tx: Transaction, computeBudget: number, feeRate: string): boolean {
         if(feeRate==null) return false;
@@ -2227,7 +2235,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         } else {
             let fee: bigint = BigInt(arr[0]);
             if(arr.length>1) {
-                const staticFee = BigInt(arr[1])*BigInt(1000000)/BigInt(computeBudget);
+                const staticFee = BigInt(arr[1])*BigInt(1000000)/BigInt(computeBudget || (200000*SolanaSwapProgram.getTransactionNonCUIxs(tx)));
                 fee += staticFee;
             }
             tx.add(ComputeBudgetProgram.setComputeUnitPrice({
@@ -2253,7 +2261,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             tx.add(SystemProgram.transfer({
                 fromPubkey: tx.feePayer,
                 toPubkey: bribeAddress,
-                lamports: staticFee + ((BigInt(computeBudget || 200000)*cuPrice)/BigInt(1000000))
+                lamports: staticFee + ((BigInt(computeBudget || (200000*(SolanaSwapProgram.getTransactionNonCUIxs(tx)+1)))*cuPrice)/BigInt(1000000))
             }));
             return;
         }
