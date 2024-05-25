@@ -2385,7 +2385,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         return this.getFeeRate(accounts);
     }
 
-    private getATARentExemptLamports(): Promise<BN> {
+    getATARentExemptLamports(): Promise<BN> {
         return Promise.resolve(new BN(SPL_ATA_RENT_EXEMPT));
     }
 
