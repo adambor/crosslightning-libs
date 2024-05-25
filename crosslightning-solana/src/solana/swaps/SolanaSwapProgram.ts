@@ -85,6 +85,7 @@ const SLOT_CACHE_TIME = SLOT_CACHE_SLOTS*SLOT_TIME;
 const PREFETCHED_DATA_VALIDITY = 5000;
 
 const ESCROW_STATE_RENT_EXEMPT = 2658720;
+const SPL_ATA_RENT_EXEMPT = 2039280;
 
 const CUCosts = {
     CLAIM: 25000,
@@ -2385,7 +2386,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
     }
 
     private getATARentExemptLamports(): Promise<BN> {
-        return Promise.resolve(new BN(2039280));
+        return Promise.resolve(new BN(SPL_ATA_RENT_EXEMPT));
     }
 
     async getClaimFee(swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
@@ -2417,7 +2418,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         const priorityMicroLamports = new BN(SolanaSwapProgram.getFeePerCU(feeRate)).mul(new BN(computeBudget));
         const priorityLamports = priorityMicroLamports.div(new BN(1000000)).add(new BN(SolanaSwapProgram.getStaticFee(feeRate)));
 
-        return new BN(5000).add(priorityLamports);
+        //Include rent exempt in claim fee, to take into consideration worst case cost when user destroys ATA
+        return new BN(SPL_ATA_RENT_EXEMPT+5000).add(priorityLamports);
     }
 
     /**
