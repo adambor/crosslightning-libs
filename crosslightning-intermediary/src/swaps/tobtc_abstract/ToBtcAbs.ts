@@ -99,6 +99,10 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
     readonly config: ToBtcConfig;
 
+    readonly pdaExistsForToken: {
+        [token: string]: boolean
+    } = {};
+
     constructor(
         storageDirectory: IIntermediaryStorage<ToBtcSwapAbs<T>>,
         path: string,
@@ -933,6 +937,19 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             const abortController = new AbortController();
             const responseStreamAbortController = responseStream.getAbortSignal();
             responseStreamAbortController.addEventListener("abort", () => abortController.abort(responseStreamAbortController.reason));
+
+            if(!this.pdaExistsForToken[parsedBody.token]) {
+                const reputation = await this.swapContract.getIntermediaryReputation(this.swapContract.getAddress(), this.swapContract.toTokenAddress(parsedBody.token));
+                if(reputation!=null) {
+                    this.pdaExistsForToken[parsedBody.token] = true;
+                } else {
+                    await responseStream.writeParamsAndEnd({
+                        code: 20201,
+                        msg: "Token not supported!"
+                    });
+                    return;
+                }
+            }
 
             const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken).catch(e => {
                 console.error("To BTC: REST.pricePrefetch", e);
