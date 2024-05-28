@@ -14,6 +14,9 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
     username: string;
     password: string;
 
+    addFee: number;
+    feeMultiplier: number;
+
     startFeeEstimator() {
         console.log("Starting fee estimator worker!");
 
@@ -51,12 +54,16 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
         host: string,
         port: number,
         username: string,
-        password: string
+        password: string,
+        addFee?: number,
+        feeMultiplier?: number
     ) {
         this.host = host;
         this.port = port;
         this.username = username;
         this.password = password;
+        this.addFee = addFee;
+        this.feeMultiplier = feeMultiplier;
         this.startFeeEstimator();
 
         process.on('exit', () => {
@@ -71,8 +78,15 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
         });
     }
 
+    getFee(): number {
+        let fee = this.receivedFee[3];
+        if(this.feeMultiplier!=null) fee *= this.feeMultiplier;
+        if(this.addFee!=null) fee += this.addFee;
+        return fee;
+    }
+
     estimateFee(): Promise<number | null> {
-        return Promise.resolve(this.iterations<=1 ? null : this.receivedFee[3]);
+        return Promise.resolve(this.iterations<=1 ? null : this.getFee());
     }
 
 }
