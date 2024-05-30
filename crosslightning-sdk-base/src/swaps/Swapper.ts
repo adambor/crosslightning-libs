@@ -7,7 +7,7 @@ import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
 import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
 import {FromBTCWrapper} from "./frombtc/onchain/FromBTCWrapper";
 import {AmountData, ClientSwapContract, LNURLPay, LNURLWithdraw,} from "./ClientSwapContract";
-import {IntermediaryDiscovery} from "../intermediaries/IntermediaryDiscovery";
+import {IntermediaryDiscovery, SwapBounds} from "../intermediaries/IntermediaryDiscovery";
 import * as bitcoin from "bitcoinjs-lib";
 import * as bolt11 from "bolt11";
 import * as BN from "bn.js";
@@ -135,6 +135,14 @@ export class Swapper<
             this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl, null, options.getRequestTimeout);
         }
 
+        this.intermediaryDiscovery.on("removed", (intermediaries: Intermediary[]) => {
+            this.emit("lpsRemoved", intermediaries);
+        });
+
+        this.intermediaryDiscovery.on("added", (intermediaries: Intermediary[]) => {
+            this.emit("lpsAdded", intermediaries);
+        });
+
         this.options = options;
     }
 
@@ -200,13 +208,24 @@ export class Swapper<
     }
 
     /**
+     * Returns swap bounds (minimums & maximums) for different swap types & tokens
+     */
+    getSwapBounds(): SwapBounds {
+        if(this.intermediaryDiscovery!=null) {
+            return this.intermediaryDiscovery.getSwapBounds();
+        }
+        return null;
+    }
+
+    /**
      * Returns maximum possible swap amount
      *
      * @param kind      Type of the swap
+     * @param token     Token of the swap
      */
-    getMaximum(kind: SwapType): BN {
+    getMaximum(kind: SwapType, token: TokenAddress): BN {
         if(this.intermediaryDiscovery!=null) {
-            const max = this.intermediaryDiscovery.getSwapMaximum(kind);
+            const max = this.intermediaryDiscovery.getSwapMaximum(kind, token);
             if(max!=null) return new BN(max);
         }
         return new BN(0);
@@ -216,10 +235,11 @@ export class Swapper<
      * Returns minimum possible swap amount
      *
      * @param kind      Type of swap
+     * @param token     Token of the swap
      */
-    getMinimum(kind: SwapType): BN {
+    getMinimum(kind: SwapType, token: TokenAddress): BN {
         if(this.intermediaryDiscovery!=null) {
-            const min = this.intermediaryDiscovery.getSwapMinimum(kind);
+            const min = this.intermediaryDiscovery.getSwapMinimum(kind, token);
             if(min!=null) return new BN(min);
         }
         return new BN(0);

@@ -1,5 +1,4 @@
 import {Intermediary, ServicesType} from "./Intermediary";
-import {Response} from "cross-fetch";
 import {randomBytes} from "crypto-browserify";
 import {SwapType} from "../swaps/SwapType";
 import * as BN from "bn.js";
@@ -7,6 +6,7 @@ import {SwapData, TokenAddress} from "crosslightning-base";
 import {SwapContract} from "crosslightning-base/dist";
 import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 import {AbortError} from "../errors/AbortError";
+import {EventEmitter} from "events";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -35,6 +35,17 @@ type InfoHandlerResponse = {
     address: string,
     envelope: string,
     signature: string
+};
+
+export type TokenBounds = {
+    [token: string]: {
+        min: BN,
+        max: BN
+    }
+}
+
+export type SwapBounds = {
+    [key in SwapType]?: TokenBounds
 }
 
 function swapHandlerTypeToSwapType(swapHandlerType: SwapHandlerType): SwapType {
@@ -74,7 +85,7 @@ const REGISTRY_URL = "https://api.github.com/repos/adambor/SolLightning-registry
 const BATCH_SIZE = 20;
 const TIMEOUT = 3000;
 
-export class IntermediaryDiscovery<T extends SwapData> {
+export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
 
     intermediaries: Intermediary[];
 
@@ -86,6 +97,7 @@ export class IntermediaryDiscovery<T extends SwapData> {
     private overrideNodeUrls?: string[];
 
     constructor(swapContract: SwapContract<T, any, any, any>, registryUrl?: string, nodeUrls?: string[], httpRequestTimeout?: number) {
+        super();
         this.swapContract = swapContract;
         this.registryUrl = registryUrl || REGISTRY_URL;
         this.overrideNodeUrls = nodeUrls;
@@ -217,6 +229,7 @@ export class IntermediaryDiscovery<T extends SwapData> {
 
         const fetchedIntermediaries = await tryWithRetries<Intermediary[]>(() => this.fetchIntermediaries(abortSignal), null, null, abortSignal);
         this.intermediaries = fetchedIntermediaries;
+        this.emit("added", fetchedIntermediaries);
 
         console.log("Reloaded intermediaries: ", this.intermediaries);
 
@@ -226,27 +239,58 @@ export class IntermediaryDiscovery<T extends SwapData> {
 
         const fetchedIntermediaries = await tryWithRetries<Intermediary[]>(() => this.fetchIntermediaries(abortSignal), null, null, abortSignal);
         this.intermediaries = fetchedIntermediaries;
+        this.emit("added", fetchedIntermediaries);
 
         console.log("Swap intermediaries: ", this.intermediaries);
 
     }
 
-    getSwapMinimum(swapType: SwapType): number {
+    getSwapBounds(): SwapBounds {
+        const bounds: SwapBounds = {};
+
+        this.intermediaries.forEach(intermediary => {
+            for(let swapType in intermediary.services) {
+
+                const swapService: SwapHandlerInfoType = intermediary.services[swapType];
+                if(bounds[swapType]==null) bounds[swapType] = {};
+                const tokenBounds: TokenBounds = bounds[swapType];
+
+                for(let token of swapService.tokens) {
+                    const tokenMinMax = tokenBounds[token];
+                    if(tokenMinMax==null) {
+                        tokenBounds[token] = {
+                            min: new BN(swapService.min),
+                            max: new BN(swapService.max)
+                        }
+                    } else {
+                        tokenMinMax.min = BN.min(tokenMinMax.min, new BN(swapService.min));
+                        tokenMinMax.max = BN.min(tokenMinMax.max, new BN(swapService.max));
+                    }
+                }
+            }
+        });
+
+        return bounds;
+    }
+
+    getSwapMinimum(swapType: SwapType, token: TokenAddress): number {
         let min;
+        const tokenStr = token.toString();
         this.intermediaries.forEach(intermediary => {
             const swapService = intermediary.services[swapType];
-            if(swapService!=null) {
+            if(swapService!=null && swapService.tokens.includes(tokenStr)) {
                 min==null ? min = swapService.min : min = Math.min(min, swapService.min);
             }
         });
         return min;
     }
 
-    getSwapMaximum(swapType: SwapType): number {
+    getSwapMaximum(swapType: SwapType, token: TokenAddress): number {
         let max;
+        const tokenStr = token.toString();
         this.intermediaries.forEach(intermediary => {
             const swapService = intermediary.services[swapType];
-            if(swapService!=null) {
+            if(swapService!=null && swapService.tokens.includes(tokenStr)) {
                 max==null ? max = swapService.max : max = Math.max(max, swapService.max);
             }
         });
@@ -285,6 +329,7 @@ export class IntermediaryDiscovery<T extends SwapData> {
         const index = this.intermediaries.indexOf(intermediary);
         if(index>=0) {
             this.intermediaries.splice(index, 1);
+            this.emit("removed", [intermediary]);
             return true;
         }
         return false;
