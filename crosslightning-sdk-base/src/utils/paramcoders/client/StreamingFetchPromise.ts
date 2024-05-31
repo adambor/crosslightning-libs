@@ -1,6 +1,7 @@
 import {ParamEncoder} from "../ParamEncoder";
 import {RequestSchema, RequestSchemaResultPromise, verifyField} from "../SchemaVerifier";
 import {ParamDecoder} from "../ParamDecoder";
+import * as stream from "node:stream";
 
 export type RequestBody = {
     [key: string]: Promise<any> | any
@@ -10,14 +11,17 @@ export type RequestBody = {
 const supportsRequestStreams: boolean = (() => {
     let duplexAccessed = false;
 
-    const hasContentType = new Request('', {
+    const request = new Request('', {
         body: new ReadableStream(),
         method: 'POST',
         get duplex() {
             duplexAccessed = true;
             return 'half';
         },
-    } as any).headers.has('Content-Type');
+    } as any);
+    const hasContentType = request.headers.has('Content-Type');
+
+    // let initialCheck: boolean = duplexAccessed && !hasContentType;
 
     return duplexAccessed && !hasContentType;
 })();
@@ -36,11 +40,11 @@ async function readResponse(reader: ReadableStreamDefaultReader, inputStream: Pa
         inputStream.onData(Buffer.from(readResp.value));
     }
 }
-export function streamingFetchWithTimeoutPromise<T extends RequestSchema>(url: string, body: RequestBody, schema: T, timeout?: number, signal?: AbortSignal): Promise<{
+export function streamingFetchWithTimeoutPromise<T extends RequestSchema>(url: string, body: RequestBody, schema: T, timeout?: number, signal?: AbortSignal, streamRequest?: boolean): Promise<{
     response: Response,
     responseBody?: RequestSchemaResultPromise<T>
 }> {
-    if(timeout==null) return streamingFetchPromise<T>(url, body, schema, signal);
+    if(timeout==null) return streamingFetchPromise<T>(url, body, schema, signal, streamRequest);
 
     let timedOut = false;
     const abortController = new AbortController();
@@ -59,19 +63,20 @@ export function streamingFetchWithTimeoutPromise<T extends RequestSchema>(url: s
 
     signal = abortController.signal;
 
-    return streamingFetchPromise<T>(url, body, schema, signal);
+    return streamingFetchPromise<T>(url, body, schema, signal, streamRequest);
 }
 
-export async function streamingFetchPromise<T extends RequestSchema>(url: string, body: RequestBody, schema: T, signal?: AbortSignal): Promise<{
+export async function streamingFetchPromise<T extends RequestSchema>(url: string, body: RequestBody, schema: T, signal?: AbortSignal, streamRequest?: boolean): Promise<{
     response: Response,
     responseBody?: RequestSchemaResultPromise<T>
 }> {
+    if(streamRequest==null) streamRequest = supportsRequestStreams;
 
     const init: RequestInit = {
         method: "POST"
     };
 
-    if(!supportsRequestStreams) {
+    if(streamRequest) {
 
         const immediateValues: any = {};
 
@@ -137,6 +142,7 @@ export async function streamingFetchPromise<T extends RequestSchema>(url: string
                 signal.addEventListener("abort", () => abortController.abort(signal.reason));
             }
             Promise.all(promises).then(() => outputStream.end()).catch(e => {
+                e._inputPromiseError = true;
                 abortController.abort(e);
             });
             signal = abortController.signal;

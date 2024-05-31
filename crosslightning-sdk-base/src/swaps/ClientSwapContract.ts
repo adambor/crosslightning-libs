@@ -327,6 +327,7 @@ export class ClientSwapContract<T extends SwapData> {
         parsedData: RequestSchemaResult<T>,
         preFetchSignatureVerificationData: Promise<any>
     }> {
+        let useRequestStreams: boolean = null;
         const {response, jsonBody, preFetchSignatureVerificationData} = await tryWithRetries(async () => {
             const {response, responseBody} = await streamingFetchWithTimeoutPromise(url, body, {
                 code: FieldTypeEnum.Number,
@@ -337,7 +338,7 @@ export class ClientSwapContract<T extends SwapData> {
                     {signDataPrefetch: FieldTypeEnum.AnyOptional} :{}),
 
                 ...(additionalSchema==null ? {} : additionalSchema)
-            }, this.options.postRequestTimeout, signal);
+            }, this.options.postRequestTimeout, signal, useRequestStreams);
 
             if(response.status!==200) return {
                 response
@@ -381,7 +382,10 @@ export class ClientSwapContract<T extends SwapData> {
                 jsonBody,
                 preFetchSignatureVerificationData: _preFetchSignatureVerificationData
             }
-        }, null, (e) => e._inputPromiseError, signal);
+        }, null, (e) => {
+            if(e.toString().includes("ReadableStream is disturbed")) useRequestStreams = false;
+            return e._inputPromiseError;
+        }, signal);
 
         if(response.status!==200) {
             let resp: string;
