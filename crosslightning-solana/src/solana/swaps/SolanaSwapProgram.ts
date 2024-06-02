@@ -1727,14 +1727,14 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         solanaTx.feePayer = this.signer.publicKey;
 
         solanaTx.add(verifyIx);
-        // SolanaSwapProgram.applyFeeRate(solanaTx, computeBudget, feeRate);
+        SolanaSwapProgram.applyFeeRate(solanaTx, null, feeRate);
         solanaTx.add(claimIx);
-        SolanaSwapProgram.applyFeeRateEnd(solanaTx, computeBudget, feeRate);
+        SolanaSwapProgram.applyFeeRateEnd(solanaTx, null, feeRate);
 
-        if(Utils.getTxSize(solanaTx, this.signer.publicKey)>1232) {
-            //TX too large
-            solanaTx.instructions.pop();
-        }
+        // if(Utils.getTxSize(solanaTx, this.signer.publicKey)>1232) {
+        //     //TX too large
+        //     solanaTx.instructions.pop();
+        // }
 
         txs.push({
             tx: solanaTx,
