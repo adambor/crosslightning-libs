@@ -383,7 +383,7 @@ export class ClientSwapContract<T extends SwapData> {
                 preFetchSignatureVerificationData: _preFetchSignatureVerificationData
             }
         }, null, (e) => {
-            if(e.toString().includes("ReadableStream is disturbed")) useRequestStreams = false;
+            if(e.toString().includes("ReadableStream ")) useRequestStreams = false;
             return e._inputPromiseError;
         }, signal);
 

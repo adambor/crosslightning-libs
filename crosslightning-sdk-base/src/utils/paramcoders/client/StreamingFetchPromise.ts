@@ -9,21 +9,24 @@ export type RequestBody = {
 
 //https://developer.chrome.com/docs/capabilities/web-apis/fetch-streaming-requests#feature_detection
 const supportsRequestStreams: boolean = (() => {
-    let duplexAccessed = false;
+    try {
+        let duplexAccessed = false;
 
-    const request = new Request('', {
-        body: new ReadableStream(),
-        method: 'POST',
-        get duplex() {
-            duplexAccessed = true;
-            return 'half';
-        },
-    } as any);
-    const hasContentType = request.headers.has('Content-Type');
+        const request = new Request('', {
+            body: new ReadableStream(),
+            method: 'POST',
+            get duplex() {
+                duplexAccessed = true;
+                return 'half';
+            },
+        } as any);
+        const hasContentType = request.headers.has('Content-Type');
 
-    // let initialCheck: boolean = duplexAccessed && !hasContentType;
-
-    return duplexAccessed && !hasContentType;
+        return duplexAccessed && !hasContentType;
+    } catch (e) {
+        console.error(e);
+        return false;
+    }
 })();
 
 
@@ -76,7 +79,7 @@ export async function streamingFetchPromise<T extends RequestSchema>(url: string
         method: "POST"
     };
 
-    if(streamRequest) {
+    if(!streamRequest) {
 
         const immediateValues: any = {};
 
@@ -166,6 +169,7 @@ export async function streamingFetchPromise<T extends RequestSchema>(url: string
         if(init.signal!=null && e.name==="AbortError") {
             throw init.signal.reason;
         } else {
+            if(e.message!=null) e.message += streamRequest ? " (streaming)" : " (non streaming)"
             throw e;
         }
     });
