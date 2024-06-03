@@ -39,3 +39,7 @@ export * from "./utils/paramcoders/ParamEncoder";
 export * from "./utils/paramcoders/SchemaVerifier";
 export * from "./utils/paramcoders/server/ServerParamDecoder";
 export * from "./utils/paramcoders/server/ServerParamEncoder";
+
+export * from "./lndbitcoinrpc/rpc/NeutrinoRpc";
+export * from "./lndbitcoinrpc/rpc/NeutrinoBlock";
+export * from "./lndbitcoinrpc/rpc/BTCMerkleTree";

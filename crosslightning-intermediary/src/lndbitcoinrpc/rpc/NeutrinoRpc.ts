@@ -98,7 +98,7 @@ function toBtcTx(btcTx: bitcoin.Transaction, blockId: string, confirmations: num
             txid: txIn.hash.toString("hex"),
             vout: txIn.index,
             scriptSig: {
-                asm: bitcoin.script.toASM(txIn.script),
+                asm: null,
                 hex: txIn.script.toString("hex")
             },
             sequence: txIn.sequence,
@@ -137,7 +137,7 @@ export class NeutrinoRpc implements BitcoinRpc<NeutrinoBlock> {
 
     blockCache: {
         [blockId: string]: NeutrinoBlockType
-    };
+    } = {};
 
     constructor(
         socket: string,
@@ -223,11 +223,21 @@ export class NeutrinoRpc implements BitcoinRpc<NeutrinoBlock> {
         return BTCMerkleTree.getTransactionMerkle(txId, await this.getBlockWithTransactions(blockhash));
     }
 
-    async getTransaction(txId: string): Promise<BtcTx> {
+    async getTransaction(txId: string, sendBlockheight?: number): Promise<BtcTx> {
 
-        const resp = await lncli.getChainTransactions({
-            lnd: this.lnd
-        });
+        const obj: {
+            lnd: AuthenticatedLnd,
+            after?: number,
+            before?: number
+        } = {
+            lnd: this.lnd,
+        };
+
+        if(sendBlockheight!=null) {
+            obj.after = sendBlockheight-10;
+        }
+
+        const resp = await lncli.getChainTransactions(obj);
 
         const tx = resp.transactions.find(tx => tx.id===txId);
 
@@ -260,10 +270,10 @@ export class NeutrinoRpc implements BitcoinRpc<NeutrinoBlock> {
     }
 
     async getSyncInfo(): Promise<BtcSyncInfo> {
-        const walletInfo = await lncli.getWalletInfo();
+        const walletInfo = await lncli.getWalletInfo({lnd: this.lnd});
 
         return {
-            ibd: walletInfo.is_synced_to_chain,
+            ibd: !walletInfo.is_synced_to_chain,
             verificationProgress: walletInfo.is_synced_to_chain ? 1 : 0,
             headers: walletInfo.current_block_height,
             blocks: walletInfo.current_block_height,

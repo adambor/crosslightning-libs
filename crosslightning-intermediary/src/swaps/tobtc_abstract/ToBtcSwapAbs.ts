@@ -29,6 +29,7 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
     readonly preferedConfirmationTarget: number;
     readonly signatureExpiry: BN;
 
+    sendBlockheight: number;
     realNetworkFee: BN;
     txId: string;
 
@@ -61,6 +62,7 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
 
             this.realNetworkFee = prOrObj.realNetworkFee==null ? null : new BN(prOrObj.realNetworkFee);
             this.txId = prOrObj.txId;
+            this.sendBlockheight = prOrObj.sendBlockheight;
         }
         this.type = SwapHandlerType.TO_BTC;
     }
@@ -79,6 +81,7 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
 
         partialSerialized.realNetworkFee = this.realNetworkFee==null ? null : this.realNetworkFee.toString(10);
         partialSerialized.txId = this.txId;
+        partialSerialized.sendBlockheight = this.sendBlockheight;
         return partialSerialized;
     }
 

@@ -182,7 +182,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         outputs: CoinselectTxOutput[]
     } | null> {
         let satsPerVbyte: number | null = this.config.feeEstimator==null
-            ? await lncli.getChainFeeRate({lnd: this.LND}).then(res => res.tokens_per_vbyte).catch(e => console.error(e))
+            ? await lncli.getChainFeeRate({lnd: this.LND, confirmation_target: 2}).then(res => res.tokens_per_vbyte).catch(e => console.error(e))
             : await this.config.feeEstimator.estimateFee();
 
         if(satsPerVbyte==null) return null;
@@ -312,6 +312,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             unlock();
             return true;
         } catch (e) {
+            console.error(e);
             return false
         }
 
@@ -413,7 +414,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         for(let txId in this.activeSubscriptions) {
             try {
                 const payment: ToBtcSwapAbs<T> = this.activeSubscriptions[txId];
-                let tx: BtcTx = await this.bitcoinRpc.getTransaction(txId);
+                let tx: BtcTx = await (this.bitcoinRpc as any).getTransaction(txId, payment.sendBlockheight);
 
                 if(tx==null) {
                     continue;
@@ -477,7 +478,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
         if(payment.state===ToBtcSwapState.BTC_SENDING) {
             //Payment was signed (maybe also sent)
-            const tx = await this.bitcoinRpc.getTransaction(payment.txId);
+            const tx: BtcTx = await (this.bitcoinRpc as any).getTransaction(payment.txId, payment.sendBlockheight);
 
             const isTxSent = tx!=null;
 
@@ -656,13 +657,27 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 return;
             }
 
+            let txBroadcastBlockheight: {current_block_height: number};
+            try {
+                txBroadcastBlockheight = await lncli.getHeight({lnd: this.LND});
+            } catch (e) {
+                console.error(e);
+            }
+
+            if(txBroadcastBlockheight==null) {
+                console.error("[To BTC: SC.Initialize] Failed to get current blockheight before sending TX!");
+                unlock();
+                return;
+            }
+
+            payment.sendBlockheight = txBroadcastBlockheight.current_block_height;
             payment.txId = txId;
             payment.realNetworkFee = txFee;
             await payment.setState(ToBtcSwapState.BTC_SENDING);
             // await PluginManager.swapStateChange(payment);
             await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment.data.getSequence(), payment);
 
-            let txSendResult;
+            let txSendResult: {id: string};
             try {
                 txSendResult = await lncli.broadcastChainTransaction({
                     lnd: this.LND,
@@ -675,7 +690,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             if(payment.metadata!=null) payment.metadata.times.payTxSent = Date.now();
 
             if(txSendResult==null) {
-                console.error("[To BTC: Solana.Initialize] Failed to broadcast transaction!");
+                console.error("[To BTC: SC.Initialize] Failed to broadcast transaction!");
                 unlock();
                 return;
             }
