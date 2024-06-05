@@ -507,7 +507,7 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
     }
 
     isClaimable(): boolean {
-        return this.state===FromBTCSwapState.BTC_TX_CONFIRMED || (this.state===FromBTCSwapState.CLAIM_COMMITED && !this.wrapper.contract.swapContract.isExpired(this.data));
+        return this.state===FromBTCSwapState.BTC_TX_CONFIRMED || (this.state===FromBTCSwapState.CLAIM_COMMITED && !this.wrapper.contract.swapContract.isExpired(this.data) && this.getTimeoutTime()>Date.now());
     }
 
 }
