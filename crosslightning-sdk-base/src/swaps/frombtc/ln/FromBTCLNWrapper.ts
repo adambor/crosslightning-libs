@@ -241,7 +241,9 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
                                 continue;
                             }
                         }
-                        swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
+                        if(swap.state===FromBTCLNSwapState.PR_PAID) {
+                            swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
+                        }
                         swap.data = swapData;
                         swapChanged = true;
                     }

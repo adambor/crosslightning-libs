@@ -91,7 +91,7 @@ export abstract class IToBTCWrapper<T extends SwapData> {
                                 continue;
                             }
                         }
-                        swap.state = ToBTCSwapState.COMMITED;
+                        if(swap.state===ToBTCSwapState.CREATED) swap.state = ToBTCSwapState.COMMITED;
                         swap.data = swapData;
                         swapChanged = true;
                     }
