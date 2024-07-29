@@ -34,6 +34,7 @@ import {serverParamDecoder} from "../../utils/paramcoders/server/ServerParamDeco
 import {IParamReader} from "../../utils/paramcoders/IParamReader";
 import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
 import {ToBtcLnSwapState} from "../..";
+import {address} from "bitcoinjs-lib";
 
 const OUTPUT_SCRIPT_MAX_LENGTH = 200;
 
@@ -98,10 +99,6 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
     bitcoinRpc: BitcoinRpc<BtcBlock>;
 
     readonly config: ToBtcConfig;
-
-    readonly pdaExistsForToken: {
-        [token: string]: boolean
-    } = {};
 
     constructor(
         storageDirectory: IIntermediaryStorage<ToBtcSwapAbs<T>>,
@@ -797,6 +794,112 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
     }
 
+    checkNonceValid(nonce: BN): void {
+        if(nonce.isNeg()) {
+            throw {
+                code: 20021,
+                msg: "Invalid request body (nonce - cannot be parsed)"
+            };
+        }
+
+        const nonceBuffer = Buffer.from(nonce.toArray("be", 8));
+        const firstPart = new BN(nonceBuffer.slice(0, 5), "be");
+
+        const maxAllowedValue = new BN(Math.floor(Date.now()/1000)-600000000);
+        if(firstPart.gt(maxAllowedValue)) {
+            throw {
+                code: 20022,
+                msg: "Invalid request body (nonce - too high)"
+            };
+        }
+    }
+
+    checkConfirmationTarget(confirmationTarget: number): void {
+        if(confirmationTarget>this.config.maxConfTarget) {
+            throw {
+                code: 20023,
+                msg: "Invalid request body (confirmationTarget - too high)"
+            };
+        }
+        if(confirmationTarget<this.config.minConfTarget) {
+            throw {
+                code: 20024,
+                msg: "Invalid request body (confirmationTarget - too low)"
+            };
+        }
+    }
+
+    checkRequiredConfirmations(confirmations: number): void {
+        if(confirmations>this.config.maxConfirmations) {
+            throw {
+                code: 20025,
+                msg: "Invalid request body (confirmations - too high)"
+            };
+        }
+        if(confirmations<this.config.minConfirmations) {
+            throw {
+                code: 20026,
+                msg: "Invalid request body (confirmations - too low)"
+            };
+        }
+    }
+
+    checkAddress(address: string): void {
+        let parsedOutputScript: Buffer;
+
+        try {
+            parsedOutputScript = bitcoin.address.toOutputScript(address, this.config.bitcoinNetwork);
+        } catch (e) {
+            throw {
+                code: 20031,
+                msg: "Invalid request body (address - cannot be parsed)"
+            };
+        }
+
+        if(parsedOutputScript.length > OUTPUT_SCRIPT_MAX_LENGTH) {
+            throw {
+                code: 20032,
+                msg: "Invalid request body (address's output script - too long)"
+            };
+        }
+    }
+
+    async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: ToBtcRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
+        const pluginResult = await PluginManager.onSwapRequestToBtc(req, parsedBody, metadata);
+
+        if(pluginResult.throw) {
+            throw {
+                code: 29999,
+                msg: pluginResult.throw
+            };
+        }
+
+        return {
+            baseFee: pluginResult.baseFee || this.config.baseFee,
+            feePPM: pluginResult.feePPM || this.config.feePPM
+        };
+    }
+
+    async checkNetworkFee(address: string, amount: BN): Promise<{ networkFee: BN, satsPerVbyte: BN }> {
+        let chainFeeResp = await this.getChainFee(address, amount.toNumber(), this.config.networkFeeMultiplierPPM.toNumber()/1000000);
+
+        const hasEnoughFunds = chainFeeResp!=null;
+        if(!hasEnoughFunds) {
+            throw {
+                code: 20002,
+                msg: "Not enough liquidity"
+            };
+        }
+
+        const networkFee = new BN(chainFeeResp.fee);
+        const satsPerVbyte = new BN(chainFeeResp.satsPerVbyte);
+
+        console.log("[To BTC: REST.PayInvoice] Adjusted total network fee: ", networkFee.toString(10));
+        console.log("[To BTC: REST.PayInvoice] Adjusted network fee (sats/vB): ", satsPerVbyte.toString());
+
+        return { networkFee, satsPerVbyte };
+    }
+
     startRestServer(restServer: Express) {
         restServer.use(this.path+"/payInvoice", serverParamDecoder(10*1000));
         restServer.post(this.path+"/payInvoice", expressHandlerWrapper(async (req: Request & {paramReader: IParamReader}, res: Response & {responseStream: ServerParamEncoder}) => {
@@ -840,271 +943,41 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             const responseStream = res.responseStream;
 
             if (parsedBody==null) {
-                await responseStream.writeParamsAndEnd({
+                throw {
                     code: 20100,
                     msg: "Invalid request body"
-                });
-                return;
+                };
             }
 
-            if(parsedBody.nonce.isNeg()) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20021,
-                    msg: "Invalid request body (nonce - cannot be parsed)"
-                });
-                return;
-            }
-
-            const nonceBuffer = Buffer.from(parsedBody.nonce.toArray("be", 8));
-            const firstPart = new BN(nonceBuffer.slice(0, 5), "be");
-
-            const maxAllowedValue = new BN(Math.floor(Date.now()/1000)-600000000);
-            if(firstPart.gt(maxAllowedValue)) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20022,
-                    msg: "Invalid request body (nonce - too high)"
-                });
-                return;
-            }
-
-            if(parsedBody.confirmationTarget>this.config.maxConfTarget) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20023,
-                    msg: "Invalid request body (confirmationTarget - too high)"
-                });
-                return;
-            }
-            if(parsedBody.confirmationTarget<this.config.minConfTarget) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20024,
-                    msg: "Invalid request body (confirmationTarget - too low)"
-                });
-                return;
-            }
-
-            if(parsedBody.confirmations>this.config.maxConfirmations) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20025,
-                    msg: "Invalid request body (confirmations - too high)"
-                });
-                return;
-            }
-            if(parsedBody.confirmations<this.config.minConfirmations) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20026,
-                    msg: "Invalid request body (confirmations - too low)"
-                });
-                return;
-            }
-
-            let parsedOutputScript;
-
-            try {
-                parsedOutputScript = bitcoin.address.toOutputScript(parsedBody.address, this.config.bitcoinNetwork);
-            } catch (e) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20031,
-                    msg: "Invalid request body (address - cannot be parsed)"
-                });
-                return;
-            }
-
-            if(parsedOutputScript.length > OUTPUT_SCRIPT_MAX_LENGTH) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20032,
-                    msg: "Invalid request body (address's output script - too long)"
-                });
-                return;
-            }
-
-            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
-
-            const pluginResult = await PluginManager.onSwapRequestToBtc(req, parsedBody, metadata);
-
-            if(pluginResult.throw) {
-                await responseStream.writeParamsAndEnd({
-                    code: 29999,
-                    msg: pluginResult.throw
-                });
-                return;
-            }
-
-            let baseFee = pluginResult.baseFee || this.config.baseFee;
-            let feePPM = pluginResult.feePPM || this.config.feePPM;
+            this.checkNonceValid(parsedBody.nonce);
+            this.checkConfirmationTarget(parsedBody.confirmationTarget);
+            this.checkRequiredConfirmations(parsedBody.confirmations);
+            this.checkAddress(parsedBody.address);
+            await this.checkVaultInitialized(parsedBody.token);
+            const {baseFee, feePPM} = await this.checkPlugins(req, parsedBody, metadata);
 
             metadata.times.requestChecked = Date.now();
 
-            const abortController = new AbortController();
-            const responseStreamAbortController = responseStream.getAbortSignal();
-            responseStreamAbortController.addEventListener("abort", () => abortController.abort(responseStreamAbortController.reason));
+            //Initialize abort controller for the parallel async operations
+            const abortController = this.getAbortController(responseStream);
 
-            if(!this.pdaExistsForToken[parsedBody.token]) {
-                const reputation = await this.swapContract.getIntermediaryReputation(this.swapContract.getAddress(), this.swapContract.toTokenAddress(parsedBody.token));
-                if(reputation!=null) {
-                    this.pdaExistsForToken[parsedBody.token] = true;
-                } else {
-                    await responseStream.writeParamsAndEnd({
-                        code: 20201,
-                        msg: "Token not supported!"
-                    });
-                    return;
-                }
-            }
+            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
-            const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken).catch(e => {
-                console.error("To BTC: REST.pricePrefetch", e);
-                abortController.abort(e);
-                return null;
-            }) : null;
-            let signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
-                console.error("To BTC: REST.signDataPrefetch", e);
-                abortController.abort(e);
-                return null;
-            }) : null;
+            const {pricePrefetchPromise, signDataPrefetchPromise} = this.getToBtcPrefetches(useToken, responseStream, abortController);
 
-            if(pricePrefetchPromise!=null) console.log("[To BTC: REST.payInvoice] Pre-fetching swap price!");
-            if(signDataPrefetchPromise!=null) {
-                signDataPrefetchPromise = signDataPrefetchPromise.then(val => val==null || abortController.signal.aborted ? null : responseStream.writeParams({
-                    signDataPrefetch: val
-                }).then(() => val).catch(e => {
-                    console.error("[To BTC: REST.payInvoice] Send signDataPreFetch error: ", e);
-                    abortController.abort(e);
-                    return null;
-                }));
-                if(signDataPrefetchPromise!=null) console.log("[To BTC: REST.payInvoice] Pre-fetching signature data!");
-            }
-
-            let tooLow = false;
-            let amountBD: BN;
-            if(parsedBody.exactIn) {
-                amountBD = await this.swapPricing.getToBtcSwapAmount(parsedBody.amount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-
-                abortController.signal.throwIfAborted();
-
-                //Decrease by base fee
-                amountBD = amountBD.sub(baseFee);
-
-                //If it's already smaller than minimum, set it to minimum so we can calculate the network fee
-                if(amountBD.lt(this.config.min)) {
-                    amountBD = this.config.min;
-                    tooLow = true;
-                }
-
-            } else {
-                amountBD = parsedBody.amount;
-
-                if(amountBD.lt(this.config.min)) {
-                    await responseStream.writeParamsAndEnd({
-                        code: 20003,
-                        msg: "Amount too low!",
-                        data: {
-                            min: this.config.min.toString(10),
-                            max: this.config.max.toString(10)
-                        }
-                    });
-                    return;
-                }
-                if(amountBD.gt(this.config.max)) {
-                    await responseStream.writeParamsAndEnd({
-                        code: 20004,
-                        msg: "Amount too high!",
-                        data: {
-                            min: this.config.min.toString(10),
-                            max: this.config.max.toString(10)
-                        }
-                    });
-                    return;
-                }
-            }
-
-            metadata.times.amountsChecked = Date.now();
-
-            let chainFeeResp = await this.getChainFee(parsedBody.address, amountBD.toNumber(), this.config.networkFeeMultiplierPPM.toNumber()/1000000);
-
-            abortController.signal.throwIfAborted();
-
-            metadata.times.chainFeeFetched = Date.now();
-
-            const hasEnoughFunds = chainFeeResp!=null;
-            if(!hasEnoughFunds) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20002,
-                    msg: "Not enough liquidity"
-                });
-                return;
-            }
-
-            const networkFeeAdjusted = new BN(chainFeeResp.fee);
-            const feeSatsPervByteAdjusted = new BN(chainFeeResp.satsPerVbyte);
-
-            console.log("[To BTC: REST.PayInvoice] Adjusted total network fee: ", networkFeeAdjusted.toString(10));
-            console.log("[To BTC: REST.PayInvoice] Adjusted network fee (sats/vB): ", feeSatsPervByteAdjusted.toString());
-
-            if(parsedBody.exactIn) {
-                //Decrease by network fee
-                amountBD = amountBD.sub(networkFeeAdjusted);
-
-                //Decrease by percentage fee
-                amountBD = amountBD.mul(new BN(1000000)).div(feePPM.add(new BN(1000000)));
-
-                if(tooLow || amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)))) {
-                    //Compute min/max
-                    let adjustedMin = this.config.min.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    let adjustedMax = this.config.max.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    adjustedMin = adjustedMin.add(baseFee).add(networkFeeAdjusted);
-                    adjustedMax = adjustedMax.add(baseFee).add(networkFeeAdjusted);
-                    const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                    const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                    await responseStream.writeParamsAndEnd({
-                        code: 20003,
-                        msg: "Amount too low!",
-                        data: {
-                            min: minIn.toString(10),
-                            max: maxIn.toString(10)
-                        }
-                    });
-                    return;
-                }
-                if(amountBD.gt(this.config.max.mul(new BN(105)).div(new BN(100)))) {
-                    let adjustedMin = this.config.min.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    let adjustedMax = this.config.max.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    adjustedMin = adjustedMin.add(baseFee).add(networkFeeAdjusted);
-                    adjustedMax = adjustedMax.add(baseFee).add(networkFeeAdjusted);
-                    const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                    const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                    await responseStream.writeParamsAndEnd({
-                        code: 20004,
-                        msg: "Amount too high!",
-                        data: {
-                            min: minIn.toString(10),
-                            max: maxIn.toString(10)
-                        }
-                    });
-                    return;
-                }
-            }
-
-            metadata.times.chainFeeCalculated = Date.now();
-
-            const swapFee = baseFee.add(amountBD.mul(feePPM).div(new BN(1000000)));
-
-            const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(networkFeeAdjusted, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-
-            abortController.signal.throwIfAborted();
-
-            let amountInToken: BN;
-            let total: BN;
-            if(parsedBody.exactIn) {
-                amountInToken = parsedBody.amount.sub(swapFeeInToken).sub(networkFeeInToken);
-                total = parsedBody.amount;
-            } else {
-                amountInToken = await this.swapPricing.getFromBtcSwapAmount(parsedBody.amount, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                total = amountInToken.add(swapFeeInToken).add(networkFeeInToken);
-
-                abortController.signal.throwIfAborted();
-            }
-
+            const {
+                amountBD,
+                networkFeeData,
+                totalInToken,
+                swapFee,
+                swapFeeInToken,
+                networkFeeInToken
+            } = await this.checkToBtcAmount(parsedBody.exactIn, parsedBody.amount, useToken, {baseFee, feePPM}, async (amount: BN) => {
+                metadata.times.amountsChecked = Date.now();
+                const resp = await this.checkNetworkFee(parsedBody.address, amount);
+                metadata.times.chainFeeCalculated = Date.now();
+                return resp;
+            }, abortController.signal, pricePrefetchPromise);
             metadata.times.priceCalculated = Date.now();
 
             const paymentHash = this.getHash(parsedBody.address, parsedBody.nonce, amountBD, this.config.bitcoinNetwork).toString("hex");
@@ -1120,7 +993,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 parsedBody.offerer,
                 this.swapContract.getAddress(),
                 useToken,
-                total,
+                totalInToken,
                 paymentHash,
                 sequence,
                 minRequiredExpiry,
@@ -1131,31 +1004,13 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 new BN(0),
                 new BN(0)
             );
-
             abortController.signal.throwIfAborted();
-
             metadata.times.swapCreated = Date.now();
 
-            const feeRateObj = await req.paramReader.getParams({
-                feeRate: FieldTypeEnum.String
-            }).catch(e => null);
-
-            abortController.signal.throwIfAborted();
-
-            const feeRate = feeRateObj?.feeRate!=null && typeof(feeRateObj.feeRate)==="string" ? feeRateObj.feeRate : null;
-
-            const sigData = await this.swapContract.getClaimInitSignature(
-                payObject,
-                this.config.authorizationTimeout,
-                signDataPrefetchPromise==null ? null : await signDataPrefetchPromise,
-                feeRate
-            );
-
-            abortController.signal.throwIfAborted();
-
+            const sigData = await this.getToBtcSignatureData(payObject, req, abortController.signal, signDataPrefetchPromise);
             metadata.times.swapSigned = Date.now();
 
-            const createdSwap = new ToBtcSwapAbs<T>(parsedBody.address, amountBD, swapFee, networkFeeAdjusted, feeSatsPervByteAdjusted, parsedBody.nonce, parsedBody.confirmationTarget, new BN(sigData.timeout));
+            const createdSwap = new ToBtcSwapAbs<T>(parsedBody.address, amountBD, swapFee, networkFeeData.networkFee, networkFeeData.satsPerVbyte, parsedBody.nonce, parsedBody.confirmationTarget, new BN(sigData.timeout));
             createdSwap.data = payObject;
             createdSwap.metadata = metadata;
 
@@ -1169,11 +1024,11 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
                 data: {
                     amount: amountBD.toString(10),
                     address: this.swapContract.getAddress(),
-                    satsPervByte: feeSatsPervByteAdjusted.toString(10),
+                    satsPervByte: networkFeeData.satsPerVbyte.toString(10),
                     networkFee: networkFeeInToken.toString(10),
                     swapFee: swapFeeInToken.toString(10),
                     totalFee: swapFeeInToken.add(networkFeeInToken).toString(10),
-                    total: total.toString(10),
+                    total: totalInToken.toString(10),
                     minRequiredExpiry: minRequiredExpiry.toString(10),
 
                     data: payObject.serialize(),
