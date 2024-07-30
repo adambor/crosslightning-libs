@@ -3,7 +3,7 @@ import * as BN from "bn.js";
 import * as bitcoin from "bitcoinjs-lib";
 import * as lncli from "ln-service";
 import {ToBtcSwapAbs, ToBtcSwapState} from "./ToBtcSwapAbs";
-import {SwapHandler, SwapHandlerType, ToBtcBaseConfig} from "../SwapHandler";
+import {SwapHandlerType} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
 import {
     BtcTx,
@@ -11,7 +11,6 @@ import {
     ChainSwapType,
     ClaimEvent,
     InitializeEvent,
-    IStorageManager,
     RefundEvent,
     SwapCommitStatus,
     SwapContract,
@@ -29,12 +28,10 @@ import {coinSelect} from "../../utils/coinselect2";
 import {CoinselectAddressTypes, CoinselectTxInput, CoinselectTxOutput, utils} from "../../utils/coinselect2/utils";
 import {randomBytes} from "crypto";
 import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
-import * as express from "express";
 import {serverParamDecoder} from "../../utils/paramcoders/server/ServerParamDecoder";
 import {IParamReader} from "../../utils/paramcoders/IParamReader";
 import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
-import {ToBtcLnSwapState} from "../..";
-import {address} from "bitcoinjs-lib";
+import {ToBtcBaseConfig, ToBtcBaseSwapHandler} from "../ToBtcBaseSwapHandler";
 
 const OUTPUT_SCRIPT_MAX_LENGTH = 200;
 
@@ -81,7 +78,7 @@ export type ToBtcRequestType = {
 /**
  * Handler for to BTC swaps, utilizing PTLCs (proof-time locked contracts) using btc relay (on-chain bitcoin SPV)
  */
-export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T>  {
+export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwapAbs<T>, T>  {
 
     readonly type = SwapHandlerType.TO_BTC;
 

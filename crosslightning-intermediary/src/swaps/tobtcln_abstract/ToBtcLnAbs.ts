@@ -3,7 +3,7 @@ import {Express} from "express";
 import * as bolt11 from "bolt11";
 import * as lncli from "ln-service";
 import {ToBtcLnSwapAbs, ToBtcLnSwapState} from "./ToBtcLnSwapAbs";
-import {SwapHandler, SwapHandlerType, ToBtcBaseConfig} from "../SwapHandler";
+import {SwapHandlerType} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
 import {
     ChainEvents,
@@ -26,6 +26,7 @@ import {serverParamDecoder} from "../../utils/paramcoders/server/ServerParamDeco
 import {IParamReader} from "../../utils/paramcoders/IParamReader";
 import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
 import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
+import {ToBtcBaseConfig, ToBtcBaseSwapHandler} from "../ToBtcBaseSwapHandler";
 
 export type ToBtcLnConfig = ToBtcBaseConfig & {
     routingFeeMultiplier: BN,
@@ -128,7 +129,7 @@ export type ToBtcLnRequestType = {
 /**
  * Swap handler handling to BTCLN swaps using submarine swaps
  */
-export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T>, T> {
+export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs<T>, T> {
 
     activeSubscriptions: Set<string> = new Set<string>();
 
