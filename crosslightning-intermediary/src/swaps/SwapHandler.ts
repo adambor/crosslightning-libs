@@ -1,4 +1,3 @@
-
 import {Express} from "express";
 import {ISwapPrice} from "./ISwapPrice";
 import {ChainEvents, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
@@ -87,12 +86,23 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
      */
     abstract getInfo(): SwapHandlerInfoType;
 
+    /**
+     * Remove swap data
+     *
+     * @param hash
+     * @param sequence
+     */
     async removeSwapData(hash: string, sequence: BN) {
         const swap = await this.storageManager.getData(hash, sequence);
         if(swap!=null) await PluginManager.swapRemove<T>(swap);
         await this.storageManager.removeData(hash, sequence);
     }
 
+    /**
+     * Creates an abort controller that extends the responseStream's abort signal
+     *
+     * @param responseStream
+     */
     getAbortController(responseStream: ServerParamEncoder): AbortController {
         const abortController = new AbortController();
         const responseStreamAbortController = responseStream.getAbortSignal();
@@ -100,6 +110,12 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
         return abortController;
     }
 
+    /**
+     * Starts a pre-fetch for signature data
+     *
+     * @param responseStream
+     * @param abortController
+     */
     getSignDataPrefetch(responseStream: ServerParamEncoder, abortController: AbortController): Promise<any> {
         let signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
             console.error("To/From BTC/BTC-LN: REST.signDataPrefetch", e);
