@@ -531,6 +531,13 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
     }
 
+    /**
+     * Checks if the amount was supplied in the exactIn request
+     *
+     * @param amount
+     * @param exactIn
+     * @throws {DefinedRuntimeError} will throw an error if the swap was exactIn, but amount not specified
+     */
     checkAmount(amount: BN, exactIn: boolean): void {
         if(exactIn) {
             if(amount==null) {
@@ -542,6 +549,12 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         }
     }
 
+    /**
+     * Checks if the maxFee parameter is in valid range (>0)
+     *
+     * @param maxFee
+     * @throws {DefinedRuntimeError} will throw an error if the maxFee is zero or negative
+     */
     checkMaxFee(maxFee: BN): void {
         if(maxFee.isNeg() || maxFee.isZero()) {
             throw {
@@ -551,6 +564,12 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         }
     }
 
+    /**
+     * Checks and parses a payment request (bolt11 invoice), additionally also checks expiration time of the invoice
+     *
+     * @param pr
+     * @throws {DefinedRuntimeError} will throw an error if the pr is invalid or expired
+     */
     checkPaymentRequest(pr: string): {
         parsedPR: bolt11.PaymentRequestObject & { tagsObject: bolt11.TagsObject },
         halfConfidence: boolean
@@ -586,6 +605,13 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         return {parsedPR, halfConfidence};
     }
 
+    /**
+     * Checks if the request specified too short of an expiry
+     *
+     * @param expiryTimestamp
+     * @param currentTimestamp
+     * @throws {DefinedRuntimeError} will throw an error if the expiry time is too short
+     */
     checkExpiry(expiryTimestamp: BN, currentTimestamp: BN): void {
         const expiresTooSoon = expiryTimestamp.sub(currentTimestamp).lt(this.config.minTsSendCltv);
         if(expiresTooSoon) {
@@ -596,6 +622,14 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         }
     }
 
+    /**
+     * Checks if the request should be processed by calling plugins
+     *
+     * @param req
+     * @param parsedBody
+     * @param metadata
+     * @throws {DefinedRuntimeError} will throw an error if the plugin cancelled the request
+     */
     async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: ToBtcLnRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
         const pluginResult = await PluginManager.onSwapRequestToBtcLn(req, parsedBody, metadata);
 
@@ -612,6 +646,13 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         };
     }
 
+    /**
+     * Checks if the prior payment with the same paymentHash exists
+     *
+     * @param paymentHash
+     * @param abortSignal
+     * @throws {DefinedRuntimeError} will throw an error if payment already exists
+     */
     async checkPriorPayment(paymentHash: string, abortSignal: AbortSignal): Promise<void> {
         try {
             const payment = await lncli.getPayment({
@@ -629,6 +670,13 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         abortSignal.throwIfAborted();
     }
 
+    /**
+     * Checks if the underlying LND backend has enough liquidity in channels to honor the swap
+     *
+     * @param amount
+     * @param abortSignal
+     * @throws {DefinedRuntimeError} will throw an error if there isn't enough liquidity
+     */
     async checkLiquidity(amount: BN, abortSignal: AbortSignal): Promise<void> {
         const amountBDMtokens = amount.mul(new BN(1000));
         const channelBalances = await lncli.getChannelBalance({lnd: this.LND});
@@ -642,6 +690,19 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         abortSignal.throwIfAborted();
     }
 
+    /**
+     * Estimates the routing fee & confidence by either probing or routing (if probing fails), the fee is also adjusted
+     *  according to routing fee multiplier, and subject to minimums set in config
+     *
+     * @param amountBD
+     * @param maxFee
+     * @param expiryTimestamp
+     * @param currentTimestamp
+     * @param pr
+     * @param metadata
+     * @param abortSignal
+     * @throws {DefinedRuntimeError} will throw an error if the destination is unreachable
+     */
     async checkNetworkFee(amountBD: BN, maxFee: BN, expiryTimestamp: BN, currentTimestamp: BN, pr: string, metadata: any, abortSignal: AbortSignal): Promise<{
         confidence: number,
         networkFee: BN,
@@ -758,6 +819,12 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         };
     }
 
+    /**
+     * Checks and consumes (deletes & returns) exactIn authorizaton with a specific reqId
+     *
+     * @param reqId
+     * @throws {DefinedRuntimeError} will throw an error if the authorization doesn't exist
+     */
     checkExactInAuthorization(reqId: string): ExactInAuthorization {
         const parsedAuth = this.exactInAuths[reqId];
         if (parsedAuth==null) {
@@ -776,6 +843,14 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         return parsedAuth;
     }
 
+    /**
+     * Checks if the newly submitted PR has the same parameters (destination, cltv_delta, routes) as the initial dummy
+     *  invoice sent for exactIn swap quote
+     *
+     * @param pr
+     * @param parsedAuth
+     * @throws {DefinedRuntimeError} will throw an error if the details don't match
+     */
     async checkPaymentRequestMatchesInitial(pr: string, parsedAuth: ExactInAuthorization): Promise<void> {
         const parsedRequest = await lncli.parsePaymentRequest({
             request: pr

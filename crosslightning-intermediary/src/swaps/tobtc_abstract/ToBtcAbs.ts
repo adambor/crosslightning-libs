@@ -107,6 +107,12 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         this.config.onchainReservedPerChannel = this.config.onchainReservedPerChannel || 40000;
     }
 
+    /**
+     * Returns spendable UTXOs, these are either confirmed UTXOs, or unconfirmed ones that are either whitelisted,
+     *  or created by our transactions (and therefore only we could doublespend)
+     *
+     * @private
+     */
     private async getSpendableUtxos(): Promise<{
         address: string,
         address_format: string,
@@ -116,7 +122,6 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         transaction_id: string,
         transaction_vout: number
     }[]> {
-
         const resBlockheight = await lncli.getHeight({
             lnd: this.LND
         });
@@ -145,6 +150,11 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
     }
 
+    /**
+     * Gets the change address from the underlying LND instance
+     *
+     * @private
+     */
     private getChangeAddress(): Promise<{
         addr: string
     }> {
@@ -162,6 +172,15 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         });
     }
 
+    /**
+     * Computes bitcoin on-chain network fee, takes channel reserve & network fee multiplier into consideration
+     *
+     * @param targetAddress
+     * @param targetAmount
+     * @param multiplier
+     * @private
+     * @returns Fee estimate & inputs/outputs to use when constructing transaction, or null in case of not enough funds
+     */
     private async getChainFee(targetAddress: string, targetAmount: number, multiplier?: number): Promise<{
         satsPerVbyte: number,
         fee: number,
@@ -458,7 +477,6 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
      * Called after swap was successfully committed, will check if bitcoin tx is already sent, if not tries to send it and subscribes to it
      *
      * @param payment
-     * @param data
      */
     private async processInitialized(payment: ToBtcSwapAbs<T>) {
 
@@ -646,7 +664,6 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             payment.txId = txId;
             payment.realNetworkFee = txFee;
             await payment.setState(ToBtcSwapState.BTC_SENDING);
-            // await PluginManager.swapStateChange(payment);
             await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment.data.getSequence(), payment);
 
             let txSendResult;
@@ -668,7 +685,6 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
             }
 
             await payment.setState(ToBtcSwapState.BTC_SENT);
-            // await PluginManager.swapStateChange(payment);
             await this.storageManager.saveData(this.getChainHash(payment).toString("hex"), payment.data.getSequence(), payment);
             unlock();
         }
@@ -784,6 +800,12 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
 
     }
 
+    /**
+     * Checks if the requested nonce is valid
+     *
+     * @param nonce
+     * @throws {DefinedRuntimeError} will throw an error if the nonce is invalid
+     */
     checkNonceValid(nonce: BN): void {
         if(nonce.isNeg()) {
             throw {
@@ -804,6 +826,12 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         }
     }
 
+    /**
+     * Checks if confirmation target is within configured bounds
+     *
+     * @param confirmationTarget
+     * @throws {DefinedRuntimeError} will throw an error if the confirmationTarget is out of bounds
+     */
     checkConfirmationTarget(confirmationTarget: number): void {
         if(confirmationTarget>this.config.maxConfTarget) {
             throw {
@@ -819,6 +847,12 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         }
     }
 
+    /**
+     * Checks if the required confirmations are within configured bounds
+     *
+     * @param confirmations
+     * @throws {DefinedRuntimeError} will throw an error if the confirmations are out of bounds
+     */
     checkRequiredConfirmations(confirmations: number): void {
         if(confirmations>this.config.maxConfirmations) {
             throw {
@@ -834,6 +868,12 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         }
     }
 
+    /**
+     * Checks the validity of the provided address, also checks if the resulting output script isn't too large
+     *
+     * @param address
+     * @throws {DefinedRuntimeError} will throw an error if the address is invalid
+     */
     checkAddress(address: string): void {
         let parsedOutputScript: Buffer;
 
@@ -854,6 +894,14 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         }
     }
 
+    /**
+     * Checks if the request should be processed by calling plugins
+     *
+     * @param req
+     * @param parsedBody
+     * @param metadata
+     * @throws {DefinedRuntimeError} will throw an error if the plugin cancelled the request
+     */
     async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: ToBtcRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
         const pluginResult = await PluginManager.onSwapRequestToBtc(req, parsedBody, metadata);
 
@@ -870,6 +918,13 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
         };
     }
 
+    /**
+     * Checks & returns the network fee needed for a transaction
+     *
+     * @param address
+     * @param amount
+     * @throws {DefinedRuntimeError} will throw an error if there are not enough BTC funds
+     */
     async checkNetworkFee(address: string, amount: BN): Promise<{ networkFee: BN, satsPerVbyte: BN }> {
         let chainFeeResp = await this.getChainFee(address, amount.toNumber(), this.config.networkFeeMultiplierPPM.toNumber()/1000000);
 
