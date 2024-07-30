@@ -3,7 +3,7 @@ import * as BN from "bn.js";
 import * as bitcoin from "bitcoinjs-lib";
 import * as lncli from "ln-service";
 import {ToBtcSwapAbs, ToBtcSwapState} from "./ToBtcSwapAbs";
-import {SwapHandler, SwapHandlerType} from "../SwapHandler";
+import {SwapHandler, SwapHandlerType, ToBtcBaseConfig} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
 import {
     BtcTx,
@@ -38,17 +38,8 @@ import {address} from "bitcoinjs-lib";
 
 const OUTPUT_SCRIPT_MAX_LENGTH = 200;
 
-export type ToBtcConfig = {
-    authorizationTimeout: number,
-    bitcoinBlocktime: BN,
-    gracePeriod: BN,
-    baseFee: BN,
-    feePPM: BN,
-    max: BN,
-    min: BN,
-    safetyFactor: BN,
+export type ToBtcConfig = ToBtcBaseConfig & {
     sendSafetyFactor: BN,
-    maxSkew: number,
 
     bitcoinNetwork: bitcoin.networks.Network,
 
@@ -61,7 +52,6 @@ export type ToBtcConfig = {
     minConfTarget: number,
 
     txCheckInterval: number,
-    swapCheckInterval: number,
 
     feeEstimator?: IBtcFeeEstimator,
     onchainReservedPerChannel?: number

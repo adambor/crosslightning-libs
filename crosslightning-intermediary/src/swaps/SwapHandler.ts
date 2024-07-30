@@ -27,6 +27,27 @@ export type SwapHandlerInfoType = {
     data?: any,
 };
 
+export type FromBtcBaseConfig = SwapBaseConfig & {
+    refundInterval: number,
+    securityDepositAPY: number
+};
+
+export type ToBtcBaseConfig = SwapBaseConfig & {
+    swapCheckInterval: number
+};
+
+export type SwapBaseConfig = {
+    authorizationTimeout: number,
+    bitcoinBlocktime: BN,
+    gracePeriod: BN,
+    baseFee: BN,
+    feePPM: BN,
+    max: BN,
+    min: BN,
+    maxSkew: number,
+    safetyFactor: BN,
+};
+
 /**
  * An abstract class defining a singular swap service
  */
@@ -47,11 +68,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
     readonly swapPricing: ISwapPrice;
     readonly LND: AuthenticatedLnd;
 
-    abstract config: {
-        max: BN,
-        min: BN,
-        authorizationTimeout: number
-    };
+    abstract config: SwapBaseConfig;
 
     protected constructor(storageDirectory: IIntermediaryStorage<V>, path: string, swapContract: SwapContract<T, any, any, any>, chainEvents: ChainEvents<T>, allowedTokens: TokenAddress[], lnd: AuthenticatedLnd, swapPricing: ISwapPrice) {
         this.storageManager = storageDirectory;

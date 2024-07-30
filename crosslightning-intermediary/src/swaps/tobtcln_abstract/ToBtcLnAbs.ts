@@ -3,14 +3,13 @@ import {Express} from "express";
 import * as bolt11 from "bolt11";
 import * as lncli from "ln-service";
 import {ToBtcLnSwapAbs, ToBtcLnSwapState} from "./ToBtcLnSwapAbs";
-import {SwapHandler, SwapHandlerType} from "../SwapHandler";
+import {SwapHandler, SwapHandlerType, ToBtcBaseConfig} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
 import {
     ChainEvents,
     ChainSwapType,
     ClaimEvent,
     InitializeEvent,
-    IStorageManager,
     RefundEvent,
     SwapCommitStatus,
     SwapContract,
@@ -27,24 +26,11 @@ import {serverParamDecoder} from "../../utils/paramcoders/server/ServerParamDeco
 import {IParamReader} from "../../utils/paramcoders/IParamReader";
 import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
 import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
-import * as express from "express";
-import {ToBtcRequestType} from "../tobtc_abstract/ToBtcAbs";
 
-export type ToBtcLnConfig = {
-    authorizationTimeout: number,
-    bitcoinBlocktime: BN,
-    gracePeriod: BN,
-    baseFee: BN,
-    feePPM: BN,
-    max: BN,
-    min: BN,
-    maxSkew: number,
-    safetyFactor: BN,
+export type ToBtcLnConfig = ToBtcBaseConfig & {
     routingFeeMultiplier: BN,
 
     minSendCltv: BN,
-
-    swapCheckInterval: number,
 
     allowProbeFailedSwaps: boolean,
     allowShortExpiry: boolean,

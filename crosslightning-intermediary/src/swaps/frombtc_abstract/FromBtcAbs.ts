@@ -2,14 +2,13 @@ import * as BN from "bn.js";
 import * as lncli from "ln-service";
 import {Express} from "express";
 import {FromBtcSwapAbs, FromBtcSwapState} from "./FromBtcSwapAbs";
-import {SwapHandler, SwapHandlerType} from "../SwapHandler";
+import {FromBtcBaseConfig, SwapHandler, SwapHandlerType} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
 import {
     ChainEvents,
     ChainSwapType,
     ClaimEvent,
     InitializeEvent,
-    IStorageManager,
     RefundEvent,
     SwapContract,
     SwapData,
@@ -22,29 +21,15 @@ import {createHash} from "crypto";
 import {expressHandlerWrapper} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
-import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
-import * as express from "express";
+import {FieldTypeEnum} from "../../utils/paramcoders/SchemaVerifier";
 import {serverParamDecoder} from "../../utils/paramcoders/server/ServerParamDecoder";
 import {IParamReader} from "../../utils/paramcoders/IParamReader";
 import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
 
-export type FromBtcConfig = {
-    authorizationTimeout: number,
-    bitcoinBlocktime: BN,
-    baseFee: BN,
-    feePPM: BN,
-    max: BN,
-    min: BN,
-    maxSkew: number,
-    safetyFactor: BN,
+export type FromBtcConfig = FromBtcBaseConfig & {
     bitcoinNetwork: bitcoin.networks.Network
-
     confirmations: number,
-    swapCsvDelta: number,
-
-    refundInterval: number,
-
-    securityDepositAPY: number
+    swapCsvDelta: number
 };
 
 const secondsInYear = new BN(365*24*60*60);
