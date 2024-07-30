@@ -1,15 +1,13 @@
 
 import {Express} from "express";
 import {ISwapPrice} from "./ISwapPrice";
-import {ChainEvents, StorageObject, SwapContract, SwapData, TokenAddress, IStorageManager} from "crosslightning-base";
+import {ChainEvents, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
 import {SwapHandlerSwap} from "./SwapHandlerSwap";
 import {PluginManager} from "../plugins/PluginManager";
 import {IIntermediaryStorage} from "../storage/IIntermediaryStorage";
 import * as BN from "bn.js";
 import {ServerParamEncoder} from "../utils/paramcoders/server/ServerParamEncoder";
-import {FieldTypeEnum} from "../utils/paramcoders/SchemaVerifier";
-import {IParamReader} from "../utils/paramcoders/IParamReader";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
