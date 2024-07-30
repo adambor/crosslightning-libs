@@ -807,7 +807,7 @@ export class ToBtcAbs<T extends SwapData> extends SwapHandler<ToBtcSwapAbs<T>, T
      * @throws {DefinedRuntimeError} will throw an error if the nonce is invalid
      */
     checkNonceValid(nonce: BN): void {
-        if(nonce.isNeg()) {
+        if(nonce.isNeg() || nonce.gte(new BN(2).pow(new BN(64)))) {
             throw {
                 code: 20021,
                 msg: "Invalid request body (nonce - cannot be parsed)"
