@@ -323,7 +323,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
     /**
      * Checks past swaps, deletes ones that are already expired.
      */
-    private async checkPastSwaps() {
+    protected async processPastSwaps() {
 
         const queriedData = await this.storageManager.query([
             {
@@ -467,7 +467,17 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param payment
      */
     private subscribeToPayment(payment: ToBtcSwapAbs<T>) {
+        console.log("[To BTC: Payment subscribe] Adding txId subscriptions: ", payment.txId);
         this.activeSubscriptions[payment.txId] = payment;
+    }
+
+    private unsubscribePayment(payment: ToBtcSwapAbs<T>) {
+        if(payment.txId!=null) {
+            if(this.activeSubscriptions[payment.txId]!=null) {
+                console.log("[To BTC: Payment subscribe] Removing from txId subscriptions: ", payment.txId);
+                delete this.activeSubscriptions[payment.txId];
+            }
+        }
     }
 
     /**
@@ -692,92 +702,53 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
 
     }
 
-    /**
-     * Chain event handler
-     *
-     * @param eventData
-     */
-    private async processEvent(eventData: SwapEvent<T>[]): Promise<boolean> {
-        for(let event of eventData) {
-            if(event instanceof InitializeEvent) {
-                if(event.swapType!==ChainSwapType.CHAIN_NONCED) {
-                    //Only process nonced on-chain requests
-                    continue;
-                }
+    protected async processInitializeEvent(event: InitializeEvent<T>): Promise<void> {
+        if(event.swapType!==ChainSwapType.CHAIN_NONCED) return;
 
-                const paymentHash = event.paymentHash;
+        const paymentHash = event.paymentHash;
 
-                const savedInvoice = await this.storageManager.getData(paymentHash, event.sequence);
+        const swap = await this.storageManager.getData(paymentHash, event.sequence);
+        if(swap==null) return;
 
-                if(savedInvoice==null) {
-                    // console.error("[To BTC: Solana.Initialize] No invoice submitted");
-                    continue;
-                }
-                savedInvoice.txIds.init = (event as any).meta?.txId;
+        swap.txIds.init = (event as any).meta?.txId;
+        if(swap.metadata!=null) swap.metadata.times.txReceived = Date.now();
 
-                if(savedInvoice.metadata!=null) savedInvoice.metadata.times.txReceived = Date.now();
+        console.log("[To BTC: Solana.Initialize] SOL request submitted");
+        await this.processInitialized(swap);
+    }
 
-                console.log("[To BTC: Solana.Initialize] SOL request submitted");
+    protected async processClaimEvent(event: ClaimEvent<T>): Promise<void> {
+        const paymentHash = event.paymentHash;
 
-                await this.processInitialized(savedInvoice);
+        const swap = await this.storageManager.getData(paymentHash, event.sequence);
+        if(swap==null) return;
 
-                continue;
-            }
-            if(event instanceof ClaimEvent) {
-                const paymentHash = event.paymentHash;
+        swap.txIds.claim = (event as any).meta?.txId;
 
-                const savedInvoice = await this.storageManager.getData(paymentHash, event.sequence);
+        console.log("[To BTC: SC.ClaimEvent] Transaction confirmed! Event: ", event);
 
-                if(savedInvoice==null) {
-                    console.error("[To BTC: Solana.ClaimEvent] No invoice submitted");
-                    continue;
-                }
-                savedInvoice.txIds.claim = (event as any).meta?.txId;
+        //Also remove transaction from active subscriptions
+        this.unsubscribePayment(swap);
 
-                console.log("[To BTC: Solana.ClaimEvent] Transaction confirmed! Event: ", event);
+        await swap.setState(ToBtcSwapState.CLAIMED);
+        await this.removeSwapData(paymentHash, event.sequence);
+    }
 
-                //Also remove transaction from active subscriptions
-                if(savedInvoice.txId!=null) {
-                    if(this.activeSubscriptions[savedInvoice.txId]!=null) {
-                        console.log("[To Btc: Solana.ClaimEvent] Removing from txId subscriptions: ", savedInvoice.txId);
-                        delete this.activeSubscriptions[savedInvoice.txId];
-                    }
-                }
+    protected async processRefundEvent(event: RefundEvent<T>): Promise<void> {
+        const paymentHash = event.paymentHash;
 
-                await savedInvoice.setState(ToBtcSwapState.CLAIMED);
-                await this.removeSwapData(paymentHash, event.sequence);
+        const swap = await this.storageManager.getData(paymentHash, event.sequence);
+        if(swap==null) return;
 
-                continue;
-            }
-            if(event instanceof RefundEvent) {
-                const paymentHash = event.paymentHash;
+        swap.txIds.refund = (event as any).meta?.txId;
 
-                const savedInvoice = await this.storageManager.getData(paymentHash, event.sequence);
+        console.log("[To BTC: SC.RefundEvent] Transaction refunded! Event: ", event);
 
-                if(savedInvoice==null) {
-                    console.error("[To BTC: Solana.RefundEvent] No invoice submitted");
-                    continue;
-                }
-                savedInvoice.txIds.refund = (event as any).meta?.txId;
+        //Also remove transaction from active subscriptions
+        this.unsubscribePayment(swap);
 
-                console.log("[To BTC: Solana.RefundEvent] Transaction refunded! Event: ", event);
-
-                //Also remove transaction from active subscriptions
-                if(savedInvoice.txId!=null) {
-                    if(this.activeSubscriptions[savedInvoice.txId]!=null) {
-                        console.log("[To Btc: Solana.RefundEvent] Removing from txId subscriptions: ", savedInvoice.txId);
-                        delete this.activeSubscriptions[savedInvoice.txId];
-                    }
-                }
-
-                await savedInvoice.setState(ToBtcSwapState.REFUNDED);
-                await this.removeSwapData(paymentHash, event.sequence);
-
-                continue;
-            }
-        }
-
-        return true;
+        await swap.setState(ToBtcSwapState.REFUNDED);
+        await this.removeSwapData(paymentHash, event.sequence);
     }
 
     /**
@@ -1203,27 +1174,6 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
     }
 
     /**
-     * Subscribes to on-chain events
-     */
-    subscribeToEvents() {
-        this.chainEvents.registerListener(this.processEvent.bind(this));
-
-        console.log("[To BTC: Solana.Events] Subscribed to Solana events");
-    }
-
-    /**
-     * Starts watchdog checking past swaps
-     */
-    private async startPastSwapsTimer() {
-        let rerun;
-        rerun = async () => {
-            await this.checkPastSwaps().catch( e => console.error(e));
-            setTimeout(rerun, this.config.swapCheckInterval);
-        };
-        await rerun();
-    }
-
-    /**
      * Starts watchdog checking sent bitcoin transactions
      */
     private async startTxTimer() {
@@ -1236,7 +1186,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
     }
 
     async startWatchdog() {
-        await this.startPastSwapsTimer();
+        await super.startWatchdog();
         await this.startTxTimer();
     }
 

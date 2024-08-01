@@ -8,7 +8,6 @@ import {FieldTypeEnum} from "../utils/paramcoders/SchemaVerifier";
 const secondsInYear = new BN(365*24*60*60);
 
 export type FromBtcBaseConfig = SwapBaseConfig & {
-    refundInterval: number,
     securityDepositAPY: number
 };
 

@@ -1,6 +1,14 @@
 import {Express} from "express";
 import {ISwapPrice} from "./ISwapPrice";
-import {ChainEvents, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
+import {
+    ChainEvents,
+    ClaimEvent,
+    InitializeEvent, RefundEvent,
+    SwapContract,
+    SwapData,
+    SwapEvent,
+    TokenAddress
+} from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
 import {SwapHandlerSwap} from "./SwapHandlerSwap";
 import {PluginManager} from "../plugins/PluginManager";
@@ -34,6 +42,7 @@ export type SwapBaseConfig = {
     min: BN,
     maxSkew: number,
     safetyFactor: BN,
+    swapCheckInterval: number
 };
 
 /**
@@ -64,15 +73,55 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
         this.swapPricing = swapPricing;
     }
 
-    /**
-     * Initializes swap handler, loads data and subscribes to chain events
-     */
-    abstract init(): Promise<void>;
+    protected abstract processPastSwaps(): Promise<void>;
 
     /**
      * Starts the watchdog checking past swaps for expiry or claim eligibility.
      */
-    abstract startWatchdog(): Promise<void>;
+    async startWatchdog() {
+        let rerun;
+        rerun = async () => {
+            await this.processPastSwaps().catch( e => console.error(e));
+            setTimeout(rerun, this.config.swapCheckInterval);
+        };
+        await rerun();
+    }
+
+    protected abstract processInitializeEvent(event: InitializeEvent<T>): Promise<void>;
+    protected abstract processClaimEvent(event: ClaimEvent<T>): Promise<void>;
+    protected abstract processRefundEvent(event: RefundEvent<T>): Promise<void>;
+
+    /**
+     * Chain event processor
+     *
+     * @param eventData
+     */
+    protected async processEvent(eventData: SwapEvent<T>[]): Promise<boolean> {
+        for(let event of eventData) {
+            if(event instanceof InitializeEvent) {
+                await this.processInitializeEvent(event);
+            } else if(event instanceof ClaimEvent) {
+                await this.processClaimEvent(event);
+            } else if(event instanceof RefundEvent) {
+                await this.processRefundEvent(event);
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Initializes chain events subscription
+     */
+    protected subscribeToEvents() {
+        this.chainEvents.registerListener(this.processEvent.bind(this));
+        console.log("["+this.type+": Solana.Events] Subscribed to Solana events");
+    }
+
+    /**
+     * Initializes swap handler, loads data and subscribes to chain events
+     */
+    abstract init(): Promise<void>;
 
     /**
      * Sets up required listeners for the REST server
@@ -113,25 +162,25 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
     /**
      * Starts a pre-fetch for signature data
      *
-     * @param responseStream
      * @param abortController
+     * @param responseStream
      */
-    getSignDataPrefetch(responseStream: ServerParamEncoder, abortController: AbortController): Promise<any> {
+    getSignDataPrefetch(abortController: AbortController, responseStream?: ServerParamEncoder): Promise<any> {
         let signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
-            console.error("To/From BTC/BTC-LN: REST.signDataPrefetch", e);
+            console.error(this.type+": REST.signDataPrefetch", e);
             abortController.abort(e);
             return null;
         }) : null;
 
-        if(signDataPrefetchPromise!=null) {
+        if(signDataPrefetchPromise!=null && responseStream!=null) {
             signDataPrefetchPromise = signDataPrefetchPromise.then(val => val==null || abortController.signal.aborted ? null : responseStream.writeParams({
                 signDataPrefetch: val
             }).then(() => val).catch(e => {
-                console.error("[To/From BTC/BTC-LN: REST.payInvoice] Send signDataPreFetch error: ", e);
+                console.error("["+this.type+": REST.payInvoice] Send signDataPreFetch error: ", e);
                 abortController.abort(e);
                 return null;
             }));
-            if(signDataPrefetchPromise!=null) console.log("[To/From BTC/BTC-LN: REST.payInvoice] Pre-fetching signature data!");
+            if(signDataPrefetchPromise!=null) console.log("["+this.type+": REST.payInvoice] Pre-fetching signature data!");
         }
 
         return signDataPrefetchPromise;

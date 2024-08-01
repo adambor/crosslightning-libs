@@ -116,7 +116,7 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
     /**
      * Checks past swaps, refunds and deletes ones that are already expired.
      */
-    private async checkPastSwaps() {
+    protected async processPastSwaps() {
 
         const queriedData = await this.storageManager.query([
             {
@@ -178,95 +178,56 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
         }
     }
 
-    /**
-     * Chain event processor
-     *
-     * @param eventData
-     */
-    private async processEvent(eventData: SwapEvent<T>[]): Promise<boolean> {
+    protected async processInitializeEvent(event: InitializeEvent<T>) {
+        //Only process on-chain requests
+        if (event.swapType !== ChainSwapType.CHAIN) return;
 
-        for(let event of eventData) {
+        const swapData = await event.swapData();
 
-            if(event instanceof InitializeEvent) {
-                if (event.swapType !== ChainSwapType.CHAIN) {
-                    //Only process on-chain requests
-                    continue;
-                }
+        if (!this.swapContract.areWeOfferer(swapData)) return;
+        //Only process requests that don't pay in from the program
+        if (swapData.isPayIn()) return;
 
-                const swapData = await event.swapData();
+        const paymentHash = event.paymentHash;
+        const savedSwap = await this.storageManager.getData(paymentHash, event.sequence);
+        if(savedSwap==null) return;
 
-                if (!this.swapContract.areWeOfferer(swapData)) {
-                    continue;
-                }
+        savedSwap.txIds.init = (event as any).meta?.txId;
+        if(savedSwap.metadata!=null) savedSwap.metadata.times.initTxReceived = Date.now();
 
-                if (swapData.isPayIn()) {
-                    //Only process requests that don't pay in from the program
-                    continue;
-                }
-
-                const paymentHash = event.paymentHash;
-                const paymentHashBuffer = Buffer.from(paymentHash, "hex");
-                const savedSwap = await this.storageManager.getData(paymentHash, event.sequence);
-
-                const isSwapFound = savedSwap != null;
-                if (isSwapFound) {
-                    savedSwap.txIds.init = (event as any).meta?.txId;
-                    if(savedSwap.metadata!=null) savedSwap.metadata.times.initTxReceived = Date.now();
-
-                    if(savedSwap.state===FromBtcSwapState.CREATED) {
-                        await savedSwap.setState(FromBtcSwapState.COMMITED);
-                        savedSwap.data = swapData;
-                        await this.storageManager.saveData(paymentHashBuffer.toString("hex"), event.sequence, savedSwap);
-                    }
-                }
-
-                continue;
-            }
-            if(event instanceof ClaimEvent) {
-                const paymentHashHex = event.paymentHash;
-                const paymentHash: Buffer = Buffer.from(paymentHashHex, "hex");
-
-                const savedSwap = await this.storageManager.getData(paymentHashHex, event.sequence);
-
-                const isSwapNotFound = savedSwap == null;
-                if (isSwapNotFound) {
-                    continue;
-                }
-
-                savedSwap.txId = Buffer.from(event.secret, "hex").reverse().toString("hex");
-                savedSwap.txIds.claim = (event as any).meta?.txId;
-                if(savedSwap.metadata!=null) savedSwap.metadata.times.claimTxReceived = Date.now();
-
-                await savedSwap.setState(FromBtcSwapState.CLAIMED);
-                //await PluginManager.swapStateChange(savedSwap);
-
-                console.log("[From BTC: Solana.ClaimEvent] Swap claimed by claimer: ", paymentHashHex);
-                await this.removeSwapData(paymentHash.toString("hex"), event.sequence);
-
-                continue;
-            }
-            if(event instanceof RefundEvent) {
-                if (event.paymentHash == null) {
-                    continue;
-                }
-
-                const savedSwap = await this.storageManager.getData(event.paymentHash, event.sequence);
-
-                const isSwapNotFound = savedSwap == null;
-                if (isSwapNotFound) {
-                    continue;
-                }
-
-                savedSwap.txIds.refund = (event as any).meta?.txId;
-
-                await savedSwap.setState(FromBtcSwapState.REFUNDED);
-                await this.removeSwapData(event.paymentHash, event.sequence);
-
-                continue;
-            }
+        if(savedSwap.state===FromBtcSwapState.CREATED) {
+            await savedSwap.setState(FromBtcSwapState.COMMITED);
+            savedSwap.data = swapData;
+            await this.storageManager.saveData(paymentHash, event.sequence, savedSwap);
         }
+    }
 
-        return true;
+    protected async processClaimEvent(event: ClaimEvent<T>): Promise<void> {
+        const paymentHashHex = event.paymentHash;
+
+        const savedSwap = await this.storageManager.getData(paymentHashHex, event.sequence);
+        if (savedSwap == null) return;
+
+        savedSwap.txId = Buffer.from(event.secret, "hex").reverse().toString("hex");
+        savedSwap.txIds.claim = (event as any).meta?.txId;
+        if(savedSwap.metadata!=null) savedSwap.metadata.times.claimTxReceived = Date.now();
+
+        await savedSwap.setState(FromBtcSwapState.CLAIMED);
+
+        console.log("[From BTC: Solana.ClaimEvent] Swap claimed by claimer: ", paymentHashHex);
+        await this.removeSwapData(paymentHashHex, event.sequence);
+    }
+
+    protected async processRefundEvent(event: RefundEvent<T>) {
+        if (event.paymentHash == null) return;
+
+        const savedSwap = await this.storageManager.getData(event.paymentHash, event.sequence);
+        if(savedSwap == null) return;
+
+        savedSwap.txIds.refund = (event as any).meta?.txId;
+
+        await savedSwap.setState(FromBtcSwapState.REFUNDED);
+        await this.removeSwapData(event.paymentHash, event.sequence);
     }
 
     /**
@@ -386,17 +347,11 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
                 sequence: FieldTypeEnum.BN,
                 exactOut: FieldTypeEnum.BooleanOptional
             });
-
+            if(parsedBody==null) throw {
+                code: 20100,
+                msg: "Invalid request body"
+            };
             metadata.request = parsedBody;
-
-            const responseStream = res.responseStream;
-
-            if(parsedBody==null) {
-                throw {
-                    code: 20100,
-                    msg: "Invalid request body"
-                };
-            }
 
             //Check request params
             this.checkSequence(parsedBody.sequence);
@@ -406,12 +361,13 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
             //Create abortController for parallel prefetches
+            const responseStream = res.responseStream;
             const abortController = this.getAbortController(responseStream);
 
             //Pre-fetch data
             const {pricePrefetchPromise, securityDepositPricePrefetchPromise} = this.getFromBtcPricePrefetches(useToken, abortController);
             const balancePrefetch: Promise<BN> = this.getBalancePrefetch(useToken, abortController);
-            const signDataPrefetchPromise: Promise<any> = this.getSignDataPrefetch(responseStream, abortController);
+            const signDataPrefetchPromise: Promise<any> = this.getSignDataPrefetch(abortController, responseStream);
 
             const dummySwapData = await this.swapContract.createSwapData(
                 ChainSwapType.CHAIN,
@@ -525,27 +481,6 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
         }));
 
         console.log("[From BTC: REST] Started at path: ", this.path);
-    }
-
-    /**
-     * Initializes chain events subscription
-     */
-    private subscribeToEvents() {
-        this.chainEvents.registerListener(this.processEvent.bind(this));
-
-        console.log("[From BTC: Solana.Events] Subscribed to Solana events");
-    }
-
-    /**
-     * Starts the checkPastSwaps watchdog
-     */
-    async startWatchdog() {
-        let rerun;
-        rerun = async () => {
-            await this.checkPastSwaps().catch( e => console.error(e));
-            setTimeout(rerun, this.config.refundInterval);
-        };
-        await rerun();
     }
 
     /**

@@ -15,6 +15,26 @@ import * as BN from "bn.js";
 import * as fs from "fs";
 import {Command, createCommand} from "crosslightning-server-base";
 
+export type FailSwapResponse = {
+    type: "fail",
+    code?: number,
+    msg?: string
+};
+
+export type FeeSwapResponse = {
+    type: "fee",
+    baseFee: BN,
+    feePPM: BN
+};
+
+export type AmountAndFeeSwapResponse = {
+    type: "amountAndFee",
+    baseFee?: BN,
+    feePPM?: BN,
+    amount: BN
+};
+
+export type SwapResponse = FailSwapResponse | FeeSwapResponse | AmountAndFeeSwapResponse;
 
 export class PluginManager {
 

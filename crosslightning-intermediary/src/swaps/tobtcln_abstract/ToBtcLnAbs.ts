@@ -167,7 +167,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
     /**
      * Checks past swaps, deletes ones that are already expired, and tries to process ones that are committed.
      */
-    private async checkPastInvoices() {
+    protected async processPastSwaps() {
 
         for(let key in this.exactInAuths) {
             const obj = this.exactInAuths[key];
@@ -450,86 +450,52 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         }
 
         await this.processPaymentResult(invoiceData, lnPaymentStatus);
-
     }
 
-    /**
-     * Chain event handler
-     *
-     * @param eventData
-     */
-    private async processEvent(eventData: SwapEvent<T>[]): Promise<boolean> {
+    protected async processInitializeEvent(event: InitializeEvent<T>): Promise<void> {
+        if(event.swapType!==ChainSwapType.HTLC) return;
 
-        for(let event of eventData) {
-            if(event instanceof InitializeEvent) {
-                console.log("Initialize Event: ", event);
+        const paymentHash = event.paymentHash;
 
-                if(event.swapType!==ChainSwapType.HTLC) {
-                    //Only process ln requests
-                    continue;
-                }
+        const swap = await this.storageManager.getData(paymentHash, event.sequence);
+        if(swap==null) return;
 
-                const paymentHash = event.paymentHash;
+        swap.txIds.init = (event as any).meta?.txId;
+        if(swap.metadata!=null) swap.metadata.times.txReceived = Date.now();
 
-                const savedInvoice = await this.storageManager.getData(paymentHash, event.sequence);
+        console.log("[To BTC-LN: SC.Initialize] SC request submitted: ", paymentHash);
 
-                if(savedInvoice==null) {
-                    // console.error("[To BTC-LN: Solana.Initialize] No invoice submitted: ", paymentHash);
-                    continue;
-                }
-                savedInvoice.txIds.init = (event as any).meta?.txId;
+        //Only process swaps in SAVED state
+        if(swap.state!==ToBtcLnSwapState.SAVED) return;
+        await this.processInitialized(swap);
+    }
 
-                if(savedInvoice.metadata!=null) savedInvoice.metadata.times.txReceived = Date.now();
+    protected async processClaimEvent(event: ClaimEvent<T>): Promise<void> {
+        const paymentHash = event.paymentHash;
 
-                console.log("[To BTC-LN: Solana.Initialize] SOL request submitted: ", paymentHash);
+        const swap = await this.storageManager.getData(paymentHash, event.sequence);
+        if(swap==null) return;
 
-                //Only process swaps in SAVED state
-                if(savedInvoice.state!==ToBtcLnSwapState.SAVED) continue;
+        swap.txIds.claim = (event as any).meta?.txId;
 
-                await this.processInitialized(savedInvoice);
+        console.log("[To BTC-LN: SC.ClaimEvent] Transaction confirmed! Event: ", event);
 
-                continue;
-            }
-            if(event instanceof ClaimEvent) {
-                const paymentHash = event.paymentHash;
-                const paymentHashBuffer = Buffer.from(event.paymentHash, "hex");
+        await swap.setState(ToBtcLnSwapState.CLAIMED);
+        await this.removeSwapData(paymentHash, event.sequence);
+    }
 
-                const savedInvoice = await this.storageManager.getData(paymentHash, event.sequence);
+    protected async processRefundEvent(event: RefundEvent<T>): Promise<void> {
+        const paymentHash = event.paymentHash;
 
-                if(savedInvoice==null) {
-                    console.error("[To BTC-LN: Solana.ClaimEvent] No invoice submitted: ", paymentHash);
-                    continue;
-                }
-                savedInvoice.txIds.claim = (event as any).meta?.txId;
+        const savedInvoice = await this.storageManager.getData(paymentHash, event.sequence);
+        if(savedInvoice==null) return;
 
-                console.log("[To BTC-LN: Solana.ClaimEvent] Transaction confirmed! Event: ", event);
+        savedInvoice.txIds.refund = (event as any).meta?.txId;
 
-                await savedInvoice.setState(ToBtcLnSwapState.CLAIMED);
-                await this.removeSwapData(paymentHash, event.sequence);
-                continue;
-            }
-            if(event instanceof RefundEvent) {
-                const paymentHash = event.paymentHash;
+        console.log("[To BTC-LN: Solana.RefundEvent] Transaction refunded! Event: ", event);
 
-                const savedInvoice = await this.storageManager.getData(paymentHash, event.sequence);
-
-                if(savedInvoice==null) {
-                    console.error("[To BTC-LN: Solana.RefundEvent] No invoice submitted");
-                    continue;
-                }
-                savedInvoice.txIds.refund = (event as any).meta?.txId;
-
-                console.log("[To BTC-LN: Solana.RefundEvent] Transaction refunded! Event: ", event);
-
-                await savedInvoice.setState(ToBtcLnSwapState.REFUNDED);
-                await this.removeSwapData(paymentHash, event.sequence);
-
-                continue;
-            }
-        }
-
-        return true;
-
+        await savedInvoice.setState(ToBtcLnSwapState.REFUNDED);
+        await this.removeSwapData(paymentHash, event.sequence);
     }
 
     /**
@@ -1286,27 +1252,6 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         restServer.get(this.path+'/getRefundAuthorization', getRefundAuthorization);
 
         console.log("[To BTC-LN: REST] Started at path: ", this.path);
-    }
-
-    /**
-     * Subscribes to chain events
-     */
-    private subscribeToEvents() {
-        this.chainEvents.registerListener(this.processEvent.bind(this));
-
-        console.log("[To BTC-LN: Solana.Events] Subscribed to Solana events");
-    }
-
-    /**
-     * Starts watchdog checking lightning network payment attempts, and removing expired swaps
-     */
-    async startWatchdog() {
-        let rerun;
-        rerun = async () => {
-            await this.checkPastInvoices().catch( e => console.error(e));
-            setTimeout(rerun, this.config.swapCheckInterval);
-        };
-        await rerun();
     }
 
     async init() {

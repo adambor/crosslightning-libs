@@ -6,9 +6,7 @@ import {ServerParamEncoder} from "../utils/paramcoders/server/ServerParamEncoder
 import {IParamReader} from "../utils/paramcoders/IParamReader";
 import {FieldTypeEnum} from "../utils/paramcoders/SchemaVerifier";
 
-export type ToBtcBaseConfig = SwapBaseConfig & {
-    swapCheckInterval: number
-};
+export type ToBtcBaseConfig = SwapBaseConfig;
 
 export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T>, T extends SwapData> extends SwapHandler<V, T> {
 
@@ -188,7 +186,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T>, T exten
 
         return {
             pricePrefetchPromise,
-            signDataPrefetchPromise: this.getSignDataPrefetch(responseStream, abortController)
+            signDataPrefetchPromise: this.getSignDataPrefetch(abortController, responseStream)
         }
     }
 
