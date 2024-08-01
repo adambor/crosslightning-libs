@@ -546,6 +546,25 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         await this.removeSwapData(paymentHash, null);
     };
 
+    getDummySwapData(useToken: TokenAddress, address: string, paymentHash: string) {
+        return this.swapContract.createSwapData(
+            ChainSwapType.HTLC,
+            this.swapContract.getAddress(),
+            address,
+            useToken,
+            null,
+            paymentHash,
+            new BN(0),
+            null,
+            null,
+            0,
+            false,
+            true,
+            null,
+            new BN(0)
+        );
+    }
+
     startRestServer(restServer: Express) {
 
         restServer.use(this.path+"/createInvoice", serverParamDecoder(10*1000));
@@ -609,22 +628,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
             const balancePrefetch: Promise<BN> = this.getBalancePrefetch(useToken, abortController);
             const channelsPrefetch: Promise<{channels: any[]}> = this.getChannelsPrefetch(abortController);
 
-            const dummySwapData = await this.swapContract.createSwapData(
-                ChainSwapType.HTLC,
-                this.swapContract.getAddress(),
-                parsedBody.address,
-                useToken,
-                null,
-                parsedBody.paymentHash,
-                new BN(0),
-                null,
-                null,
-                0,
-                false,
-                true,
-                null,
-                new BN(0)
-            );
+            const dummySwapData = await this.getDummySwapData(useToken, parsedBody.address, parsedBody.paymentHash);
             abortController.signal.throwIfAborted();
             const baseSDPromise: Promise<BN> = this.getBaseSecurityDepositPrefetch(dummySwapData, abortController);
 
@@ -772,6 +776,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
                         msg: "Invoice yet unpaid"
                     });
                 }
+                return;
             }
 
             res.status(200).json({
@@ -838,9 +843,9 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
                 return;
             }
 
-            const invoiceData: FromBtcLnSwapAbs<T> = await this.storageManager.getData(parsedBody.paymentHash, null);
+            const swap: FromBtcLnSwapAbs<T> = await this.storageManager.getData(parsedBody.paymentHash, null);
 
-            const isSwapFound = invoiceData != null;
+            const isSwapFound = swap != null;
             if (!isSwapFound) {
                 res.status(200).json({
                     code: 10001,
@@ -849,8 +854,8 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
                 return;
             }
 
-            if (invoiceData.state === FromBtcLnSwapState.RECEIVED) {
-                if (invoiceData.signature!=null && await this.swapContract.isInitAuthorizationExpired(invoiceData.data, invoiceData.timeout, invoiceData.prefix, invoiceData.signature)) {
+            if (swap.state === FromBtcLnSwapState.RECEIVED) {
+                if (swap.signature!=null && await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature)) {
                     res.status(200).json({
                         code: 10001,
                         msg: "Invoice expired/canceled"
@@ -859,18 +864,18 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
                 }
             }
 
-            if (invoiceData.state === FromBtcLnSwapState.CREATED) {
+            if (swap.state === FromBtcLnSwapState.CREATED) {
                 console.log("[From BTC-LN: REST.GetInvoicePaymentAuth] held ln invoice: ", invoice);
 
                 try {
-                    await this.htlcReceived(invoiceData, invoice);
+                    await this.htlcReceived(swap, invoice);
                 } catch (e) {
                     res.status(200).json(e);
                     return;
                 }
             }
 
-            if (invoiceData.state === FromBtcLnSwapState.CANCELED) {
+            if (swap.state === FromBtcLnSwapState.CANCELED) {
                 res.status(200).json({
                     code: 10001,
                     msg: "Invoice expired/canceled"
@@ -878,7 +883,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
                 return;
             }
 
-            if (invoiceData.state === FromBtcLnSwapState.COMMITED) {
+            if (swap.state === FromBtcLnSwapState.COMMITED) {
                 res.status(200).json({
                     code: 10004,
                     msg: "Invoice already committed"
@@ -891,11 +896,11 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
                 msg: "Success",
                 data: {
                     address: this.swapContract.getAddress(),
-                    data: invoiceData.serialize().data,
-                    nonce: invoiceData.nonce,
-                    prefix: invoiceData.prefix,
-                    timeout: invoiceData.timeout,
-                    signature: invoiceData.signature
+                    data: swap.serialize().data,
+                    nonce: swap.nonce,
+                    prefix: swap.prefix,
+                    timeout: swap.timeout,
+                    signature: swap.signature
                 }
             });
         });

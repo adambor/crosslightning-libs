@@ -12,7 +12,6 @@ import {
     RefundEvent,
     SwapContract,
     SwapData,
-    SwapEvent,
     TokenAddress
 } from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
@@ -173,7 +172,6 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
             if(unlock==null) continue;
             await this.swapContract.refund(refundSwap.data, true, false, true);
             await refundSwap.setState(FromBtcSwapState.REFUNDED);
-            //await PluginManager.swapStateChange(refundSwap);
             unlock();
         }
     }
@@ -304,6 +302,25 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
         return parsedClaimerBounty.claimerBounty.addFee.add(totalBlock.mul(parsedClaimerBounty.claimerBounty.feePerBlock));
     }
 
+    getDummySwapData(useToken: TokenAddress, address: string): Promise<T> {
+        return this.swapContract.createSwapData(
+            ChainSwapType.CHAIN,
+            this.swapContract.getAddress(),
+            address,
+            useToken,
+            null,
+            null,
+            null,
+            null,
+            new BN(0),
+            this.config.confirmations,
+            false,
+            true,
+            null,
+            null
+        );
+    }
+
     /**
      * Sets up required listeners for the REST server
      *
@@ -369,22 +386,7 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
             const balancePrefetch: Promise<BN> = this.getBalancePrefetch(useToken, abortController);
             const signDataPrefetchPromise: Promise<any> = this.getSignDataPrefetch(abortController, responseStream);
 
-            const dummySwapData = await this.swapContract.createSwapData(
-                ChainSwapType.CHAIN,
-                this.swapContract.getAddress(),
-                parsedBody.address,
-                useToken,
-                null,
-                null,
-                null,
-                null,
-                new BN(0),
-                this.config.confirmations,
-                false,
-                true,
-                null,
-                null
-            );
+            const dummySwapData = await this.getDummySwapData(useToken, parsedBody.address);
             abortController.signal.throwIfAborted();
             const baseSDPromise: Promise<BN> = this.getBaseSecurityDepositPrefetch(dummySwapData, abortController);
 
