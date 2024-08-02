@@ -113,6 +113,55 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
     }
 
     /**
+     * Processes past swap
+     *
+     * @param swap
+     * @protected
+     * @returns true if the swap should be refunded, false if nothing should be done
+     */
+    protected async processPastSwap(swap: FromBtcSwapAbs<T>): Promise<boolean> {
+        //Current time, minus maximum chain time skew
+        const currentTime = new BN(Math.floor(Date.now()/1000)-this.config.maxSkew);
+
+        //Once authorization expires in CREATED state, the user can no more commit it on-chain
+        if(swap.state===FromBtcSwapState.CREATED) {
+            const isExpired = swap.authorizationExpiry.lt(currentTime);
+            if(!isExpired) return false;
+
+            const isCommited = await this.swapContract.isCommited(swap.data);
+
+            if(isCommited) {
+                await swap.setState(FromBtcSwapState.COMMITED);
+                await this.storageManager.saveData(this.getChainHash(swap).toString("hex"), swap.data.getSequence(), swap);
+                return false;
+            }
+
+            await swap.setState(FromBtcSwapState.CANCELED);
+            await this.removeSwapData(this.getChainHash(swap).toString("hex"), swap.data.getSequence());
+
+            return false;
+        }
+
+        const expiryTime = swap.data.getExpiry();
+        //Check if commited swap expired by now
+        if(swap.state===FromBtcSwapState.COMMITED) {
+            const isExpired = expiryTime.lt(currentTime);
+            if(!isExpired) return false;
+
+            const isCommited = await this.swapContract.isCommited(swap.data);
+
+            if(isCommited) {
+                return true;
+            }
+
+            await swap.setState(FromBtcSwapState.CANCELED);
+            await this.removeSwapData(this.getChainHash(swap).toString("hex"), swap.data.getSequence());
+
+            return false;
+        }
+    }
+
+    /**
      * Checks past swaps, refunds and deletes ones that are already expired.
      */
     protected async processPastSwaps() {
@@ -130,47 +179,24 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
         const refundSwaps: FromBtcSwapAbs<T>[] = [];
 
         for(let swap of queriedData) {
-            //Current time, minus maximum chain time skew
-            const currentTime = new BN(Math.floor(Date.now()/1000)-this.config.maxSkew);
-
-            //Once authorization expires in CREATED state, the user can no more commit it on-chain
-            if(swap.state===FromBtcSwapState.CREATED) {
-                const isExpired = swap.authorizationExpiry.lt(currentTime);
-                if(isExpired) {
-                    const isCommited = await this.swapContract.isCommited(swap.data);
-                    if(isCommited) {
-                        await swap.setState(FromBtcSwapState.COMMITED);
-                        await this.storageManager.saveData(this.getChainHash(swap).toString("hex"), swap.data.getSequence(), swap);
-                        continue;
-                    }
-                    await swap.setState(FromBtcSwapState.CANCELED);
-                    await this.removeSwapData(this.getChainHash(swap).toString("hex"), swap.data.getSequence());
-                }
-                continue;
-            }
-
-            const expiryTime = swap.data.getExpiry();
-            //Check if commited swap expired by now
-            if(swap.state===FromBtcSwapState.COMMITED) {
-                const isExpired = expiryTime.lt(currentTime);
-                if(isExpired) {
-                    const isCommited = await this.swapContract.isCommited(swap.data);
-
-                    if(isCommited) {
-                        refundSwaps.push(swap);
-                        continue;
-                    }
-
-                    await swap.setState(FromBtcSwapState.CANCELED);
-                    await this.removeSwapData(this.getChainHash(swap).toString("hex"), swap.data.getSequence());
-                }
-            }
+            if(await this.processPastSwap(swap)) refundSwaps.push(swap);
         }
 
+        await this.refundSwaps(refundSwaps);
+    }
+
+    /**
+     * Refunds all swaps (calls SC on-chain refund function)
+     *
+     * @param refundSwaps
+     * @protected
+     */
+    protected async refundSwaps(refundSwaps: FromBtcSwapAbs<T>[]) {
         for(let refundSwap of refundSwaps) {
             const unlock = refundSwap.lock(this.swapContract.refundTimeout);
             if(unlock==null) continue;
             await this.swapContract.refund(refundSwap.data, true, false, true);
+            //The swap should be removed by the event handler
             await refundSwap.setState(FromBtcSwapState.REFUNDED);
             unlock();
         }

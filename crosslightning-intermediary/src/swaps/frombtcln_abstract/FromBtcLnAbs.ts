@@ -17,7 +17,7 @@ import {
     TokenAddress
 } from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
-import {expressHandlerWrapper, HEX_REGEX} from "../../utils/Utils";
+import {expressHandlerWrapper, HEX_REGEX, isDefinedRuntimeError} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
 import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
@@ -64,13 +64,129 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         this.config.invoiceTimeoutSeconds = this.config.invoiceTimeoutSeconds || 90;
     }
 
+    protected async processPastSwap(swap: FromBtcLnSwapAbs<T>): Promise<"REFUND" | "SETTLE" | "CANCEL" | null> {
+        if(swap.state===FromBtcLnSwapState.CREATED) {
+            //Check if already paid
+            const parsedPR = bolt11.decode(swap.pr);
+            const invoice = await lncli.getInvoice({
+                id: parsedPR.tagsObject.payment_hash,
+                lnd: this.LND
+            });
+
+            const isBeingPaid = invoice.is_held;
+            if(!isBeingPaid) {
+                //Not paid
+                const isInvoiceExpired = parsedPR.timeExpireDate<Date.now()/1000;
+                if(!isInvoiceExpired) return null;
+
+                await swap.setState(FromBtcLnSwapState.CANCELED);
+                return "CANCEL";
+            }
+
+            //Adjust the state of the swap and expiry
+            try {
+                await this.htlcReceived(swap, invoice);
+                //Result is either FromBtcLnSwapState.RECEIVED or FromBtcLnSwapState.CANCELED
+            } catch (e) {
+                console.error(e);
+            }
+
+            // @ts-ignore Previous call (htlcReceived) mutates the state of the swap, so this is valid
+            return swap.state===FromBtcLnSwapState.CANCELED ? "CANCEL" : null;
+        }
+
+        if(swap.state===FromBtcLnSwapState.RECEIVED) {
+            const parsedPR = bolt11.decode(swap.pr);
+
+            const isAuthorizationExpired = await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature);
+            if(isAuthorizationExpired) {
+                const isCommited = await this.swapContract.isCommited(swap.data);
+
+                if(!isCommited) {
+                    await swap.setState(FromBtcLnSwapState.CANCELED);
+                    return "CANCEL";
+                }
+
+                await swap.setState(FromBtcLnSwapState.COMMITED);
+                await this.storageManager.saveData(swap.data.getHash(), null, swap);
+            }
+        }
+
+        if(swap.state===FromBtcLnSwapState.RECEIVED || swap.state===FromBtcLnSwapState.COMMITED) {
+            const expiryTime = swap.data.getExpiry();
+            const currentTime = new BN(Math.floor(Date.now()/1000)-this.config.maxSkew);
+
+            const isExpired = expiryTime!=null && expiryTime.lt(currentTime);
+            if(!isExpired) return null;
+
+            const isCommited = await this.swapContract.isCommited(swap.data);
+            if(isCommited) return "REFUND";
+
+            return "CANCEL";
+        }
+
+        if(swap.state===FromBtcLnSwapState.CLAIMED) return "SETTLE";
+        if(swap.state===FromBtcLnSwapState.CANCELED) return "CANCEL";
+    }
+
+    protected async refundSwaps(refundSwaps: FromBtcLnSwapAbs<T>[]) {
+        for(let refundSwap of refundSwaps) {
+            const unlock = refundSwap.lock(this.swapContract.refundTimeout);
+            if(unlock==null) continue;
+
+            await this.swapContract.refund(refundSwap.data, true, false, true);
+
+            await refundSwap.setState(FromBtcLnSwapState.REFUNDED);
+            unlock();
+        }
+    }
+
+    protected async cancelInvoices(swaps: FromBtcLnSwapAbs<T>[]) {
+        for(let swap of swaps) {
+            //Refund
+            const paymentHash = swap.data.getHash();
+            try {
+                await lncli.cancelHodlInvoice({
+                    lnd: this.LND,
+                    id: paymentHash
+                });
+                console.log("[From BTC-LN: BTCLN.CancelHodlInvoice] Invoice cancelled, because was timed out, id: ", paymentHash);
+                await this.removeSwapData(paymentHash, null);
+            } catch (e) {
+                console.error("[From BTC-LN: BTCLN.CancelHodlInvoice] Cannot cancel hodl invoice id: ", paymentHash);
+            }
+        }
+    }
+
+    protected async settleInvoices(swaps: FromBtcLnSwapAbs<T>[]) {
+        for(let swap of swaps) {
+            //Settle
+            const secretBuffer = Buffer.from(swap.secret, "hex");
+            const paymentHash = createHash("sha256").update(secretBuffer).digest();
+
+            try {
+                await lncli.settleHodlInvoice({
+                    lnd: this.LND,
+                    secret: swap.secret
+                });
+                if(swap.metadata!=null) swap.metadata.times.htlcSettled = Date.now();
+                await swap.setState(FromBtcLnSwapState.SETTLED);
+
+                console.log("[From BTC-LN: BTCLN.SettleHodlInvoice] Invoice settled, id: ", paymentHash.toString("hex"));
+                await this.removeSwapData(paymentHash.toString("hex"), null);
+            } catch (e) {
+                console.error("[From BTC-LN: BTCLN.SettleHodlInvoice] Cannot settle hodl invoice id: ", paymentHash.toString("hex"));
+            }
+        }
+    }
+
     /**
      * Checks past swaps, refunds and deletes ones that are already expired.
      */
     protected async processPastSwaps() {
 
         const settleInvoices: FromBtcLnSwapAbs<T>[] = [];
-        const cancelInvoices: string[] = [];
+        const cancelInvoices: FromBtcLnSwapAbs<T>[] = [];
         const refundSwaps: FromBtcLnSwapAbs<T>[] = [];
 
         const queriedData = await this.storageManager.query([
@@ -87,134 +203,22 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         ]);
 
         for(let swap of queriedData) {
-            if(swap.state===FromBtcLnSwapState.CREATED) {
-                //Check if already paid
-                const parsedPR = bolt11.decode(swap.pr);
-                const invoice = await lncli.getInvoice({
-                    id: parsedPR.tagsObject.payment_hash,
-                    lnd: this.LND
-                });
-
-                const isBeingPaid = invoice.is_held;
-                if(isBeingPaid) {
-                    //Adjust the state of the swap and expiry
-                    try {
-                        await this.htlcReceived(swap, invoice);
-                        //Result is either FromBtcLnSwapState.RECEIVED or FromBtcLnSwapState.CANCELED
-                    } catch (e) {
-                        console.error(e);
-                    }
-                } else {
-                    //Not paid
-                    const isInvoiceExpired = parsedPR.timeExpireDate<Date.now()/1000;
-                    if(isInvoiceExpired) {
-                        await swap.setState(FromBtcLnSwapState.CANCELED);
-                        // await PluginManager.swapStateChange(swap);
-                        cancelInvoices.push(parsedPR.tagsObject.payment_hash);
-                        continue;
-                    }
-                }
-
-            }
-
-            if(swap.state===FromBtcLnSwapState.RECEIVED) {
-                const parsedPR = bolt11.decode(swap.pr);
-                // console.log("[From BTC-LN: Swap received check] Swap in received state check for expiry: "+parsedPR.tagsObject.payment_hash);
-                // console.log("[From BTC-LN: Swap received check] Swap signature: "+swap.signature);
-                if(swap.signature!=null) {
-                    const isAuthorizationExpired = await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature);
-                    console.log("[From BTC-LN: Swap received check] Swap auth expired: "+parsedPR.tagsObject.payment_hash);
-                    if(isAuthorizationExpired) {
-                        const isCommited = await this.swapContract.isCommited(swap.data);
-                        if(!isCommited) {
-                            await swap.setState(FromBtcLnSwapState.CANCELED);
-                            //await PluginManager.swapStateChange(swap);
-                            cancelInvoices.push(parsedPR.tagsObject.payment_hash);
-                        } else {
-                            await swap.setState(FromBtcLnSwapState.COMMITED);
-                            await this.storageManager.saveData(swap.data.getHash(), null, swap);
-                        }
-                        continue;
-                    }
-                }
-            }
-
-            if(swap.state===FromBtcLnSwapState.RECEIVED || swap.state===FromBtcLnSwapState.COMMITED) {
-                const expiryTime = swap.data.getExpiry();
-                const currentTime = new BN(Math.floor(Date.now()/1000)-this.config.maxSkew);
-
-                const isExpired = expiryTime!=null && expiryTime.lt(currentTime);
-                if(isExpired) {
-                    const isCommited = await this.swapContract.isCommited(swap.data);
-
-                    if(isCommited) {
-                        refundSwaps.push(swap);
-                        continue;
-                    }
-
-                    cancelInvoices.push(swap.data.getHash());
-                    continue;
-                }
-            }
-
-            if(swap.state===FromBtcLnSwapState.CLAIMED) {
-                //Try to settle the hodl invoice
-                settleInvoices.push(swap);
-                continue;
-            }
-
-            if(swap.state===FromBtcLnSwapState.CANCELED) {
-                cancelInvoices.push(swap.data.getHash());
-                continue;
+            switch(await this.processPastSwap(swap)) {
+                case "CANCEL":
+                    cancelInvoices.push(swap);
+                    break;
+                case "SETTLE":
+                    settleInvoices.push(swap);
+                    break;
+                case "REFUND":
+                    refundSwaps.push(swap);
+                    break;
             }
         }
 
-        for(let refundSwap of refundSwaps) {
-            const unlock = refundSwap.lock(this.swapContract.refundTimeout);
-            if(unlock==null) continue;
-
-            await this.swapContract.refund(refundSwap.data, true, false, true);
-
-            await refundSwap.setState(FromBtcLnSwapState.REFUNDED);
-            unlock();
-        }
-
-        for(let paymentHash of cancelInvoices) {
-            //Refund
-            try {
-                await lncli.cancelHodlInvoice({
-                    lnd: this.LND,
-                    id: paymentHash
-                });
-                console.log("[From BTC-LN: BTCLN.CancelHodlInvoice] Invoice cancelled, because was timed out, id: ", paymentHash);
-                await this.removeSwapData(paymentHash, null);
-            } catch (e) {
-                console.error("[From BTC-LN: BTCLN.CancelHodlInvoice] Cannot cancel hodl invoice id: ", paymentHash);
-            }
-        }
-
-        for(let swap of settleInvoices) {
-            //Refund
-            const secretBuffer = Buffer.from(swap.secret, "hex");
-            const paymentHash = createHash("sha256").update(secretBuffer).digest();
-
-            try {
-                await lncli.settleHodlInvoice({
-                    lnd: this.LND,
-                    secret: swap.secret
-                });
-
-                if(swap.metadata!=null) swap.metadata.times.htlcSettled = Date.now();
-
-                await swap.setState(FromBtcLnSwapState.SETTLED);
-                // await PluginManager.swapStateChange(swap);
-
-                console.log("[From BTC-LN: BTCLN.SettleHodlInvoice] Invoice settled, id: ", paymentHash.toString("hex"));
-                await this.removeSwapData(paymentHash.toString("hex"), null);
-            } catch (e) {
-                console.error("[From BTC-LN: BTCLN.SettleHodlInvoice] Cannot settle hodl invoice id: ", paymentHash.toString("hex"));
-            }
-        }
+        await this.refundSwaps(refundSwaps);
+        await this.cancelInvoices(cancelInvoices);
+        await this.settleInvoices(settleInvoices);
     }
 
     protected async processInitializeEvent(event: InitializeEvent<T>): Promise<void> {
@@ -565,6 +569,53 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         );
     }
 
+    /**
+     *
+     * Checks if the lightning invoice is in HELD state (htlcs received but yet unclaimed)
+     *
+     * @param paymentHash
+     * @throws {DefinedRuntimeError} Will throw if the lightning invoice is not found, or if it isn't in the HELD state
+     * @returns the fetched lightning invoice
+     */
+    async checkInvoiceStatus(paymentHash: string): Promise<any> {
+        const invoice = await lncli.getInvoice({
+            id: paymentHash,
+            lnd: this.LND
+        });
+        if(invoice==null) throw {
+            _httpStatus: 200,
+            code: 10001,
+            msg: "Invoice expired/canceled"
+        };
+
+        if(!this.swapContract.isValidAddress(invoice.description)) throw {
+            _httpStatus: 200,
+            code: 10001,
+            msg: "Invoice expired/canceled"
+        };
+
+        const isBeingPaid = invoice.is_held;
+        if (!isBeingPaid) {
+            if (invoice.is_canceled) throw {
+                _httpStatus: 200,
+                code: 10001,
+                msg: "Invoice expired/canceled"
+            }
+            if (invoice.is_confirmed) throw {
+                _httpStatus: 200,
+                code: 10002,
+                msg: "Invoice already paid"
+            };
+            throw {
+                _httpStatus: 200,
+                code: 10003,
+                msg: "Invoice yet unpaid"
+            };
+        }
+
+        return invoice;
+    }
+
     startRestServer(restServer: Express) {
 
         restServer.use(this.path+"/createInvoice", serverParamDecoder(10*1000));
@@ -736,48 +787,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
                 HEX_REGEX.test(val) ? val: null,
             });
 
-            const invoice = await lncli.getInvoice({
-                id: parsedBody.paymentHash,
-                lnd: this.LND
-            });
-
-            const isInvoiceFound = invoice!=null;
-            if(!isInvoiceFound) {
-                res.status(200).json({
-                    code: 10001,
-                    msg: "Invoice expired/canceled"
-                });
-                return;
-            }
-
-            if(!this.swapContract.isValidAddress(invoice.description)) {
-                res.status(200).json({
-                    code: 10001,
-                    msg: "Invoice expired/canceled"
-                });
-                return;
-            }
-
-            const isBeingPaid = invoice.is_held;
-            if (!isBeingPaid) {
-                if (invoice.is_canceled) {
-                    res.status(200).json({
-                        code: 10001,
-                        msg: "Invoice expired/canceled"
-                    });
-                } else if (invoice.is_confirmed) {
-                    res.status(200).json({
-                        code: 10002,
-                        msg: "Invoice already paid"
-                    });
-                } else {
-                    res.status(200).json({
-                        code: 10003,
-                        msg: "Invoice yet unpaid"
-                    });
-                }
-                return;
-            }
+            await this.checkInvoiceStatus(parsedBody.paymentHash);
 
             res.status(200).json({
                 code: 10000,
@@ -800,96 +810,44 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
                 HEX_REGEX.test(val) ? val: null,
             });
 
-            const invoice = await lncli.getInvoice({
-                id: parsedBody.paymentHash,
-                lnd: this.LND
-            });
-
-            const isInvoiceFound = invoice!=null;
-            if (!isInvoiceFound) {
-                res.status(200).json({
-                    code: 10001,
-                    msg: "Invoice expired/canceled"
-                });
-                return;
-            }
-
-            if (!this.swapContract.isValidAddress(invoice.description)) {
-                res.status(200).json({
-                    code: 10001,
-                    msg: "Invoice expired/canceled"
-                });
-                return;
-            }
-
-            const isBeingPaid = invoice.is_held;
-            if (!isBeingPaid) {
-                if (invoice.is_canceled) {
-                    res.status(200).json({
-                        code: 10001,
-                        msg: "Invoice expired/canceled"
-                    });
-                } else if (invoice.is_confirmed) {
-                    res.status(200).json({
-                        code: 10002,
-                        msg: "Invoice already paid"
-                    });
-                } else {
-                    res.status(200).json({
-                        code: 10003,
-                        msg: "Invoice yet unpaid"
-                    });
-                }
-                return;
-            }
+            const invoice: any =  await this.checkInvoiceStatus(parsedBody.paymentHash);
 
             const swap: FromBtcLnSwapAbs<T> = await this.storageManager.getData(parsedBody.paymentHash, null);
-
-            const isSwapFound = swap != null;
-            if (!isSwapFound) {
-                res.status(200).json({
-                    code: 10001,
-                    msg: "Invoice expired/canceled"
-                });
-                return;
-            }
+            if (swap==null) throw {
+                _httpStatus: 200,
+                code: 10001,
+                msg: "Invoice expired/canceled"
+            };
 
             if (swap.state === FromBtcLnSwapState.RECEIVED) {
-                if (swap.signature!=null && await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature)) {
-                    res.status(200).json({
-                        code: 10001,
-                        msg: "Invoice expired/canceled"
-                    });
-                    return;
+                if (await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature)) throw {
+                    _httpStatus: 200,
+                    code: 10001,
+                    msg: "Invoice expired/canceled"
                 }
             }
 
             if (swap.state === FromBtcLnSwapState.CREATED) {
                 console.log("[From BTC-LN: REST.GetInvoicePaymentAuth] held ln invoice: ", invoice);
-
                 try {
                     await this.htlcReceived(swap, invoice);
                 } catch (e) {
-                    res.status(200).json(e);
-                    return;
+                    if(isDefinedRuntimeError(e)) e._httpStatus = 200;
+                    throw e;
                 }
             }
 
-            if (swap.state === FromBtcLnSwapState.CANCELED) {
-                res.status(200).json({
-                    code: 10001,
-                    msg: "Invoice expired/canceled"
-                });
-                return;
-            }
+            if (swap.state === FromBtcLnSwapState.CANCELED) throw {
+                _httpStatus: 200,
+                code: 10001,
+                msg: "Invoice expired/canceled"
+            };
 
-            if (swap.state === FromBtcLnSwapState.COMMITED) {
-                res.status(200).json({
-                    code: 10004,
-                    msg: "Invoice already committed"
-                });
-                return;
-            }
+            if (swap.state === FromBtcLnSwapState.COMMITED) throw {
+                _httpStatus: 200,
+                code: 10004,
+                msg: "Invoice already committed"
+            };
 
             res.status(200).json({
                 code: 10000,

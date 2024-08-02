@@ -5,11 +5,13 @@ import {ServerParamEncoder} from "./paramcoders/server/ServerParamEncoder";
 export type DefinedRuntimeError = {
     code: number;
     msg?: string;
+    _httpStatus?: number;
 };
 
 export function isDefinedRuntimeError(obj: any): obj is DefinedRuntimeError {
     if(obj.code!=null && typeof(obj.code)==="number") {
         if(obj.msg!=null && typeof(obj.msg)!=="string") return false;
+        if(obj._httpStatus!=null && typeof(obj._httpStatus)!=="number") return false;
         return true;
     }
     return false;
@@ -31,6 +33,7 @@ export function expressHandlerWrapper(func: (
                 await func(req, res);
             } catch (e) {
                 console.error(e);
+                let statusCode = 500;
                 const obj = {
                     code: 0,
                     msg: "Internal server error"
@@ -38,12 +41,14 @@ export function expressHandlerWrapper(func: (
                 if(isDefinedRuntimeError(e)) {
                     obj.msg = e.msg;
                     obj.code = e.code;
+                    statusCode = 400;
+                    if(e._httpStatus!=null) statusCode = e._httpStatus;
                 }
                 if(res.responseStream!=null) {
                     if(res.responseStream.getAbortSignal().aborted) return;
                     res.responseStream.writeParamsAndEnd(obj).catch(e => null);
                 } else {
-                    res.status(500).json(obj);
+                    res.status(statusCode).json(obj);
                 }
             }
         })();
