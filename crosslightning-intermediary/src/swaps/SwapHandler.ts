@@ -48,7 +48,7 @@ export type SwapBaseConfig = {
 /**
  * An abstract class defining a singular swap service
  */
-export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapData> {
+export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends SwapData, S = any> {
 
     abstract readonly type: SwapHandlerType;
 
@@ -62,6 +62,13 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
     readonly LND: AuthenticatedLnd;
 
     abstract config: SwapBaseConfig;
+
+    logger = {
+        debug: (msg, ...args) => console.debug("SwapHandler("+this.type+"): "+msg, ...args),
+        info: (msg, ...args) => console.info("SwapHandler("+this.type+"): "+msg, ...args),
+        warn: (msg, ...args) => console.warn("SwapHandler("+this.type+"): "+msg, ...args),
+        error: (msg, ...args) => console.error("SwapHandler("+this.type+"): "+msg, ...args)
+    };
 
     protected constructor(storageDirectory: IIntermediaryStorage<V>, path: string, swapContract: SwapContract<T, any, any, any>, chainEvents: ChainEvents<T>, allowedTokens: TokenAddress[], lnd: AuthenticatedLnd, swapPricing: ISwapPrice) {
         this.storageManager = storageDirectory;
@@ -115,7 +122,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
      */
     protected subscribeToEvents() {
         this.chainEvents.registerListener(this.processEvent.bind(this));
-        console.log("["+this.type+": Solana.Events] Subscribed to Solana events");
+        this.logger.info("SC: Events: subscribed to smartchain events");
     }
 
     /**
@@ -141,10 +148,28 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
      * @param hash
      * @param sequence
      */
-    async removeSwapData(hash: string, sequence: BN) {
-        const swap = await this.storageManager.getData(hash, sequence);
+    removeSwapData(hash: string, sequence: BN): Promise<void>;
+
+    /**
+     * Remove swap data
+     *
+     * @param swap
+     * @param ultimateState set the ultimate state of the swap before removing
+     */
+    removeSwapData(swap: V, ultimateState?: S): Promise<void>;
+
+    async removeSwapData(hashOrSwap: string | V, sequenceOrUltimateState?: BN | S) {
+        let swap: V;
+        if(typeof(hashOrSwap)==="string") {
+            if(!BN.isBN(sequenceOrUltimateState)) throw new Error("Sequence must be a BN instance!");
+            swap = await this.storageManager.getData(hashOrSwap, sequenceOrUltimateState);
+        } else {
+            swap = hashOrSwap;
+            if(sequenceOrUltimateState!=null && !BN.isBN(sequenceOrUltimateState)) await swap.setState(sequenceOrUltimateState);
+        }
         if(swap!=null) await PluginManager.swapRemove<T>(swap);
-        await this.storageManager.removeData(hash, sequence);
+        this.logger.debug("removeSwapData(): removing swap payment hash: "+swap.getHash()+" sequence: "+swap.getSequence().toString(16)+" final state: "+swap.state);
+        await this.storageManager.removeData(swap.getHash(), swap.getSequence());
     }
 
     /**
@@ -167,7 +192,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
      */
     getSignDataPrefetch(abortController: AbortController, responseStream?: ServerParamEncoder): Promise<any> {
         let signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
-            console.error(this.type+": REST.signDataPrefetch", e);
+            this.logger.error("getSignDataPrefetch(): signDataPrefetch: ", e);
             abortController.abort(e);
             return null;
         }) : null;
@@ -176,11 +201,11 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T>, T extends SwapDa
             signDataPrefetchPromise = signDataPrefetchPromise.then(val => val==null || abortController.signal.aborted ? null : responseStream.writeParams({
                 signDataPrefetch: val
             }).then(() => val).catch(e => {
-                console.error("["+this.type+": REST.payInvoice] Send signDataPreFetch error: ", e);
+                this.logger.error("getSignDataPrefetch(): signDataPreFetch: error when sending sign data to the client: ", e);
                 abortController.abort(e);
                 return null;
             }));
-            if(signDataPrefetchPromise!=null) console.log("["+this.type+": REST.payInvoice] Pre-fetching signature data!");
+            if(signDataPrefetchPromise!=null) this.logger.debug("getSignDataPrefetch(): pre-fetching signature data!");
         }
 
         return signDataPrefetchPromise;

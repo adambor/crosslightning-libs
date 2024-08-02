@@ -8,7 +8,7 @@ import {FieldTypeEnum} from "../utils/paramcoders/SchemaVerifier";
 
 export type ToBtcBaseConfig = SwapBaseConfig;
 
-export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T>, T extends SwapData> extends SwapHandler<V, T> {
+export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T extends SwapData, S> extends SwapHandler<V, T, S> {
 
     readonly pdaExistsForToken: {
         [token: string]: boolean
@@ -16,9 +16,26 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T>, T exten
 
     abstract config: ToBtcBaseConfig;
 
+    /**
+     * Checks if the sequence number is between 0-2^64
+     *
+     * @param sequence
+     * @throws {DefinedRuntimeError} will throw an error if sequence number is out of bounds
+     */
+    checkSequence(sequence: BN) {
+        if(sequence.isNeg() || sequence.gte(new BN(2).pow(new BN(64)))) {
+            throw {
+                code: 20060,
+                msg: "Invalid sequence"
+            };
+        }
+    }
+
     async checkVaultInitialized(token: string): Promise<void> {
         if(!this.pdaExistsForToken[token]) {
+            this.logger.debug("checkVaultInitialized(): checking vault exists for token: "+token);
             const reputation = await this.swapContract.getIntermediaryReputation(this.swapContract.getAddress(), this.swapContract.toTokenAddress(token));
+            this.logger.debug("checkVaultInitialized(): vault state, token: "+token+" exists: "+reputation!=null);
             if(reputation!=null) {
                 this.pdaExistsForToken[token] = true;
             } else {
@@ -101,6 +118,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T>, T exten
         }
 
         const resp = await getNetworkFee(amountBD);
+        this.logger.debug("checkToBtcAmount(): network fee calculated, amount: "+amountBD.toString(10)+" fee: "+resp.networkFee.toString(10));
         signal.throwIfAborted();
 
         if(exactIn) {
@@ -149,7 +167,6 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T>, T exten
 
         const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(resp.networkFee, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
         const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-
         signal.throwIfAborted();
 
         let total: BN;
@@ -177,12 +194,12 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T>, T exten
     } {
         //Fetch pricing & signature data in parallel
         const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(token).catch(e => {
-            console.error("To BTC/BTC-LN: REST.pricePrefetch", e);
+            this.logger.error("getToBtcPrefetches(): pricePrefetch error", e);
             abortController.abort(e);
             return null;
         }) : null;
 
-        if(pricePrefetchPromise!=null) console.log("[To BTC/BTC-LN: REST.payInvoice] Pre-fetching swap price!");
+        if(pricePrefetchPromise!=null) this.logger.debug("getToBtcPrefetches(): pre-fetching swap price!");
 
         return {
             pricePrefetchPromise,
@@ -204,24 +221,22 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T>, T exten
         signature: string
     }> {
         const prefetchedSignData = signDataPrefetchPromise!=null ? await signDataPrefetchPromise : null;
-        if(prefetchedSignData!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetched signature data: ", prefetchedSignData);
-
+        if(prefetchedSignData!=null) this.logger.debug("getToBtcSignatureData(): pre-fetched signature data: ", prefetchedSignData);
         abortSignal.throwIfAborted();
 
         const feeRateObj = await req.paramReader.getParams({
             feeRate: FieldTypeEnum.String
         }).catch(e => null);
-
         abortSignal.throwIfAborted();
 
         const feeRate = feeRateObj?.feeRate!=null && typeof(feeRateObj.feeRate)==="string" ? feeRateObj.feeRate : null;
+        this.logger.debug("getToBtcSignatureData(): using fee rate from client: ", feeRate);
         const sigData = await this.swapContract.getClaimInitSignature(
             swapObject,
             this.config.authorizationTimeout,
             prefetchedSignData,
             feeRate
         );
-
         abortSignal.throwIfAborted();
 
         return sigData;

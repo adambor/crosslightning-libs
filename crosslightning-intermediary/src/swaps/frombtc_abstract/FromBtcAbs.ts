@@ -43,7 +43,7 @@ export type FromBtcRequestType = {
 /**
  * Swap handler handling from BTC swaps using PTLCs (proof-time locked contracts) and btc relay (on-chain bitcoin SPV)
  */
-export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromBtcSwapAbs<T>, T> {
+export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromBtcSwapAbs<T>, T, FromBtcSwapState> {
 
     readonly type = SwapHandlerType.FROM_BTC;
 
@@ -85,22 +85,11 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
      * Returns the payment hash of the swap, takes swap nonce into account. Payment hash is chain-specific.
      *
      * @param address
-     * @param nonce
      * @param amount
-     * @param bitcoinNetwork
      */
-    private getHash(address: string, nonce: BN, amount: BN, bitcoinNetwork: bitcoin.networks.Network): Buffer {
-        const parsedOutputScript = bitcoin.address.toOutputScript(address, bitcoinNetwork);
-        return this.swapContract.getHashForOnchain(parsedOutputScript, amount, nonce);
-    }
-
-    /**
-     * Returns payment hash of the swap (hash WITH using payment nonce)
-     *
-     * @param swap
-     */
-    private getChainHash(swap: FromBtcSwapAbs<T>): Buffer {
-        return this.getHash(swap.address, new BN(0), swap.amount, this.config.bitcoinNetwork);
+    private getHash(address: string, amount: BN): Buffer {
+        const parsedOutputScript = bitcoin.address.toOutputScript(address, this.config.bitcoinNetwork);
+        return this.swapContract.getHashForOnchain(parsedOutputScript, amount, new BN(0));
     }
 
     /**
@@ -129,16 +118,15 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
             if(!isExpired) return false;
 
             const isCommited = await this.swapContract.isCommited(swap.data);
-
             if(isCommited) {
+                this.logger.info("processPastSwap(state=CREATED): swap was commited, but processed from watchdog, payment hash: "+swap.getHash()+" address: "+swap.address);
                 await swap.setState(FromBtcSwapState.COMMITED);
-                await this.storageManager.saveData(this.getChainHash(swap).toString("hex"), swap.data.getSequence(), swap);
+                await this.storageManager.saveData(swap.getHash(), swap.getSequence(), swap);
                 return false;
             }
 
-            await swap.setState(FromBtcSwapState.CANCELED);
-            await this.removeSwapData(this.getChainHash(swap).toString("hex"), swap.data.getSequence());
-
+            this.logger.info("processPastSwap(state=CREATED): removing past swap due to authorization expiry, payment hash: "+swap.getHash()+" address: "+swap.address);
+            await this.removeSwapData(swap, FromBtcSwapState.CANCELED);
             return false;
         }
 
@@ -149,14 +137,13 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
             if(!isExpired) return false;
 
             const isCommited = await this.swapContract.isCommited(swap.data);
-
             if(isCommited) {
+                this.logger.info("processPastSwap(state=COMMITED): swap expired, will refund, payment hash: "+swap.getHash()+" address: "+swap.address);
                 return true;
             }
 
-            await swap.setState(FromBtcSwapState.CANCELED);
-            await this.removeSwapData(this.getChainHash(swap).toString("hex"), swap.data.getSequence());
-
+            this.logger.warn("processPastSwap(state=COMMITED): commited swap expired and not committed anymore (already refunded?), payment hash: "+swap.getHash()+" address: "+swap.address);
+            await this.removeSwapData(swap, FromBtcSwapState.CANCELED);
             return false;
         }
     }
@@ -195,7 +182,9 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
         for(let refundSwap of refundSwaps) {
             const unlock = refundSwap.lock(this.swapContract.refundTimeout);
             if(unlock==null) continue;
+            this.logger.debug("refundSwaps(): initiate refund of swap payment hash: "+refundSwap.getHash());
             await this.swapContract.refund(refundSwap.data, true, false, true);
+            this.logger.info("refundSwaps(): swap refunded: "+refundSwap.getHash()+" address: "+refundSwap.address);
             //The swap should be removed by the event handler
             await refundSwap.setState(FromBtcSwapState.REFUNDED);
             unlock();
@@ -203,6 +192,7 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
     }
 
     protected async processInitializeEvent(event: InitializeEvent<T>) {
+        this.logger.debug("SC: InitializeEvent: payment hash: "+event.paymentHash+" sequence: "+event.sequence.toString(16)+" swap type: "+event.swapType);
         //Only process on-chain requests
         if (event.swapType !== ChainSwapType.CHAIN) return;
 
@@ -219,6 +209,8 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
         savedSwap.txIds.init = (event as any).meta?.txId;
         if(savedSwap.metadata!=null) savedSwap.metadata.times.initTxReceived = Date.now();
 
+        this.logger.info("SC: InitializeEvent: swap initialized by the client, payment hash: "+event.paymentHash+" address: "+savedSwap.address);
+
         if(savedSwap.state===FromBtcSwapState.CREATED) {
             await savedSwap.setState(FromBtcSwapState.COMMITED);
             savedSwap.data = swapData;
@@ -227,6 +219,7 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
     }
 
     protected async processClaimEvent(event: ClaimEvent<T>): Promise<void> {
+        this.logger.debug("SC: ClaimEvent: payment hash: "+event.paymentHash+" sequence: "+event.sequence.toString(16)+" secret: "+event.secret);
         const paymentHashHex = event.paymentHash;
 
         const savedSwap = await this.storageManager.getData(paymentHashHex, event.sequence);
@@ -236,13 +229,12 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
         savedSwap.txIds.claim = (event as any).meta?.txId;
         if(savedSwap.metadata!=null) savedSwap.metadata.times.claimTxReceived = Date.now();
 
-        await savedSwap.setState(FromBtcSwapState.CLAIMED);
-
-        console.log("[From BTC: Solana.ClaimEvent] Swap claimed by claimer: ", paymentHashHex);
-        await this.removeSwapData(paymentHashHex, event.sequence);
+        this.logger.info("SC: ClaimEvent: swap successfully claimed by the client, payment hash: "+event.paymentHash+" address: "+savedSwap.address);
+        await this.removeSwapData(savedSwap, FromBtcSwapState.CLAIMED);
     }
 
     protected async processRefundEvent(event: RefundEvent<T>) {
+        this.logger.debug("SC: RefundEvent: payment hash: "+event.paymentHash+" sequence: "+event.sequence.toString(16));
         if (event.paymentHash == null) return;
 
         const savedSwap = await this.storageManager.getData(event.paymentHash, event.sequence);
@@ -250,8 +242,8 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
 
         savedSwap.txIds.refund = (event as any).meta?.txId;
 
-        await savedSwap.setState(FromBtcSwapState.REFUNDED);
-        await this.removeSwapData(event.paymentHash, event.sequence);
+        this.logger.info("SC: RefundEvent: swap refunded by the client, payment hash: "+event.paymentHash+" address: "+savedSwap.address);
+        await this.removeSwapData(savedSwap, FromBtcSwapState.REFUNDED);
     }
 
     /**
@@ -378,7 +370,6 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
              *  - addFee: string                Additional fee to add to the final claimer bounty
              * feeRate: string              Fee rate to be used for init signature
              */
-
             const parsedBody: FromBtcRequestType = await req.paramReader.getParams({
                 address: (val: string) => val!=null &&
                         typeof(val)==="string" &&
@@ -437,10 +428,7 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
             abortController.signal.throwIfAborted();
             metadata.times.addressCreated = Date.now();
 
-            console.log("[From BTC: REST.CreateInvoice] Created receiving address: ", receiveAddress);
-
-            const createdSwap: FromBtcSwapAbs<T> = new FromBtcSwapAbs<T>(receiveAddress, amountBD, swapFee);
-            const paymentHash = this.getChainHash(createdSwap);
+            const paymentHash = this.getHash(receiveAddress, amountBD);
             const currentTimestamp = new BN(Math.floor(Date.now()/1000));
             const expiryTimeout = this.config.swapTsCsvDelta;
             const expiry = currentTimestamp.add(expiryTimeout);
@@ -477,18 +465,20 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
             abortController.signal.throwIfAborted();
             metadata.times.swapCreated = Date.now();
 
-            data.setTxoHash(this.getChainTxoHash(createdSwap).toString("hex"));
-            createdSwap.data = data;
-
             //Sign the swap
             const sigData = await this.getFromBtcSignatureData(data, req, abortController.signal, signDataPrefetchPromise);
             metadata.times.swapSigned = Date.now();
 
+            const createdSwap: FromBtcSwapAbs<T> = new FromBtcSwapAbs<T>(receiveAddress, amountBD, swapFee);
+            data.setTxoHash(this.getChainTxoHash(createdSwap).toString("hex"));
+            createdSwap.data = data;
             createdSwap.metadata = metadata;
             createdSwap.authorizationExpiry = new BN(sigData.timeout);
 
             await PluginManager.swapCreate(createdSwap);
-            await this.storageManager.saveData(this.getChainHash(createdSwap).toString("hex"), createdSwap.data.getSequence(), createdSwap);
+            await this.storageManager.saveData(createdSwap.data.getHash(), createdSwap.data.getSequence(), createdSwap);
+
+            this.logger.info("REST: getAddress: Created swap address: "+receiveAddress+" amount: "+amountBD.toString(10)+" payment hash: "+createdSwap.getHash());
 
             await responseStream.writeParamsAndEnd({
                 code: 20000,
@@ -508,7 +498,7 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
 
         }));
 
-        console.log("[From BTC: REST] Started at path: ", this.path);
+        this.logger.info("REST: Started at path: ", this.path);
     }
 
     /**
