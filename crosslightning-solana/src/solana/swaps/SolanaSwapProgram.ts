@@ -134,36 +134,20 @@ type SolanaPreFetchData = {
 
 export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, SolanaPreFetchData, SolanaPreFetchVerification> {
 
-    blockCache: {
-        [slotNumber: number]: ParsedAccountsModeBlockResponse
-    } = {};
+    private blockCache: Map<number, Promise<ParsedAccountsModeBlockResponse>> = new Map<number, Promise<ParsedAccountsModeBlockResponse>>();
 
     //Parsed block caching
     private async findLatestParsedBlock(commitment: Commitment): Promise<{
         block: ParsedAccountsModeBlockResponse,
         slot: number
     }> {
-        let slot = await this.signer.connection.getSlot(commitment);
-
-        if(this.blockCache[slot]!=null) {
-            return {
-                block: this.blockCache[slot],
-                slot
-            };
-        }
+        let slot = await this.getCachedSlot(commitment);
 
         let error;
         for(let i=0;i<10;i++) {
             try {
-                const fetchedBlock = await this.signer.connection.getParsedBlock(slot, {
-                    transactionDetails: "none",
-                    commitment: "confirmed",
-                    rewards: false
-                });
-                this.blockCache[slot] = fetchedBlock;
-
                 return {
-                    block: fetchedBlock,
+                    block: await this.getParsedBlock(slot),
                     slot
                 }
             } catch (e) {
@@ -180,59 +164,77 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         throw error;
     }
 
-    //Parsed block caching
-    private async getParsedBlock(slot: number): Promise<ParsedAccountsModeBlockResponse> {
-        if(this.blockCache[slot]!=null) {
-            return this.blockCache[slot];
-        }
-
-        const fetchedBlock = await this.signer.connection.getParsedBlock(slot, {
+    private fetchAndSaveParsedBlock(slot: number): Promise<ParsedAccountsModeBlockResponse> {
+        const blockCacheData = this.signer.connection.getParsedBlock(slot, {
             transactionDetails: "none",
             commitment: "confirmed",
             rewards: false
         });
-        this.blockCache[slot] = fetchedBlock;
-
-        return fetchedBlock;
+        this.blockCache.set(slot, blockCacheData);
+        blockCacheData.catch(e => {
+            if(this.blockCache.get(slot)==blockCacheData) this.blockCache.delete(slot);
+        });
+        return blockCacheData;
     }
 
+    //Parsed block caching
+    private async getParsedBlock(slot: number): Promise<ParsedAccountsModeBlockResponse> {
+        let blockCacheData = this.blockCache.get(slot);
+        if(blockCacheData==null) {
+            blockCacheData = this.fetchAndSaveParsedBlock(slot);
+        }
+        return await blockCacheData;
+    }
 
     private slotCache: {
         [key in Commitment]?: {
-            slot: number,
+            slot: Promise<number>,
             timestamp: number
         }
     } = {};
+
+    private fetchAndSaveSlot(commitment: Commitment): {slot: Promise<number>, timestamp: number} {
+        const slotPromise = this.signer.connection.getSlot(commitment);
+        const timestamp = Date.now();
+        this.slotCache[commitment] = {
+            slot: slotPromise,
+            timestamp
+        }
+        slotPromise.catch(e => {
+            if(this.slotCache[commitment]!=null && this.slotCache[commitment].slot===slotPromise) delete this.slotCache[commitment];
+        })
+        return {
+            slot: slotPromise,
+            timestamp
+        }
+    }
 
     private async getCachedSlotAndTimestamp(commitment: Commitment): Promise<{
         slot: number,
         timestamp: number
     }> {
-        if(this.slotCache[commitment]!=null && Date.now()-this.slotCache[commitment].timestamp<SLOT_CACHE_TIME) {
-            return this.slotCache[commitment];
+        let cachedSlotData = this.slotCache[commitment];
+
+        if(cachedSlotData==null || Date.now()-cachedSlotData.timestamp>SLOT_CACHE_TIME) {
+            cachedSlotData = this.fetchAndSaveSlot(commitment);
         }
 
-        const slot = await this.signer.connection.getSlot(commitment);
-
-        return this.slotCache[commitment] = {
-            slot,
-            timestamp: Date.now()
+        return {
+            slot: await cachedSlotData.slot,
+            timestamp: cachedSlotData.timestamp
         };
     }
 
     private async getCachedSlot(commitment: Commitment): Promise<number> {
-        if(this.slotCache[commitment]!=null && Date.now()-this.slotCache[commitment].timestamp<SLOT_CACHE_TIME) {
-            return this.slotCache[commitment].slot + Math.floor((Date.now()-this.slotCache[commitment].timestamp)/SLOT_TIME);
+        let cachedSlotData = this.slotCache[commitment];
+
+        if(cachedSlotData!=null && Date.now()-cachedSlotData.timestamp<SLOT_CACHE_TIME) {
+            return (await cachedSlotData.slot) + Math.floor((Date.now()-cachedSlotData.timestamp)/SLOT_TIME);
         }
 
-        const slot = await this.signer.connection.getSlot(commitment);
+        cachedSlotData = this.fetchAndSaveSlot(commitment);
 
-        this.slotCache[commitment] = {
-            slot,
-            timestamp: Date.now()
-        };
-
-        return slot;
+        return await cachedSlotData.slot;
     }
 
     claimWithSecretTimeout: number = 45;
