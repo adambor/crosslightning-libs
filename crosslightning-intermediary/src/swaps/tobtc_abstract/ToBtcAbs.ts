@@ -625,6 +625,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @private
      * @throws DefinedRuntimeError will throw an error in case the payment cannot be initiated
      */
+    //TODO: Make sure that bitcoin payouts are processed sequentially to avoid race conditions between multiple payouts
     private async sendBitcoinPayment(swap: ToBtcSwapAbs<T>) {
         //Run checks
         this.checkExpiresTooSoon(swap);
