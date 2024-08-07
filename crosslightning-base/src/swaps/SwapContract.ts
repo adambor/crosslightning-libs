@@ -5,6 +5,7 @@ import {BtcStoredHeader} from "../btcrelay/types/BtcStoredHeader";
 import {SwapCommitStatus} from "./SwapCommitStatus";
 import {ChainSwapType} from "./ChainSwapType";
 import {RelaySynchronizer} from "../btcrelay/synchronizer/RelaySynchronizer";
+import {SameChainSwapData} from "./SameChainSwapData";
 
 export type IntermediaryReputationType = {
     [key in ChainSwapType]: {
@@ -17,7 +18,7 @@ export type IntermediaryReputationType = {
     }
 };
 
-export interface SwapContract<T extends SwapData, TX, PreFetchData, PreFetchVerification> {
+export interface SwapContract<T extends SwapData, S extends SameChainSwapData, TX, PreFetchData, PreFetchVerification> {
 
     claimWithSecretTimeout: number;
     claimWithTxDataTimeout: number;
@@ -44,6 +45,9 @@ export interface SwapContract<T extends SwapData, TX, PreFetchData, PreFetchVeri
     txsRefundWithAuthorization(swapData: T, timeout: string, prefix: string, signature: string, check?: boolean, initAta?: boolean, feeRate?: any): Promise<TX[]>;
 
     initAndClaimWithSecret(swapData: T, timeout: string, prefix: string, signature: string, secret: string, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal, feeRate?: any): Promise<string[]>;
+
+    sameChainSwap(swapData: S, timeout: string, prefix: string, signature: string, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal, feeRate?: any): Promise<string>;
+    txsSameChainSwap(swapData: S, timeout: string, prefix: string, signature: string, skipChecks?: boolean, feeRate?: any): Promise<TX[]>;
 
     isExpired(swapData: T): boolean;
     isClaimable(swapData: T): Promise<boolean>;
@@ -76,6 +80,15 @@ export interface SwapContract<T extends SwapData, TX, PreFetchData, PreFetchVeri
     getInitAuthorizationExpiry(swapData: T, timeout: string, prefix: string, signature: string, preFetchedVerificationData?: PreFetchVerification): Promise<number>;
     isInitAuthorizationExpired(swapData: T, timeout: string, prefix: string, signature: string): Promise<boolean>;
 
+    getSwapSignature(swapData: S, authorizationTimeout: number, preFetchedBlockData?: PreFetchData, feeRate?: any): Promise<{
+        prefix: string,
+        timeout: string,
+        signature: string
+    }>;
+    isValidSwapAuthorization(swapData: S, timeout: string, prefix: string, signature: string, feeRate?: any, preFetchedVerificationData?: PreFetchVerification): Promise<Buffer | null>;
+    getSwapAuthorizationExpiry(swapData: S, timeout: string, prefix: string, signature: string, preFetchedVerificationData?: PreFetchVerification): Promise<number>;
+    isSwapAuthorizationExpired(swapData: S, timeout: string, prefix: string, signature: string): Promise<boolean>;
+
     getRefundSignature(swapData: T, authorizationTimeout: number): Promise<{
         prefix: string,
         timeout: string,
@@ -105,8 +118,20 @@ export interface SwapContract<T extends SwapData, TX, PreFetchData, PreFetchVeri
         claimerBounty: BN
     ): Promise<T>;
 
-    areWeClaimer(swapData: T): boolean;
-    areWeOfferer(swapData: T): boolean;
+    createSameChainSwapData(
+        offerer: string,
+        offererToken: TokenAddress,
+        offererAmount: BN,
+        claimer: string,
+        claimerToken: TokenAddress,
+        claimerAmount: BN,
+        expiry: BN,
+        payIn: boolean,
+        payOut: boolean,
+    ): Promise<S>;
+
+    areWeClaimer(swapData: T | S): boolean;
+    areWeOfferer(swapData: T | S): boolean;
 
     getAddress(): string;
     isValidAddress(address: string): boolean;
@@ -123,9 +148,10 @@ export interface SwapContract<T extends SwapData, TX, PreFetchData, PreFetchVeri
     getInitFeeRate?(offerer: string, claimer: string, token: TokenAddress, paymentHash?: string): Promise<any>;
     getRefundFeeRate?(swapData: T): Promise<any>;
     getClaimFeeRate?(swapData: T): Promise<any>;
+    getSameChainSwapFeeRate(data: S): Promise<string>;
 
-    setUsAsClaimer(swapData: T);
-    setUsAsOfferer(swapData: T);
+    setUsAsClaimer(swapData: T | S);
+    setUsAsOfferer(swapData: T | S);
 
     getHashForOnchain(outputScript: Buffer, amount: BN, nonce: BN): Buffer;
 

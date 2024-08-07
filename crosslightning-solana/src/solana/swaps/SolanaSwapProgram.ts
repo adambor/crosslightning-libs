@@ -21,10 +21,9 @@ import {sign} from "tweetnacl";
 import {SolanaBtcRelay} from "../btcrelay/SolanaBtcRelay";
 import * as programIdl from "./programIdl.json";
 import {IStorageManager, SwapContract, ChainSwapType, TokenAddress, IntermediaryReputationType,
-    SwapCommitStatus, SignatureVerificationError, CannotInitializeATAError, SwapDataVerificationError} from "crosslightning-base";
+    SwapCommitStatus, SignatureVerificationError, CannotInitializeATAError, SwapDataVerificationError,
+    RelaySynchronizer, StorageObject} from "crosslightning-base";
 import {SolanaBtcStoredHeader} from "../btcrelay/headers/SolanaBtcStoredHeader";
-import {RelaySynchronizer, StorageObject} from "crosslightning-base/dist";
-import Utils from "./Utils";
 import * as bs58 from "bs58";
 import {tryWithRetries} from "../../utils/RetryUtils";
 import {
@@ -41,6 +40,7 @@ import {
 import {SolanaFeeEstimator} from "../../utils/SolanaFeeEstimator";
 import {SwapProgram} from "./programTypes";
 import {SwapTypeEnum} from "./SwapTypeEnum";
+import {SolanaSCSwapData} from "./SolanaSCSwapData";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
@@ -102,6 +102,7 @@ const CUCosts = {
     ATA_INIT: 40000,
     REFUND: 15000,
     REFUND_PAY_OUT: 50000,
+    SAME_CHAIN_SWAP: 200000,
 
     WITHDRAW: 50000,
     DEPOSIT: 50000,
@@ -132,7 +133,7 @@ type SolanaPreFetchData = {
     timestamp: number
 }
 
-export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, SolanaPreFetchData, SolanaPreFetchVerification> {
+export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolanaSCSwapData, SolTx, SolanaPreFetchData, SolanaPreFetchVerification> {
 
     private blockCache: Map<number, Promise<ParsedAccountsModeBlockResponse>> = new Map<number, Promise<ParsedAccountsModeBlockResponse>>();
 
@@ -315,6 +316,386 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         this.retryPolicy = retryPolicy;
     }
 
+    async sameChainSwap(swapData: SolanaSCSwapData, timeout: string, prefix: string, signature: string, waitForConfirmation?: boolean, skipChecks?: boolean, abortSignal?: AbortSignal, feeRate?: any): Promise<string> {
+        let result = await this.txsSameChainSwap(swapData,timeout,prefix,signature,skipChecks,feeRate);
+
+        const signatures = await this.sendAndConfirm(result, waitForConfirmation, abortSignal);
+
+        return signatures[signatures.length-1];
+    }
+
+    async txsSameChainSwap(swapData: SolanaSCSwapData, timeout: string, prefix: string, signature: string, skipChecks?: boolean, feeRate?: any): Promise<SolTx[]> {
+        if(!skipChecks) {
+            await tryWithRetries(
+                () => this.isValidSwapAuthorization(swapData, timeout, prefix, signature, feeRate),
+                this.retryPolicy,
+                (e) => e instanceof SignatureVerificationError
+            );
+        }
+
+        const ata = getAssociatedTokenAddressSync(swapData.claimerToken, swapData.claimer);
+
+        const txs: SolTx[] = [];
+
+        const [slotNumber, signatureStr] = signature.split(";");
+
+        const block = await tryWithRetries(() => this.getParsedBlock(parseInt(slotNumber)), this.retryPolicy);
+
+        if(feeRate==null || feeRate.split("#").length<2) {
+            if(swapData.claimerToken.equals(WSOL_ADDRESS)) {
+                let balance = new BN(0);
+                let accountExists = false;
+                try {
+                    const ataAcc = await tryWithRetries<Account>(() => this.getATAOrNull(ata), this.retryPolicy);
+
+                    if(ataAcc!=null) {
+                        accountExists = true;
+                        balance = balance.add(new BN(ataAcc.amount.toString()));
+                    }
+                } catch (e) {}
+                if(balance.lt(swapData.claimerAmount)) {
+                    const tx = new Transaction();
+                    tx.feePayer = swapData.claimer;
+
+                    let computeBudget: number = CUCosts.WRAP_SOL;
+                    //Need to wrap some more
+                    const remainder = swapData.claimerAmount.sub(balance);
+                    if(!accountExists) {
+                        //Need to create account
+                        computeBudget += CUCosts.ATA_INIT;
+                        SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
+                        tx.add(createAssociatedTokenAccountInstruction(this.signer.publicKey, ata, this.signer.publicKey, swapData.claimerToken));
+                    } else {
+                        SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
+                    }
+                    tx.add(SystemProgram.transfer({
+                        fromPubkey: this.signer.publicKey,
+                        toPubkey: ata,
+                        lamports: remainder.toNumber()
+                    }));
+                    tx.add(createSyncNativeInstruction(ata));
+
+                    SolanaSwapProgram.applyFeeRateEnd(tx, computeBudget, feeRate);
+
+                    tx.recentBlockhash = block.blockhash;
+                    tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
+
+                    txs.push({
+                        tx,
+                        signers: []
+                    });
+                }
+            }
+        }
+
+        const tx = await this.getSwapMessage(swapData, prefix, timeout, feeRate);
+        tx.recentBlockhash = block.blockhash;
+        tx.lastValidBlockHeight = block.blockHeight + TX_SLOT_VALIDITY;
+        tx.addSignature(swapData.claimer, Buffer.from(signatureStr, "hex"));
+
+        txs.push({
+            tx,
+            signers: []
+        });
+
+        //TODO: Maybe add manual unwrap
+
+        return txs;
+    }
+
+
+    async addOneWayIxs(tx: Transaction, offerer: PublicKey, claimer: PublicKey,
+                       token: PublicKey, amount: BN, payIn: boolean, payOut: boolean,
+                       offererWsolBalance?: BN, offererInitAta?: boolean): Promise<void> {
+        const offererAta = await getAssociatedTokenAddress(token, offerer);
+        const claimerAta = await getAssociatedTokenAddress(token, claimer);
+        if(!payIn) {
+            tx.add(
+                createAssociatedTokenAccountIdempotentInstruction(
+                    offerer,
+                    offererAta,
+                    offerer,
+                    token
+                )
+            );
+            tx.add(
+                await this.program.methods
+                    .withdraw(amount)
+                    .accounts({
+                        signer: offerer,
+                        signerAta: offererAta,
+                        userData: this.SwapUserVault(offerer, token),
+                        vault: this.SwapVault(token),
+                        vaultAuthority: this.SwapVaultAuthority,
+                        mint: token,
+                        tokenProgram: TOKEN_PROGRAM_ID
+                    })
+                    .instruction()
+            );
+        } else {
+            if(offererInitAta) {
+                tx.add(createAssociatedTokenAccountInstruction(offerer, offererAta, offerer, token));
+            }
+            if(offererWsolBalance!=null && offererWsolBalance.lt(amount)) {
+                tx.add(SystemProgram.transfer({
+                    fromPubkey: offerer,
+                    toPubkey: offererAta,
+                    lamports: BigInt(amount.sub(offererWsolBalance).toString(10))
+                }));
+                tx.add(createSyncNativeInstruction(offererAta));
+            }
+        }
+        tx.add(
+            createAssociatedTokenAccountIdempotentInstruction(
+                claimer,
+                claimerAta,
+                claimer,
+                token
+            )
+        );
+        tx.add(
+            createTransferInstruction(
+                offererAta,
+                claimerAta,
+                offerer,
+                BigInt(amount.toString(10))
+            )
+        )
+        if(!payOut) {
+            tx.add(
+                await this.program.methods
+                    .deposit(amount)
+                    .accounts({
+                        signer: claimer,
+                        signerAta: claimerAta,
+                        userData: this.SwapUserVault(claimer, token),
+                        vault: this.SwapVault(token),
+                        vaultAuthority: this.SwapVaultAuthority,
+                        mint: token,
+                        systemProgram: SystemProgram.programId,
+                        tokenProgram: TOKEN_PROGRAM_ID
+                    })
+                    .instruction()
+            )
+        }
+    }
+
+    private async getSwapMessage(swapData: SolanaSCSwapData, prefix: string, timeout: string, feeRate?: string): Promise<Transaction> {
+        let computeBudget = CUCosts.SAME_CHAIN_SWAP;
+
+        const tx = new Transaction();
+        tx.feePayer = this.signer.publicKey;
+
+        SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
+
+        //Offerer pays offererToken to claimer (if payIn=false offerer withdraws funds from the vault & deposits them back to the vault)
+        //Claimer pays claimerToken to offerer (if payOut=false claimer withdraws funds from the vault & deposits them back to the vault)
+
+        await this.addOneWayIxs(
+            tx, swapData.offerer, swapData.claimer,
+            swapData.offererToken, swapData.offererAmount,
+            swapData.payIn, swapData.payOut
+        );
+
+        const hashArr = feeRate==null ? [] : feeRate.split("#");
+
+        let claimerWsolBalance: BN;
+        let claimerInitAta: boolean = false;
+        if(hashArr.length>1) {
+            const arr = hashArr[1].split(";");
+            if(arr.length>1) {
+                claimerWsolBalance = new BN(arr[1]);
+                claimerInitAta = arr[0]==="1";
+            }
+        }
+        await this.addOneWayIxs(
+            tx, swapData.claimer, swapData.offerer,
+            swapData.claimerToken, swapData.claimerAmount,
+            swapData.payOut, swapData.payIn,
+            claimerWsolBalance, claimerInitAta
+        );
+
+        SolanaSwapProgram.applyFeeRateEnd(tx, computeBudget, feeRate);
+
+        return tx;
+
+    }
+
+    async getSwapSignature(swapData: SolanaSCSwapData, authorizationTimeout: number, preFetchedBlockData?: SolanaPreFetchData, feeRate?: any): Promise<{ prefix: string; timeout: string; signature: string; }> {
+        if(this.signer.signer==null) throw new Error("Unsupported");
+
+        if(preFetchedBlockData!=null && Date.now()-preFetchedBlockData.timestamp>PREFETCHED_DATA_VALIDITY) preFetchedBlockData = null;
+
+        const authPrefix = "swap";
+        const authTimeout = Math.floor(Date.now()/1000)+authorizationTimeout;
+
+        const txToSign = await this.getSwapMessage(swapData, authPrefix, authTimeout.toString(), feeRate);
+
+        const {block: latestBlock, slot: latestSlot} = preFetchedBlockData || await this.findLatestParsedBlock("finalized");
+
+        txToSign.recentBlockhash = latestBlock.blockhash;
+        txToSign.sign(this.signer.signer);
+
+        const sig = txToSign.signatures.find(e => e.publicKey.equals(this.signer.signer.publicKey));
+
+        return {
+            prefix: authPrefix,
+            timeout: authTimeout.toString(10),
+            signature: latestSlot+";"+sig.signature.toString("hex")
+        };
+    }
+
+    async isValidSwapAuthorization(data: SolanaSCSwapData, timeout: string, prefix: string, signature: string, feeRate?: any, preFetchedData?: SolanaPreFetchVerification): Promise<Buffer> {
+        if(prefix!=="swap") {
+            throw new SignatureVerificationError("Invalid prefix");
+        }
+
+        const expiryTimestamp = new BN(timeout);
+        const currentTimestamp = new BN(Math.floor(Date.now() / 1000));
+
+        const isExpired = expiryTimestamp.sub(currentTimestamp).lt(new BN(this.authGracePeriod));
+
+        if (isExpired) {
+            throw new SignatureVerificationError("Authorization expired!");
+        }
+
+        const swapWillExpireTooSoon = data.expiry.sub(currentTimestamp).lt(new BN(this.authGracePeriod).add(new BN(this.claimGracePeriod)));
+
+        if (swapWillExpireTooSoon) {
+            throw new SignatureVerificationError("Swap will expire too soon!");
+        }
+
+        const [transactionSlot, signatureString] = signature.split(";");
+
+        if(preFetchedData==null) preFetchedData = {};
+
+        let getSlotPromise: Promise<number>;
+        if(
+            preFetchedData.latestSlot!=null &&
+            preFetchedData.latestSlot.timestamp>Date.now()-SLOT_CACHE_TIME
+        ) {
+            getSlotPromise = Promise.resolve(preFetchedData.latestSlot.slot+Math.floor((Date.now()-preFetchedData.latestSlot.timestamp)/SLOT_TIME));
+        } else {
+            getSlotPromise = this.getCachedSlot("processed");
+        }
+
+        let getBlockhashPromise: Promise<string>;
+        const txSlot = parseInt(transactionSlot);
+        if(
+            preFetchedData.transactionSlot!=null &&
+            preFetchedData.transactionSlot.slot===txSlot
+        ) {
+            getBlockhashPromise = Promise.resolve(preFetchedData.transactionSlot.blockhash);
+        } else {
+            getBlockhashPromise = this.getParsedBlock(txSlot).then(val => val.blockhash);
+        }
+
+        const [latestSlot, blockhash] = await Promise.all([
+            getSlotPromise,
+            getBlockhashPromise
+        ]);
+
+        const lastValidTransactionSlot = parseInt(transactionSlot)+TX_SLOT_VALIDITY;
+        // const latestSlot = await this.getCachedSlot("processed");
+        const slotsLeft = lastValidTransactionSlot-latestSlot-SLOT_BUFFER;
+        if(slotsLeft<0) {
+            throw new SignatureVerificationError("Authorization expired!");
+        }
+
+        // const latestBlock = await this.getParsedBlock(parseInt(transactionSlot));
+
+        const txToSign = await this.getSwapMessage(data, prefix, timeout, feeRate);
+
+        //Check validity of recentBlockhash
+
+        txToSign.recentBlockhash = blockhash;
+        txToSign.addSignature(data.offerer, Buffer.from(signatureString, "hex"));
+
+        const valid = txToSign.verifySignatures(false);
+
+        if(!valid) {
+            throw new SignatureVerificationError("Invalid signature!");
+        }
+
+        return Buffer.from(blockhash);
+    }
+
+    async getSwapAuthorizationExpiry(swapData: SolanaSCSwapData, timeout: string, prefix: string, signature: string, preFetchedData?: SolanaPreFetchVerification): Promise<number> {
+        const [transactionSlotStr, signatureString] = signature.split(";");
+
+        const lastValidTransactionSlot = parseInt(transactionSlotStr)+TX_SLOT_VALIDITY;
+
+        if(preFetchedData==null) preFetchedData = {};
+
+        let getSlotPromise: Promise<number>;
+        if(
+            preFetchedData.latestSlot!=null &&
+            preFetchedData.latestSlot.timestamp>Date.now()-SLOT_CACHE_TIME
+        ) {
+            getSlotPromise = Promise.resolve(preFetchedData.latestSlot.slot+Math.floor((Date.now()-preFetchedData.latestSlot.timestamp)/SLOT_TIME));
+        } else {
+            getSlotPromise = this.getCachedSlot("processed");
+        }
+
+        const latestSlot = await getSlotPromise;
+
+        const slotsLeft = lastValidTransactionSlot-latestSlot-SLOT_BUFFER;
+
+        const now = Date.now();
+
+        const expiry = Math.min(now + (slotsLeft*SLOT_TIME), (parseInt(timeout)-this.authGracePeriod)*1000);
+
+        if(expiry<now) {
+            return 0;
+        }
+
+        return expiry;
+    }
+
+    async isSwapAuthorizationExpired(swapData: SolanaSCSwapData, timeout: string, prefix: string, signature: string): Promise<boolean> {
+        const [transactionSlotStr, signatureString] = signature.split(";");
+
+        const lastValidTransactionSlot = parseInt(transactionSlotStr)+TX_SLOT_VALIDITY;
+
+        const latestSlot = await this.getCachedSlot("finalized");
+
+        const slotsLeft = lastValidTransactionSlot-latestSlot+SLOT_BUFFER;
+
+        if(slotsLeft<0) return true;
+
+        if((parseInt(timeout)+this.authGracePeriod)*1000 < Date.now()) return true;
+
+        return false;
+    }
+
+    createSameChainSwapData(
+        offerer: string,
+        offererToken: TokenAddress,
+        offererAmount: BN,
+        claimer: string,
+        claimerToken: TokenAddress,
+        claimerAmount: BN,
+        expiry: BN,
+        payIn: boolean,
+        payOut: boolean
+    ): Promise<SolanaSCSwapData> {
+        const offererKey = offerer==null ? null : new PublicKey(offerer);
+        const offererTokenAddr: PublicKey = typeof(offererToken)==="string" ? new PublicKey(offererToken) : offererToken;
+        const claimerKey = claimer==null ? null : new PublicKey(claimer);
+        const claimerTokenAddr: PublicKey = typeof(claimerToken)==="string" ? new PublicKey(claimerToken) : claimerToken;
+        return Promise.resolve(new SolanaSCSwapData(
+            offererKey,
+            offererTokenAddr,
+            offererAmount,
+            claimerKey,
+            claimerTokenAddr,
+            claimerAmount,
+            expiry,
+            payIn,
+            payOut
+        ));
+    }
+
     async preFetchForInitSignatureVerification(data: SolanaPreFetchData): Promise<SolanaPreFetchVerification> {
         const [latestSlot, txBlock] = await Promise.all([
             this.getCachedSlotAndTimestamp("processed"),
@@ -390,8 +771,8 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         }
     }
 
-    areWeClaimer(swapData: SolanaSwapData): boolean {
-        if(swapData.isPayOut()) {
+    areWeClaimer(swapData: SolanaSwapData | SolanaSCSwapData): boolean {
+        if(swapData instanceof SolanaSwapData && swapData.isPayOut()) {
             const ourAta = getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
 
             if(!swapData.claimerAta.equals(ourAta)) {
@@ -402,7 +783,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         return swapData.claimer.equals(this.signer.publicKey);
     }
 
-    areWeOfferer(swapData: SolanaSwapData): boolean {
+    areWeOfferer(swapData: SolanaSwapData | SolanaSCSwapData): boolean {
         return swapData.offerer.equals(this.signer.publicKey);
     }
 
@@ -2293,6 +2674,60 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         return arr.length>2 ? arr[1] : "0";
     }
 
+    getSameChainSwapFeeRate(data: SolanaSCSwapData): Promise<string> {
+
+        const accounts: PublicKey[] = [];
+
+        if(data.offerer!=null) accounts.push(data.offerer);
+        if(data.claimer!=null) accounts.push(data.claimer);
+
+        if(data.offerer!=null && data.offererToken!=null) {
+            accounts.push(getAssociatedTokenAddressSync(data.offererToken, data.offerer));
+            if(!data.payIn) accounts.push(this.SwapUserVault(data.offerer, data.offererToken));
+        }
+        if(data.claimer!=null && data.offererToken!=null) {
+            accounts.push(getAssociatedTokenAddressSync(data.offererToken, data.claimer));
+            if(!data.payOut) accounts.push(this.SwapUserVault(data.claimer, data.offererToken));
+        }
+
+        if(data.offerer!=null && data.claimerToken!=null) {
+            accounts.push(getAssociatedTokenAddressSync(data.claimerToken, data.offerer));
+            if(!data.payIn) accounts.push(this.SwapUserVault(data.offerer, data.claimerToken));
+        }
+        if(data.claimer!=null && data.claimerToken!=null) {
+            accounts.push(getAssociatedTokenAddressSync(data.claimerToken, data.claimer));
+            if(!data.payOut) accounts.push(this.SwapUserVault(data.claimer, data.claimerToken));
+        }
+
+        if(data.offererToken!=null) accounts.push(this.SwapVault(data.offererToken));
+        if(data.claimerToken!=null) accounts.push(this.SwapVault(data.claimerToken));
+
+        const isFromClaimerPayIn = data.claimerToken!=null && data.claimer!=null && data.claimerToken.equals(WSOL_ADDRESS) && data.payOut;
+        return Promise.all([
+            this.getFeeRate(accounts),
+            isFromClaimerPayIn ?
+                this.getATAOrNull(getAssociatedTokenAddressSync(data.claimerToken, data.claimer)) :
+                Promise.resolve(null)
+        ]).then(([feeRate, _account]) => {
+            if(isFromClaimerPayIn) {
+                let balance: BN;
+                let accountExists: boolean;
+                const account: Account = _account;
+                if(account!=null) {
+                    accountExists = true;
+                    balance = new BN(account.amount.toString());
+                } else {
+                    accountExists = false;
+                    balance = new BN(0);
+                }
+                return feeRate+"#"+(accountExists ? "0" : "1")+";"+balance.toString(10);
+            } else {
+                return feeRate;
+            }
+        });
+
+    }
+
     getInitPayInFeeRate(offerer?: string, claimer?: string, token?: PublicKey, paymentHash?: string): Promise<string> {
 
         const accounts: PublicKey[] = [];
@@ -2483,17 +2918,21 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         return new BN(10000).add(priorityLamports);
     }
 
-    setUsAsClaimer(swapData: SolanaSwapData) {
+    setUsAsClaimer(swapData: SolanaSwapData | SolanaSCSwapData) {
         swapData.claimer = this.signer.publicKey;
-        swapData.payIn = false;
         swapData.payOut = true;
-        swapData.claimerAta = getAssociatedTokenAddressSync(swapData.token, this.signer.publicKey);
+        if(swapData instanceof SolanaSwapData) {
+            swapData.payIn = false;
+            swapData.claimerAta = getAssociatedTokenAddressSync(swapData.token, this.signer.publicKey);
+        }
     }
 
-    setUsAsOfferer(swapData: SolanaSwapData) {
+    setUsAsOfferer(swapData: SolanaSwapData | SolanaSCSwapData) {
         swapData.offerer = this.signer.publicKey;
-        swapData.offererAta = getAssociatedTokenAddressSync(swapData.token, this.signer.publicKey);
         swapData.payIn = true;
+        if(swapData instanceof SolanaSwapData) {
+            swapData.offererAta = getAssociatedTokenAddressSync(swapData.token, this.signer.publicKey);
+        }
     }
 
     getNativeCurrencyAddress(): TokenAddress {
