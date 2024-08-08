@@ -1,11 +1,15 @@
-import {BorshCoder, DecodeType, IdlTypes} from "@coral-xyz/anchor";
+import {BorshCoder, DecodeType, Event, IdlTypes} from "@coral-xyz/anchor";
 import {IdlField} from "@coral-xyz/anchor/dist/cjs/idl";
-import {Message, PublicKey, Transaction} from "@solana/web3.js";
+import {Message, ParsedMessage, PartiallyDecodedInstruction, PublicKey, Transaction} from "@solana/web3.js";
 import * as programIdl from "./programIdl.json";
 import {SwapProgram} from "./programTypes";
 
-type DecodedFieldOrNull<D, Defined> = D extends IdlField ? DecodeType<D["type"], Defined> : unknown;
+export type SolanaInitializeEvent = Event<SwapProgram["events"][0], Record<string, any>>;
+export type SolanaRefundEvent = Event<SwapProgram["events"][1], Record<string, any>>;
+export type SolanaClaimEvent = Event<SwapProgram["events"][2], Record<string, any>>;
+export type SolanaSwapEvent = Event<SwapProgram["events"][number], Record<string, any>>;
 
+type DecodedFieldOrNull<D, Defined> = D extends IdlField ? DecodeType<D["type"], Defined> : unknown;
 type ArgsTuple<A extends IdlField[], Defined> = {
     [K in A[number]["name"]]: DecodedFieldOrNull<Extract<A[number], { name: K }>, Defined>
 };
@@ -26,10 +30,10 @@ export type InitializePayInIxType = {
     data: ArgsTuple<SwapProgram["instructions"][2]["args"], IdlTypes<SwapProgram>>
 };
 
+export type IxWithAccounts = InitializeIxType | InitializePayInIxType;
+
 const coder = new BorshCoder(programIdl as any);
-
 const programPubKey = new PublicKey(programIdl.metadata.address);
-
 const nameMappedInstructions = {};
 for(let ix of programIdl.instructions) {
     nameMappedInstructions[ix.name] = ix;
@@ -37,37 +41,30 @@ for(let ix of programIdl.instructions) {
 
 class Utils {
 
-    static decodeInstructions(transactionMessage: Message): {
-        name: string,
-        data: {
-            [key: string]: any
-        },
-        accounts: {
-            [key: string]: PublicKey
-        }
-    }[] {
+    static decodeInstructions(transactionMessage: ParsedMessage): IxWithAccounts[] {
+        const instructions: IxWithAccounts[] = [];
 
-
-        const instructions = [];
-
-        for(let ix of transactionMessage.instructions) {
-            if(transactionMessage.accountKeys[ix.programIdIndex].equals(programPubKey)) {
-                const parsedIx: any = coder.instruction.decode(ix.data, 'base58') as any;
-                const accountsData = nameMappedInstructions[parsedIx.name];
-                if(accountsData!=null && accountsData.accounts!=null) {
-                    parsedIx.accounts = {};
-                    for(let i=0;i<accountsData.accounts.length;i++) {
-                        parsedIx.accounts[accountsData.accounts[i].name] = transactionMessage.accountKeys[ix.accounts[i]]
-                    }
-                }
-                instructions.push(parsedIx);
-            } else {
+        for(let _ix of transactionMessage.instructions) {
+            if(!_ix.programId.equals(programPubKey)) {
                 instructions.push(null);
+                continue;
             }
+
+            const ix: PartiallyDecodedInstruction = _ix as PartiallyDecodedInstruction;
+            if(ix.data==null) continue;
+
+            const parsedIx: any = coder.instruction.decode(ix.data, 'base58');
+            const accountsData = nameMappedInstructions[parsedIx.name];
+            if(accountsData!=null && accountsData.accounts!=null) {
+                parsedIx.accounts = {};
+                for(let i=0;i<accountsData.accounts.length;i++) {
+                    parsedIx.accounts[accountsData.accounts[i].name] = ix.accounts[i];
+                }
+            }
+            instructions.push(parsedIx);
         }
 
         return instructions;
-
     }
 
     /**
