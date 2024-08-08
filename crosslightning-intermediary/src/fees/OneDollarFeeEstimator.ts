@@ -1,6 +1,9 @@
 import {IBtcFeeEstimator} from "./IBtcFeeEstimator";
+import {getLogger} from "../utils/Utils";
 const dynamicImport = new Function('specifier', 'return import(specifier)');
 const importPromise = dynamicImport('one-dollar-fee-estimator-failover');
+
+const logger = getLogger("OneDollarFeeEstimator: ")
 
 export class OneDollarFeeEstimator implements IBtcFeeEstimator {
 
@@ -18,7 +21,7 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
     feeMultiplier: number;
 
     startFeeEstimator() {
-        console.log("Starting fee estimator worker!");
+        logger.info("startFeeEstimator(): starting fee estimator worker");
 
         importPromise.then(({FeeEstimator}) => {
             this.estimator = new FeeEstimator({
@@ -33,9 +36,9 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
             });
 
             this.estimator.on('error', (err) => {
-                console.error("Fee estimator error: ", err);
+                logger.error("on(error): fee estimator error", err);
                 if(err.message.startsWith("FeeEstimator worker stopped")) {
-                    console.log("Restarting fee estimator worker!");
+                    logger.info("on(error): restarting fee estimator worker");
                     this.receivedFee = null;
                     this.iterations = 0;
                     this.startFeeEstimator();
@@ -67,12 +70,12 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
         this.startFeeEstimator();
 
         process.on('exit', () => {
-            console.log("Process exiting, stopping estimator...");
+            logger.info("process(exit): process exiting, stopping estimator");
             if(this.estimator!=null) this.estimator.stop();
         });
 
         process.on('SIGINT', () => {
-            console.log("Process exiting, stopping estimator...");
+            logger.info("process(SIGINT): process exiting, stopping estimator");
             if(this.estimator!=null) this.estimator.stop();
             process.exit();
         });

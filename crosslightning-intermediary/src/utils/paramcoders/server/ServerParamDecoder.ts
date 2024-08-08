@@ -25,11 +25,9 @@ export const serverParamDecoder = (timeoutMillis: number) => (req: Request, res:
 
         const dataBuffers: Buffer[] = [];
         req.on("data", (data: Buffer) => {
-            console.log("Normal data read: ", data);
             dataBuffers.push(data)
         });
         req.on("end", () => {
-            console.log("Request end, buffers: ", dataBuffers);
             const body = JSON.parse(Buffer.concat(dataBuffers).toString());
             const paramReader: IParamReader = {
                 getParams: <T extends RequestSchema>(schema: T) => {
@@ -44,7 +42,7 @@ export const serverParamDecoder = (timeoutMillis: number) => (req: Request, res:
             next();
         });
         req.on("error", (e) => {
-            console.error(e);
+            console.error("ServerParamDecoder: error reading legacy (non-streaming) http request",e);
         });
 
         timeout = setTimeout(() => {
@@ -59,7 +57,6 @@ export const serverParamDecoder = (timeoutMillis: number) => (req: Request, res:
     const decoder = new ParamDecoder();
     req.on("data", decoder.onData.bind(decoder));
     req.on("end", () => {
-        console.log("Request end!");
         decoder.onEnd();
         clearTimeout(timeout);
     });

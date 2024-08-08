@@ -6,6 +6,7 @@ export type DefinedRuntimeError = {
     code: number;
     msg?: string;
     _httpStatus?: number;
+    data?: any;
 };
 
 export function isDefinedRuntimeError(obj: any): obj is DefinedRuntimeError {
@@ -53,6 +54,15 @@ export function expressHandlerWrapper(func: (
             }
         })();
     }
+}
+
+export function getLogger(prefix: string) {
+    return {
+        debug: (msg, ...args) => console.debug(prefix+msg, ...args),
+        info: (msg, ...args) => console.info(prefix+msg, ...args),
+        warn: (msg, ...args) => console.warn(prefix+msg, ...args),
+        error: (msg, ...args) => console.error(prefix+msg, ...args)
+    };
 }
 
 export const HEX_REGEX = /[0-9a-fA-F]+/;

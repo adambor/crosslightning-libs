@@ -56,4 +56,11 @@ export class SwapHandlerSwap<T extends SwapData, S = any> extends Lockable imple
         return this.data.getSequence();
     }
 
+    getIdentifier(): string {
+        if(this.getSequence()!=null) {
+            return this.getHash()+"_"+this.getSequence().toString(16);
+        }
+        return this.getHash();
+    }
+
 }

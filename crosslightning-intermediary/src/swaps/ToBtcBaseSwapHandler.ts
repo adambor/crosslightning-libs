@@ -199,8 +199,6 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
             return null;
         }) : null;
 
-        if(pricePrefetchPromise!=null) this.logger.debug("getToBtcPrefetches(): pre-fetching swap price!");
-
         return {
             pricePrefetchPromise,
             signDataPrefetchPromise: this.getSignDataPrefetch(abortController, responseStream)

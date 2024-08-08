@@ -70,6 +70,13 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
         error: (msg, ...args) => console.error("SwapHandler("+this.type+"): "+msg, ...args)
     };
 
+    protected swapLogger = {
+        debug: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg, ...args) => this.logger.debug(this.getIdentifier(swap)+": "+msg, ...args),
+        info: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg, ...args) => this.logger.info(this.getIdentifier(swap)+": "+msg, ...args),
+        warn: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg, ...args) => this.logger.warn(this.getIdentifier(swap)+": "+msg, ...args),
+        error: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg, ...args) => this.logger.error(this.getIdentifier(swap)+": "+msg, ...args)
+    };
+
     protected constructor(storageDirectory: IIntermediaryStorage<V>, path: string, swapContract: SwapContract<T, any, any, any>, chainEvents: ChainEvents<T>, allowedTokens: TokenAddress[], lnd: AuthenticatedLnd, swapPricing: ISwapPrice) {
         this.storageManager = storageDirectory;
         this.swapContract = swapContract;
@@ -106,10 +113,13 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
     protected async processEvent(eventData: SwapEvent<T>[]): Promise<boolean> {
         for(let event of eventData) {
             if(event instanceof InitializeEvent) {
+                this.swapLogger.debug(event, "SC: InitializeEvent: swap type: "+event.swapType);
                 await this.processInitializeEvent(event);
             } else if(event instanceof ClaimEvent) {
+                this.swapLogger.debug(event, "SC: ClaimEvent: swap secret: "+event.secret);
                 await this.processClaimEvent(event);
             } else if(event instanceof RefundEvent) {
+                this.swapLogger.debug(event, "SC: RefundEvent");
                 await this.processRefundEvent(event);
             }
         }
@@ -168,7 +178,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
             if(sequenceOrUltimateState!=null && !BN.isBN(sequenceOrUltimateState)) await swap.setState(sequenceOrUltimateState);
         }
         if(swap!=null) await PluginManager.swapRemove<T>(swap);
-        this.logger.debug("removeSwapData(): removing swap payment hash: "+swap.getHash()+" sequence: "+swap.getSequence().toString(16)+" final state: "+swap.state);
+        this.swapLogger.debug(swap, "removeSwapData(): removing swap final state: "+swap.state);
         await this.storageManager.removeData(swap.getHash(), swap.getSequence());
     }
 
@@ -205,10 +215,29 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
                 abortController.abort(e);
                 return null;
             }));
-            if(signDataPrefetchPromise!=null) this.logger.debug("getSignDataPrefetch(): pre-fetching signature data!");
         }
 
         return signDataPrefetchPromise;
+    }
+
+    getIdentifierFromEvent(event: SwapEvent<T>): string {
+        if(event.sequence.isZero()) return event.paymentHash;
+        return event.paymentHash+"_"+event.sequence.toString(16);
+    }
+
+    getIdentifierFromSwapData(swapData: T): string {
+        if(swapData.getSequence().isZero()) return swapData.getHash();
+        return swapData.getHash()+"_"+swapData.getSequence().toString(16);
+    }
+
+    getIdentifier(swap: SwapHandlerSwap<T> | SwapEvent<T> | T) {
+        if(swap instanceof SwapHandlerSwap) {
+            return swap.getIdentifier();
+        }
+        if(swap instanceof SwapEvent) {
+            return this.getIdentifierFromEvent(swap);
+        }
+        return this.getIdentifierFromSwapData(swap);
     }
 
 }

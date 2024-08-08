@@ -38,8 +38,6 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
                 return null;
             }) : null);
 
-        if(pricePrefetchPromise!=null) this.logger.debug("getFromBtcPricePrefetches(): pre-fetching swap price!");
-
         return {pricePrefetchPromise, securityDepositPricePrefetchPromise};
     }
 

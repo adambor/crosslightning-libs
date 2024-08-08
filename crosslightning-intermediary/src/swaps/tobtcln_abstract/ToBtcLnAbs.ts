@@ -186,6 +186,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         for(let key in this.exactInAuths) {
             const obj = this.exactInAuths[key];
             if(obj.expiry<Date.now()) {
+                this.logger.info("cleanExpiredExactInAuthorizations(): remove expired authorization, reqId: "+key);
                 delete this.exactInAuths[key];
             }
         }
@@ -199,6 +200,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             //Cancel the swaps where signature is expired
             const isSignatureExpired = swap.signatureExpiry!=null && swap.signatureExpiry.lt(timestamp);
             if(isSignatureExpired) {
+                this.swapLogger.info(swap, "processPastSwap(state=SAVED): signature expired, cancel uncommited swap, invoice: "+swap.pr);
                 await this.removeSwapData(swap, ToBtcLnSwapState.CANCELED);
                 return;
             }
@@ -207,13 +209,14 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             const decodedPR = bolt11.decode(swap.pr);
             const isInvoiceExpired = decodedPR.timeExpireDate < Date.now() / 1000;
             if (isInvoiceExpired) {
+                this.swapLogger.info(swap, "processPastSwap(state=SAVED): invoice expired, cancel uncommited swap, invoice: "+swap.pr);
                 await this.removeSwapData(swap, ToBtcLnSwapState.CANCELED);
                 return;
             }
         }
 
         if (swap.state === ToBtcLnSwapState.COMMITED || swap.state === ToBtcLnSwapState.PAID) {
-            //Cancel the swaps where signature is expired
+            //Process swaps in commited & paid state
             await this.processInitialized(swap);
         }
 
@@ -222,6 +225,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             // to be able to cooperatively refund them
             const isSwapExpired = swap.data.getExpiry().lt(timestamp);
             if(isSwapExpired) {
+                this.swapLogger.info(swap, "processPastSwap(state=NON_PAYABLE): swap expired, removing swap data, invoice: "+swap.pr);
                 await this.removeSwapData(swap);
             }
         }
@@ -264,11 +268,17 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         const unlock: () => boolean = swap.lock(this.swapContract.claimWithSecretTimeout);
         if(unlock==null) return false;
 
-        const success = await this.swapContract.claimWithSecret(swap.data, swap.secret, false, false, true);
-        if(swap.metadata!=null) swap.metadata.times.txClaimed = Date.now();
-
-        unlock();
-        return true;
+        try {
+            this.swapLogger.debug(swap, "tryClaimSwap(): initiate claim of swap, secret: "+swap.secret);
+            const success = await this.swapContract.claimWithSecret(swap.data, swap.secret, false, false, true);
+            this.swapLogger.info(swap, "tryClaimSwap(): swap claimed successfully, secret: "+swap.secret+" invoice: "+swap.pr);
+            if(swap.metadata!=null) swap.metadata.times.txClaimed = Date.now();
+            unlock();
+            return true;
+        } catch (e) {
+            this.swapLogger.error(swap, "tryClaimSwap(): error occurred claiming swap, secret: "+swap.secret+" invoice: "+swap.pr, e);
+            return false;
+        }
     }
 
     /**
@@ -283,7 +293,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         }
 
         if(lnPaymentStatus.is_failed) {
-            console.error("[To BTC-LN: BTCLN.PaymentResult] Invoice payment failed");
+            this.swapLogger.info(swap, "processPaymentResult(): invoice payment failed, cancelling swap, invoice: "+swap.pr);
             await this.removeSwapData(swap, ToBtcLnSwapState.CANCELED);
             return;
         }
@@ -292,6 +302,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             //Save pre-image & real network fee
             swap.secret = lnPaymentStatus.payment.secret;
             swap.realRoutingFee = new BN(lnPaymentStatus.payment.fee_mtokens).div(new BN(1000));
+            this.swapLogger.info(swap, "processPaymentResult(): invoice paid, secret: "+swap.secret+" realRoutingFee: "+swap.realRoutingFee.toString(10)+" invoice: "+swap.pr);
             await swap.setState(ToBtcLnSwapState.PAID);
             await this.storageManager.saveData(swap.data.getHash(), swap.data.getSequence(), swap);
 
@@ -300,18 +311,25 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             if(!isCommited) {
                 const status = await this.swapContract.getCommitStatus(swap.data);
                 if(status===SwapCommitStatus.PAID) {
+                    //This is alright, we got the money
                     await this.removeSwapData(swap, ToBtcLnSwapState.CLAIMED);
+                    return;
                 } else if(status===SwapCommitStatus.EXPIRED) {
+                    //This means the user was able to refund before we were able to claim, no good
                     await this.removeSwapData(swap, ToBtcLnSwapState.REFUNDED);
                 }
-                console.error("[To BTC-LN: BTCLN.PaymentResult] Tried to claim but escrow doesn't exist anymore, commit status="+status+" : ", swap.data.getHash());
+                this.swapLogger.warn(swap, "processPaymentResult(): tried to claim but escrow doesn't exist anymore,"+
+                    " status: "+status+
+                    " invoice: "+swap.pr);
                 return;
             }
 
-            await this.tryClaimSwap(swap);
+            const success = await this.tryClaimSwap(swap);
+            if(success) this.swapLogger.info(swap, "processPaymentResult(): swap claimed successfully, invoice: "+swap.pr);
             return;
         }
 
+        //This should never happen
         throw new Error("Invalid lnPaymentStatus");
     }
 
@@ -327,8 +345,9 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         const subscription = lncli.subscribeToPastPayment({id: paymentHash, lnd: this.LND});
 
         const onResult = (lnPaymentStatus: {is_confirmed?: boolean, is_failed?: boolean, payment?: any, error?: any}) => {
-            console.log("[To BTC-LN: BTCLN.PaymentResult] Invoice result: ", lnPaymentStatus);
-            this.processPaymentResult(invoiceData, lnPaymentStatus).catch(e => console.error(e));
+            const outcome = lnPaymentStatus.is_confirmed ? "success" : lnPaymentStatus.is_failed ? "failure" : null;
+            this.swapLogger.info(invoiceData, "subscribeToPayment(): result callback, outcome: "+outcome+" invoice: "+invoiceData.pr);
+            this.processPaymentResult(invoiceData, lnPaymentStatus).catch(e => this.swapLogger.error(invoiceData, "subscribeToPayment(): process payment result", e));
             subscription.removeAllListeners();
             this.activeSubscriptions.delete(paymentHash);
         };
@@ -342,7 +361,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             error: data
         }));
 
-        console.log("[To BTC-LN: BTCLN.PaymentResult] Subscribed to payment: ", paymentHash);
+        this.swapLogger.info(invoiceData, "subscribeToPayment(): subscribe to payment outcome, invoice: "+invoiceData.pr);
 
         this.activeSubscriptions.add(paymentHash);
         return true;
@@ -378,10 +397,13 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         const obj: any = {
             request: swap.pr,
             max_fee: maxFee.toString(10),
-            max_timeout_height: new BN(current_block_height).add(maxUsableCLTVdelta).toString(10)
+            max_timeout_height: new BN(current_block_height).add(maxUsableCLTVdelta).toString(10),
+            lnd: this.LND
         };
-        console.log("[To BTC-LN: sendLightningPayment] Paying max cltv delta: "+maxUsableCLTVdelta.toString(10)+" max fee: "+maxFee.toString(10)+" params: ", obj);
-        obj.lnd = this.LND;
+        this.swapLogger.info(swap, "sendLightningPayment(): paying lightning network invoice,"+
+            " cltvDelta: "+maxUsableCLTVdelta.toString(10)+
+            " maxFee: "+maxFee.toString(10)+
+            " invoice: "+swap.pr);
 
         try {
             await lncli.pay(obj)
@@ -412,7 +434,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             try {
                 await this.sendLightningPayment(swap);
             } catch (e) {
-                console.error("[To BTC-LN: SC.Initialize: sendLightningPayment] "+e);
+                this.swapLogger.error(swap, "processInitialized(): lightning payment error", e);
                 if(isDefinedRuntimeError(e)) {
                     await swap.setState(ToBtcLnSwapState.NON_PAYABLE);
                     await this.storageManager.saveData(swap.data.getHash(), swap.data.getSequence(), swap);
@@ -443,7 +465,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         swap.txIds.init = (event as any).meta?.txId;
         if(swap.metadata!=null) swap.metadata.times.txReceived = Date.now();
 
-        console.log("[To BTC-LN: SC.Initialize] SC request submitted: ", paymentHash);
+        this.swapLogger.info(swap, "SC: InitializeEvent: swap initialized by the client, invoice: "+swap.pr);
 
         //Only process swaps in SAVED state
         if(swap.state!==ToBtcLnSwapState.SAVED) return;
@@ -458,7 +480,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
 
         swap.txIds.claim = (event as any).meta?.txId;
 
-        console.log("[To BTC-LN: SC.ClaimEvent] Transaction confirmed! Event: ", event);
+        this.swapLogger.info(swap, "SC: ClaimEvent: swap claimed to us, secret: "+event.secret+" invoice: "+swap.pr);
 
         await this.removeSwapData(swap, ToBtcLnSwapState.CLAIMED);
     }
@@ -471,7 +493,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
 
         swap.txIds.refund = (event as any).meta?.txId;
 
-        console.log("[To BTC-LN: Solana.RefundEvent] Transaction refunded! Event: ", event);
+        this.swapLogger.info(swap, "SC: RefundEvent: swap refunded back to the client, invoice: "+swap.pr);
 
         await this.removeSwapData(swap, ToBtcLnSwapState.REFUNDED);
     }
@@ -524,7 +546,6 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         try {
             parsedPR = bolt11.decode(pr);
         } catch (e) {
-            console.error(e);
             throw {
                 code: 20021,
                 msg: "Invalid request body (pr - cannot be parsed)"
@@ -605,7 +626,6 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
      */
     async checkPriorPayment(paymentHash: string, abortSignal: AbortSignal): Promise<void> {
         const payment = await this.getPayment(paymentHash);
-
         if(payment!=null) throw {
             code: 20010,
             msg: "Already processed"
@@ -646,7 +666,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
      * @param abortSignal
      * @throws {DefinedRuntimeError} will throw an error if the destination is unreachable
      */
-    async checkNetworkFee(amountBD: BN, maxFee: BN, expiryTimestamp: BN, currentTimestamp: BN, pr: string, metadata: any, abortSignal: AbortSignal): Promise<{
+    async checkAndGetNetworkFee(amountBD: BN, maxFee: BN, expiryTimestamp: BN, currentTimestamp: BN, pr: string, metadata: any, abortSignal: AbortSignal): Promise<{
         confidence: number,
         networkFee: BN,
         routes: LNRoutes
@@ -654,7 +674,6 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         const maxUsableCLTV: BN = expiryTimestamp.sub(currentTimestamp).sub(this.config.gracePeriod).div(this.config.bitcoinBlocktime.mul(this.config.safetyFactor));
 
         const { current_block_height } = await lncli.getHeight({lnd: this.LND});
-
         abortSignal.throwIfAborted();
 
         metadata.times.blockheightFetched = Date.now();
@@ -663,8 +682,6 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         const parsedRequest = await lncli.parsePaymentRequest({
             request: pr
         });
-        console.log("[To BTC-LN: REST.payInvoice] Parsed PR: ", JSON.stringify(parsedRequest, null, 4));
-
         metadata.times.prParsed = Date.now();
 
         const probeReq: any = {
@@ -678,9 +695,6 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             routes: parsedRequest.routes
         };
         metadata.probeRequest = {...probeReq};
-
-        //if(hints.length>0) req.routes = [hints];
-        console.log("[To BTC-LN: REST.payInvoice] Probe for route: ", JSON.stringify(probeReq, null, 4));
         probeReq.lnd = this.LND;
 
         let is_snowflake: boolean = false;
@@ -696,15 +710,17 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         if(!is_snowflake) try {
             obj = await lncli.probeForRoute(probeReq);
         } catch (e) {
-            console.error(e);
+            //TODO: Properly handle error, such that only probe failed error is consumed, and e.g. network errors are thrown
         }
-
         abortSignal.throwIfAborted();
 
         metadata.times.probeResult = Date.now();
         metadata.probeResponse = {...obj};
 
-        console.log("[To BTC-LN: REST.payInvoice] Probe result: ", obj);
+        if(obj!=null) this.logger.info("checkAndGetNetworkFee(): route probed,"+
+            " destination: "+parsedRequest.destination+
+            " confidence: "+obj.route.confidence+
+            " safe fee: "+obj.route.safe_fee);
 
         if(obj==null || obj.route==null) {
             if(!this.config.allowProbeFailedSwaps) {
@@ -720,12 +736,9 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             try {
                 routingObj = await lncli.getRouteToDestination(probeReq);
             } catch (e) {
-                console.error(e);
+                //TODO: Properly handle error, such that only routing failed error is consumed, and e.g. network errors are thrown
             }
-
             abortSignal.throwIfAborted();
-
-            console.log("[To BTC-LN: REST.payInvoice] Routing result: ", routingObj);
 
             if(routingObj==null || routingObj.route==null) {
                 throw {
@@ -736,6 +749,11 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
 
             metadata.times.routingResult = Date.now();
             metadata.routeResponse = {...routingObj};
+
+            this.logger.info("checkAndGetNetworkFee(): routing result,"+
+                " destination: "+parsedRequest.destination+
+                " confidence: "+routingObj.route.confidence+
+                " safe fee: "+routingObj.route.safe_fee);
 
             obj = routingObj;
             obj.route.confidence = 0;
@@ -798,7 +816,6 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         const parsedRequest = await lncli.parsePaymentRequest({
             request: pr
         });
-        console.log("[To BTC-LN: REST.payInvoice] Parsed PR: ", JSON.stringify(parsedRequest, null, 4));
 
         if(
             parsedRequest.destination!==parsedAuth.destination ||
@@ -873,7 +890,6 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
 
             //Sign swap data
             const prefetchedSignData = parsedAuth.preFetchSignData;
-            if(prefetchedSignData!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetched signature data: ", prefetchedSignData);
             const sigData = await this.getToBtcSignatureData(payObject, req, abortSignal, prefetchedSignData);
             metadata.times.swapSigned = Date.now();
 
@@ -884,6 +900,11 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
 
             await PluginManager.swapCreate(createdSwap);
             await this.storageManager.saveData(parsedPR.tagsObject.payment_hash, sequence, createdSwap);
+
+            this.swapLogger.info(createdSwap, "REST: /payInvoiceExactIn: created exact in swap,"+
+                " reqId: "+parsedBody.reqId+
+                " amount: "+new BN(parsedPR.millisatoshis).div(new BN(1000)).toString(10)+
+                " invoice: "+createdSwap.pr);
 
             await responseStream.writeParamsAndEnd({
                 code: 20000,
@@ -951,7 +972,6 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
                 };
             }
             metadata.request = parsedBody;
-            console.log("Parsed body: ", parsedBody);
 
             const responseStream = res.responseStream;
 
@@ -993,7 +1013,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
 
                 if(parsedBody.exactIn) parsedBody.maxFee = await this.swapPricing.getToBtcSwapAmount(parsedBody.maxFee, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
 
-                return await this.checkNetworkFee(amountBD, parsedBody.maxFee, parsedBody.expiryTimestamp, currentTimestamp, parsedBody.pr, metadata, abortController.signal);
+                return await this.checkAndGetNetworkFee(amountBD, parsedBody.maxFee, parsedBody.expiryTimestamp, currentTimestamp, parsedBody.pr, metadata, abortController.signal);
             }, abortController.signal, pricePrefetchPromise);
             metadata.times.priceCalculated = Date.now();
 
@@ -1023,6 +1043,11 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
                     preFetchSignData: signDataPrefetchPromise != null ? await signDataPrefetchPromise : null,
                     metadata
                 };
+
+                this.logger.info("REST: /payInvoice: created exact in swap,"+
+                    " reqId: "+reqId+
+                    " amount: "+amountBD.toString(10)+
+                    " destination: "+parsedPR.payeeNodeKey);
 
                 await responseStream.writeParamsAndEnd({
                     code: 20000,
@@ -1068,6 +1093,10 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
 
             await PluginManager.swapCreate(createdSwap);
             await this.storageManager.saveData(parsedPR.tagsObject.payment_hash, sequence, createdSwap);
+
+            this.swapLogger.info(createdSwap, "REST: /payInvoice: created swap,"+
+                " amount: "+amountBD.toString(10)+
+                " invoice: "+createdSwap.pr);
 
             await responseStream.writeParamsAndEnd({
                 code: 20000,
@@ -1129,6 +1158,8 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
                         msg: "Not committed"
                     };
 
+                    this.swapLogger.info(data, "REST: /getRefundAuthorization: returning refund authorization, because invoice in NON_PAYABLE state, invoice: "+data.pr);
+
                     res.status(200).json({
                         code: 20000,
                         msg: "Success",
@@ -1164,7 +1195,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
                 data: {
                     secret: payment.payment.secret
                 }
-            }
+            };
 
             if(payment.is_failed) {
                 //TODO: This might not be the best idea with EVM chains
@@ -1176,6 +1207,8 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
                 };
 
                 const refundSigData = await this.swapContract.getRefundSignature(commitedData, this.config.authorizationTimeout);
+
+                this.swapLogger.info(commitedData, "REST: /getRefundAuthorization: returning refund authorization, because invoice payment failed");
 
                 res.status(200).json({
                     code: 20000,
@@ -1193,7 +1226,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         restServer.post(this.path+'/getRefundAuthorization', getRefundAuthorization);
         restServer.get(this.path+'/getRefundAuthorization', getRefundAuthorization);
 
-        console.log("[To BTC-LN: REST] Started at path: ", this.path);
+        this.logger.info("started at path: ", this.path);
     }
 
     async init() {
