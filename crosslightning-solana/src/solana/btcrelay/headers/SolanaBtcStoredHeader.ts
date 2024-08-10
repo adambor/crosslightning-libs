@@ -1,7 +1,7 @@
 import {BtcStoredHeader, StatePredictorUtils} from "crosslightning-base";
 import {SolanaBtcHeader} from "./SolanaBtcHeader";
 
-type SolanaBtcStoredHeaderType = {
+export type SolanaBtcStoredHeaderType = {
     chainWork: number[],
     header: SolanaBtcHeader,
     lastDiffAdjustment: number,

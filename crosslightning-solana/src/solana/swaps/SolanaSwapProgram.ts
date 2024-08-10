@@ -1528,8 +1528,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
             if(commitedHeader==null) try {
                 const result = await tryWithRetries(
                     () => this.btcRelay.retrieveLogAndBlockheight({
-                        blockhash: tx.blockhash,
-                        height: merkleProof.blockheight
+                        blockhash: tx.blockhash
                     }, blockheight+swapData.getConfirmations()-1),
                     this.retryPolicy
                 );
@@ -1547,8 +1546,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
                 const result = await tryWithRetries(
                     () => this.btcRelay.retrieveLogAndBlockheight({
-                        blockhash: tx.blockhash,
-                        height: merkleProof.blockheight
+                        blockhash: tx.blockhash
                     }, requiredBlockheight),
                     this.retryPolicy
                 );
