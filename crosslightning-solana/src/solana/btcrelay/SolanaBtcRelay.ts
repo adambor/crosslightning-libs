@@ -24,7 +24,7 @@ const BASE_FEE_SOL_PER_BLOCKHEADER = new BN(5000);
 
 const MAX_CLOSE_IX_PER_TX = 10;
 
-export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase implements BtcRelay<SolanaBtcStoredHeader, {tx: Transaction, signers: Signer[]}, B> {
+export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> implements BtcRelay<SolanaBtcStoredHeader, {tx: Transaction, signers: Signer[]}, B> {
 
     static serializeBlockHeader(e: BtcBlock): SolanaBtcHeader {
         return new SolanaBtcHeader({
@@ -64,7 +64,7 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase implem
         programAddress?: string,
         solanaFeeEstimator: SolanaFeeEstimator = new SolanaFeeEstimator(provider.connection)
     ) {
-        super(provider, programIdl, programAddress, solanaFeeEstimator);
+        super(provider, programIdl, programAddress, null, solanaFeeEstimator);
         this.bitcoinRpc = bitcoinRpc;
 
         this.BtcRelayMainState = PublicKey.findProgramAddressSync(

@@ -147,4 +147,13 @@ export function onceAsync<T>(executor: () => Promise<T>): () => Promise<T> {
     }
 }
 
+export function getLogger(prefix: string) {
+    return {
+        debug: (msg, ...args) => console.debug(prefix+msg, ...args),
+        info: (msg, ...args) => console.info(prefix+msg, ...args),
+        warn: (msg, ...args) => console.warn(prefix+msg, ...args),
+        error: (msg, ...args) => console.error(prefix+msg, ...args)
+    };
+}
+
 export default Utils;

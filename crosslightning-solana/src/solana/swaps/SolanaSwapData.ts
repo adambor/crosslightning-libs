@@ -4,6 +4,7 @@ import {SwapData, ChainSwapType, TokenAddress} from "crosslightning-base";
 import {SwapProgram} from "./programTypes";
 import {IdlAccounts, IdlTypes} from "@coral-xyz/anchor";
 import {SwapTypeEnum} from "./SwapTypeEnum";
+import {SolanaSwapProgram} from "./SolanaSwapProgram";
 
 const EXPIRY_BLOCKHEIGHT_THRESHOLD = new BN("1000000000");
 
@@ -167,17 +168,7 @@ export class SolanaSwapData extends SwapData {
     }
 
     getType(): ChainSwapType {
-        switch(this.kind) {
-            case 0:
-                return ChainSwapType.HTLC;
-            case 1:
-                return ChainSwapType.CHAIN;
-            case 2:
-                return ChainSwapType.CHAIN_NONCED;
-            case 3:
-                return ChainSwapType.CHAIN_TXID;
-        }
-        return null;
+        return SolanaSwapData.kindToType(this.kind);
     }
 
     getExpiry(): BN {
@@ -290,6 +281,58 @@ export class SolanaSwapData extends SwapData {
             other.securityDeposit.eq(this.securityDeposit) &&
             other.claimerBounty.eq(this.claimerBounty) &&
             other.token.equals(this.token)
+    }
+
+    static fromEscrowState(account: IdlAccounts<SwapProgram>["escrowState"]) {
+        const data: IdlTypes<SwapProgram>["SwapData"] = account.data;
+
+        return new SolanaSwapData(
+            account.offerer,
+            account.claimer,
+            account.mint,
+            data.amount,
+            Buffer.from(data.hash).toString("hex"),
+            data.sequence,
+            data.expiry,
+            data.nonce,
+            data.confirmations,
+            data.payOut,
+            SwapTypeEnum.toNumber(data.kind),
+            data.payIn,
+            account.offererAta,
+            account.claimerAta,
+            account.securityDeposit,
+            account.claimerBounty,
+            null
+        );
+    }
+
+    static typeToKind(type: ChainSwapType): number {
+        switch (type) {
+            case ChainSwapType.HTLC:
+                return 0;
+            case ChainSwapType.CHAIN:
+                return 1;
+            case ChainSwapType.CHAIN_NONCED:
+                return 2;
+            case ChainSwapType.CHAIN_TXID:
+                return 3;
+        }
+        return null;
+    }
+
+    static kindToType(value: number): ChainSwapType {
+        switch(value) {
+            case 0:
+                return ChainSwapType.HTLC;
+            case 1:
+                return ChainSwapType.CHAIN;
+            case 2:
+                return ChainSwapType.CHAIN_NONCED;
+            case 3:
+                return ChainSwapType.CHAIN_TXID;
+        }
+        return null;
     }
 
 }

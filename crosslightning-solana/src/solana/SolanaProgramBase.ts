@@ -1,31 +1,28 @@
-import {AnchorProvider, BorshCoder, Event, EventParser, Program} from "@coral-xyz/anchor";
+import {AnchorProvider, BorshCoder, Event, EventParser, Idl, Program} from "@coral-xyz/anchor";
 import {SolanaFeeEstimator} from "../utils/SolanaFeeEstimator";
 import {ConfirmedSignatureInfo, PublicKey} from "@solana/web3.js";
 import {IdlEvent} from "@coral-xyz/anchor/dist/cjs/idl";
+import {SolanaBase, SolanaRetryPolicy} from "./SolanaBase";
 
 const LOG_FETCH_LIMIT = 500;
 
-export class SolanaProgramBase {
+export class SolanaProgramBase<T extends Idl> extends SolanaBase {
 
-    provider: AnchorProvider;
     programCoder: BorshCoder;
-    program: Program;
+    program: Program<T>;
     eventParser: EventParser;
-
-    solanaFeeEstimator: SolanaFeeEstimator;
 
     constructor(
         provider: AnchorProvider,
         programIdl: any,
         programAddress?: string,
+        retryPolicy?: SolanaRetryPolicy,
         solanaFeeEstimator: SolanaFeeEstimator = new SolanaFeeEstimator(provider.connection)
     ) {
-        this.provider = provider;
+        super(provider, retryPolicy, solanaFeeEstimator);
         this.programCoder = new BorshCoder(programIdl as any);
-        this.program = new Program(programIdl as any, programAddress || programIdl.metadata.address, provider);
+        this.program = new Program<T>(programIdl as any, programAddress || programIdl.metadata.address, provider);
         this.eventParser = new EventParser(this.program.programId, this.programCoder);
-
-        this.solanaFeeEstimator = solanaFeeEstimator;
     }
 
     /**
@@ -39,7 +36,7 @@ export class SolanaProgramBase {
     protected getSignatures(topicKey: PublicKey, lastProcessedSignature?: string): Promise<ConfirmedSignatureInfo[]> {
         if(lastProcessedSignature==null) {
             return this.provider.connection.getSignaturesForAddress(topicKey, {
-                limit: LOG_FETCH_LIMIT
+                limit: LOG_FETCH_LIMIT,
             }, "confirmed");
         } else {
             return this.provider.connection.getSignaturesForAddress(topicKey, {
@@ -51,11 +48,13 @@ export class SolanaProgramBase {
 
     protected async findInSignatures<T>(
         topicKey: PublicKey,
-        processor: (signatures: ConfirmedSignatureInfo[]) => Promise<T>
+        processor: (signatures: ConfirmedSignatureInfo[]) => Promise<T>,
+        abortSignal?: AbortSignal
     ): Promise<T> {
         let signatures: ConfirmedSignatureInfo[] = null;
         while(signatures==null || signatures.length>0) {
             signatures = await this.getSignatures(topicKey, signatures!=null ? signatures[signatures.length-1].signature : null);
+            if(abortSignal!=null) abortSignal.throwIfAborted();
             const result: T = await processor(signatures);
             if(result!=null) result;
         }
@@ -88,16 +87,18 @@ export class SolanaProgramBase {
 
     protected findInEvents<T>(
         topicKey: PublicKey,
-        processor: (event: Event<IdlEvent, Record<string, any>>) => Promise<T>
+        processor: (event: Event<IdlEvent, Record<string, any>>) => Promise<T>,
+        abortSignal?: AbortSignal
     ): Promise<T> {
         return this.findInSignatures<T>(topicKey, async (signatures: ConfirmedSignatureInfo[]) => {
             for(let data of signatures) {
                 for(let event of await this.getEvents(data.signature)) {
+                    if(abortSignal!=null) abortSignal.throwIfAborted();
                     const result: T = await processor(event);
                     if(result!=null) return result;
                 }
             }
-        });
+        }, abortSignal);
     }
 
 }
