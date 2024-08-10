@@ -45,6 +45,12 @@ export class SolanaBtcStoredHeader implements BtcStoredHeader<SolanaBtcHeader> {
         return this.prevBlockTimestamps;
     }
 
+    /**
+     * Computes prevBlockTimestamps for a next block, shifting the old block timestamps to the left & appending
+     *  this block's timestamp to the end
+     *
+     * @private
+     */
     private computeNextBlockTimestamps(): number[] {
         const prevBlockTimestamps = [...this.prevBlockTimestamps];
         for(let i=1;i<10;i++) {
@@ -54,12 +60,24 @@ export class SolanaBtcStoredHeader implements BtcStoredHeader<SolanaBtcHeader> {
         return prevBlockTimestamps;
     }
 
+    /**
+     * Computes total chain work after a new header with "nbits" is added to the chain
+     *
+     * @param nbits
+     * @private
+     */
     private computeNextChainWork(nbits: number): number[] {
         const chainWork = [...this.chainWork];
         StatePredictorUtils.addInPlace(chainWork, [...StatePredictorUtils.getDifficulty(nbits)]);
         return chainWork;
     }
 
+    /**
+     * Computes lastDiffAdjustment, this changes only once every DIFF_ADJUSTMENT_PERIOD blocks
+     *
+     * @param headerTimestamp
+     * @private
+     */
     private computeNextLastDiffAdjustment(headerTimestamp: number) {
         const blockheight = this.blockheight+1;
 
