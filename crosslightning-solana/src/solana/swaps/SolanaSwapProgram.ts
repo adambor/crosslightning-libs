@@ -33,9 +33,9 @@ import {
 } from "@solana/spl-token";
 import {SolanaFeeEstimator} from "../../utils/SolanaFeeEstimator";
 import {SwapProgram} from "./programTypes";
-import {SolanaBase, SolanaRetryPolicy, SolanaTx} from "../SolanaBase";
+import {SolanaBase, SolanaRetryPolicy, SolanaTx} from "../base/SolanaBase";
 import {getLogger} from "./Utils";
-import {SolanaProgramBase} from "../SolanaProgramBase";
+import {SolanaProgramBase} from "../program/SolanaProgramBase";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
@@ -214,8 +214,10 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
      * Returns transactions for closing the specific data account
      *
      * @param publicKey
+     * @param txs
+     * @param feeRate
      */
-    async txsCloseDataAccount(publicKey: PublicKey): Promise<SolanaTx[]> {
+    async addTxsCloseDataAccount(publicKey: PublicKey, txs: SolanaTx[], feeRate?: string): Promise<SolanaTx[]> {
         const eraseTx = await this.program.methods
             .closeData()
             .accounts({
@@ -226,7 +228,7 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
 
         eraseTx.feePayer = this.provider.publicKey;
 
-        const feeRate = await this.getFeeRate([this.provider.publicKey, publicKey]);
+        if(feeRate==null) feeRate = await this.getFeeRate([this.provider.publicKey, publicKey]);
         SolanaSwapProgram.applyFeeRate(eraseTx, SolanaSwapProgram.CUCosts.DATA_REMOVE, feeRate);
         SolanaSwapProgram.applyFeeRateEnd(eraseTx, SolanaSwapProgram.CUCosts.DATA_REMOVE, feeRate);
 
@@ -255,7 +257,7 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
 
         let txns: SolanaTx[] = [];
         for(let publicKey of closePublicKeys) {
-            txns = txns.concat(await this.txsCloseDataAccount(publicKey));
+            await this.addTxsCloseDataAccount(publicKey, txns);
         }
 
         const result = await this.sendAndConfirm(txns, true, null, true);
@@ -387,6 +389,13 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
     private async getInitInstruction(swapData: SolanaSwapData, timeout: BN): Promise<TransactionInstruction> {
         const claimerAta = getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
         const paymentHash = Buffer.from(swapData.paymentHash, "hex");
+        const accounts = {
+            claimer: swapData.claimer,
+            offerer: swapData.offerer,
+            escrowState: this.SwapEscrowState(paymentHash),
+            mint: swapData.token,
+            systemProgram: SystemProgram.programId
+        };
 
         if(swapData.payIn) {
             const ata = getAssociatedTokenAddressSync(swapData.token, swapData.offerer);
@@ -398,16 +407,11 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
                     timeout,
                 )
                 .accounts({
-                    offerer: swapData.offerer,
-                    claimer: swapData.claimer,
-                    offererAta: ata,
-                    escrowState: this.SwapEscrowState(paymentHash),
+                    ...accounts,
                     vault: this.SwapVault(swapData.token),
                     vaultAuthority: this.SwapVaultAuthority,
-                    mint: swapData.token,
-                    systemProgram: SystemProgram.programId,
                     tokenProgram: TOKEN_PROGRAM_ID,
-
+                    offererAta: ata,
                     claimerAta: swapData.payOut ? claimerAta : null,
                     claimerUserData: !swapData.payOut ? this.SwapUserVault(swapData.claimer, swapData.token) : null,
                 })
@@ -422,13 +426,8 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
                     new BN(timeout)
                 )
                 .accounts({
-                    claimer: swapData.claimer,
-                    offerer: swapData.offerer,
+                    ...accounts,
                     offererUserData: this.SwapUserVault(swapData.offerer, swapData.token),
-                    escrowState: this.SwapEscrowState(paymentHash),
-                    mint: swapData.token,
-                    systemProgram: SystemProgram.programId,
-
                     claimerUserData: !swapData.payOut ? this.SwapUserVault(swapData.claimer, swapData.token) : null,
                     claimerAta: swapData.payOut ? claimerAta : null,
                 })
@@ -901,30 +900,36 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
     }
 
     /**
-     * Checks if ATA exists, if not, throws an error (if initAta=false)or adds ata init IX to the
-     *  IX array (if initAta=true)
+     * Checks if ATA exists, if not, throws an error (if initAta=false)
      *
      * @param swapData
      * @param initAta
-     * @param instructions
      * @private
-     * @returns {Promise<number>} a compute budget required for the added instructions
+     * @returns {Promise<boolean>} whether an ATA should be initiated
      */
-    private async checkAtaExistsAndInit(
-        swapData: SolanaSwapData,
-        initAta: boolean,
-        instructions: TransactionInstruction[]
-    ): Promise<number> {
-        if(!swapData.isPayOut()) return 0;
+    private async checkAtaExists(swapData: SolanaSwapData, initAta: boolean): Promise<boolean> {
+        if(!swapData.isPayOut()) return false;
 
         const account = await tryWithRetries<Account>(
             () => this.getATAOrNull(swapData.claimerAta),
             this.retryPolicy
         );
-        if(account!=null) return 0;
+        if(account!=null) return false;
 
         if(!initAta) throw new SwapDataVerificationError("ATA not initialized");
 
+        return true;
+    }
+
+    /**
+     * Adds instructions for initiating the required claimer ATA to the provided instructions array
+     *
+     * @param swapData
+     * @param instructions
+     * @private
+     * @returns {Promise<number>} a compute budget required for the added instructions
+     */
+    private async addIxsInitAta(swapData: SolanaSwapData, instructions: TransactionInstruction[]): Promise<number> {
         const generatedAtaAddress = getAssociatedTokenAddressSync(swapData.token, swapData.claimer);
         if(!generatedAtaAddress.equals(swapData.claimerAta)) {
             throw new SwapDataVerificationError("Invalid claimer token account address");
@@ -942,6 +947,73 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
         return SolanaSwapProgram.BaseCUCosts.ATA_INIT;
     }
 
+    private async addTxsInitAta(swapData: SolanaSwapData, feeRate: string, txs: SolanaTx[]): Promise<void> {
+        const ataInitInstructions: TransactionInstruction[] = [];
+        const ataInitComputeBudget: number = await this.addIxsInitAta(swapData, ataInitInstructions);
+        txs.push(this.createTransaction(ataInitInstructions, ataInitComputeBudget, feeRate));
+    }
+
+    /**
+     * Checks if ATA exists, if not, throws an error (if initAta=false) or adds ata init IX to the
+     *  IX array (if initAta=true)
+     *
+     * @param swapData
+     * @param initAta
+     * @param instructions
+     * @private
+     * @returns {Promise<number>} a compute budget required for the added instructions
+     */
+    private async checkAtaAndIxsInitAta(
+        swapData: SolanaSwapData,
+        initAta: boolean,
+        instructions: TransactionInstruction[]
+    ): Promise<number> {
+        const shouldInitAta = await this.checkAtaExists(swapData, initAta);
+        if(!shouldInitAta) return 0;
+        return await this.addIxsInitAta(swapData, instructions);
+    }
+
+    /**
+     * Adds instructions for unwrapping WSOL to SOL to the provided instructions array
+     *
+     * @param swapData
+     * @param instructions
+     * @private
+     * @returns {number} a compute budget required for the added instructions
+     */
+    private addIxsUnwrap(swapData: SolanaSwapData, instructions: TransactionInstruction[]): number {
+        instructions.push(
+            createCloseAccountInstruction(swapData.claimerAta, this.provider.publicKey, this.provider.publicKey)
+        );
+        return SolanaSwapProgram.BaseCUCosts.ATA_CLOSE;
+    }
+
+    /**
+     * Adds transactions for unwrapping WSOL to SOL to the provided txs array
+     *
+     * @param swapData
+     * @param feeRate
+     * @param txs
+     * @private
+     */
+    private addTxsUnwrap(swapData: SolanaSwapData, feeRate: string, txs: SolanaTx[]): void {
+        const instructions: TransactionInstruction[] = [];
+        const computeBudget = this.addIxsUnwrap(swapData, instructions);
+        txs.push(this.createTransaction(instructions, computeBudget, feeRate));
+    }
+
+    /**
+     * Checks whether we should unwrap the WSOL to SOL when claiming the swap
+     *
+     * @param swapData
+     * @private
+     */
+    private checkShouldUnwrap(swapData: SolanaSwapData): boolean {
+        return swapData.isPayOut() &&
+            swapData.token.equals(this.WSOL_ADDRESS) &&
+            swapData.claimer.equals(this.provider.publicKey);
+    }
+
     /**
      * Checks if the swap output should be unwrapped and if yes adds the unwrap instruction to the IX array
      *
@@ -950,50 +1022,57 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
      * @private
      * @returns {number} compute budget required for the added instructions
      */
-    private checkAndUnwrap(swapData: SolanaSwapData, instructions: TransactionInstruction[]): number {
-        const unwrap = swapData.isPayOut() && swapData.token.equals(this.WSOL_ADDRESS);
-        if(!unwrap) return 0;
-
-        instructions.push(
-            createCloseAccountInstruction(swapData.claimerAta, this.provider.publicKey, this.provider.publicKey)
-        );
-        return SolanaSwapProgram.BaseCUCosts.ATA_CLOSE;
+    private checkAndAddIxsUnwrap(swapData: SolanaSwapData, instructions: TransactionInstruction[]): number {
+        if(!this.checkShouldUnwrap(swapData)) return 0;
+        return this.addIxsUnwrap(swapData, instructions);
     }
 
-    private async ixClaimWithSecret(swapData: SolanaSwapData, secret: string) {
+    private addIxsClaim(swapData: SolanaSwapData, secret: string, instructions: TransactionInstruction[]);
+    private addIxsClaim(swapData: SolanaSwapData, dataKey: PublicKey, instructions: TransactionInstruction[]);
+
+    private async addIxsClaim(
+        swapData: SolanaSwapData,
+        secretOrDataKey: string | PublicKey,
+        instructions: TransactionInstruction[]
+    ): Promise<number> {
+        const isDataKey = typeof(secretOrDataKey)!=="string";
+
+        const accounts = {
+            signer: this.provider.publicKey,
+            initializer: swapData.isPayIn() ? swapData.offerer : swapData.claimer,
+            escrowState: this.SwapEscrowState(Buffer.from(swapData.paymentHash, "hex")),
+            ixSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
+            data: isDataKey ? secretOrDataKey : null,
+        };
+        let secretBuffer = isDataKey ?
+            Buffer.alloc(0) :
+            Buffer.from(secretOrDataKey, "hex");
+
         if(swapData.isPayOut()) {
-            return {
-                instruction: await this.program.methods
-                    .claimerClaimPayOut(Buffer.from(secret, "hex"))
+            instructions.push(
+                await this.program.methods
+                    .claimerClaimPayOut(secretBuffer)
                     .accounts({
-                        signer: this.provider.publicKey,
-                        initializer: swapData.isPayIn() ? swapData.offerer : swapData.claimer,
-                        escrowState: this.SwapEscrowState(Buffer.from(swapData.paymentHash, "hex")),
-                        ixSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
+                        ...accounts,
                         claimerAta: swapData.claimerAta,
                         vault: this.SwapVault(swapData.token),
                         vaultAuthority: this.SwapVaultAuthority,
-                        tokenProgram: TOKEN_PROGRAM_ID,
-                        data: null
+                        tokenProgram: TOKEN_PROGRAM_ID
                     })
-                    .instruction(),
-                computeBudget: SolanaSwapProgram.CUCosts.CLAIM_PAY_OUT
-            };
+                    .instruction()
+            );
+            return SolanaSwapProgram.CUCosts[isDataKey ? "CLAIM_ONCHAIN_PAY_OUT" : "CLAIM_PAY_OUT"];
         } else {
-            return {
-                instructions: await this.program.methods
-                    .claimerClaim(Buffer.from(secret, "hex"))
+            instructions.push(
+                await this.program.methods
+                    .claimerClaim(secretBuffer)
                     .accounts({
-                        signer: this.provider.publicKey,
-                        initializer: swapData.isPayIn() ? swapData.offerer : swapData.claimer,
-                        escrowState: this.SwapEscrowState(Buffer.from(swapData.paymentHash, "hex")),
-                        ixSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
-                        claimerUserData: this.SwapUserVault(swapData.claimer, swapData.token),
-                        data: null
+                        ...accounts,
+                        claimerUserData: this.SwapUserVault(swapData.claimer, swapData.token)
                     })
-                    .instruction(),
-                computeBudget: SolanaSwapProgram.CUCosts.CLAIM
-            };
+                    .instruction()
+            );
+            return SolanaSwapProgram.CUCosts[isDataKey ? "CLAIM_ONCHAIN" : "CLAIM"];
         }
     }
 
@@ -1008,24 +1087,11 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
         const instructions: TransactionInstruction[] = [];
         let computeBudget: number = 0;
 
-        if(!skipAtaCheck) computeBudget += await this.checkAtaExistsAndInit(swapData, initAta, instructions);
+        if(!skipAtaCheck) computeBudget += await this.checkAtaAndIxsInitAta(swapData, initAta, instructions);
+        computeBudget += await this.addIxsClaim(swapData, secret, instructions);
+        computeBudget += this.checkAndAddIxsUnwrap(swapData, instructions);
 
-        const {instruction, computeBudget: claimComputeBudget} = await this.ixClaimWithSecret(swapData, secret);
-        computeBudget += claimComputeBudget;
-        instructions.push(instruction);
-
-        computeBudget += this.checkAndUnwrap(swapData, instructions);
-
-        const tx = new Transaction();
-        tx.feePayer = this.provider.publicKey;
-        SolanaSwapProgram.applyFeeRate(tx, computeBudget, feeRate);
-        instructions.forEach(ix => tx.add(ix));
-        SolanaSwapProgram.applyFeeRateEnd(tx, computeBudget, feeRate);
-
-        return [{
-            tx: tx,
-            signers: []
-        }];
+        return [this.createTransaction(instructions, computeBudget, feeRate)];
     }
 
     async claimWithTxData(
@@ -1045,11 +1111,9 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
         };
 
         const txs = await this.txsClaimWithTxData(swapData, blockheight, tx, vout, commitedHeader, synchronizer, initAta, data, feeRate);
-
         if(txs===null) throw new Error("Btc relay not synchronized to required blockheight!");
 
         const [signature] = await this.sendAndConfirm(txs, waitForConfirmation, abortSignal);
-
         await this.removeDataAccount(data.storageAcc);
 
         return signature;
@@ -1100,7 +1164,83 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
         return resp.computedHeaderMap[blockheight];
     }
 
-    private async writeTransactionData(
+    /**
+     * Adds instructions for writting data to a specific account
+     *
+     * @param accountKey
+     * @param writeData
+     * @param offset
+     * @param sizeLimit
+     * @param ixs
+     * @private
+     * @returns {number} bytes written to the data account
+     */
+    private async addIxsWriteData(
+        accountKey: PublicKey,
+        writeData: Buffer,
+        offset: number,
+        sizeLimit: number,
+        ixs: TransactionInstruction[]
+    ): Promise<number> {
+        const writeLen = Math.min(writeData.length-offset, sizeLimit);
+
+        ixs.push(
+            await this.program.methods
+                .writeData(offset, writeData.slice(offset, offset+writeLen))
+                .accounts({
+                    signer: this.provider.publicKey,
+                    data: accountKey
+                })
+                .instruction()
+        );
+
+        logger.debug("addIxsWriteData(): Write partial tx data ("+offset+" .. "+(offset+writeLen)+")/"+writeData.length+
+            " key: "+accountKey.toBase58());
+
+        return writeLen;
+    }
+
+    /**
+     * Adds instructions for initialization of data account
+     *
+     * @param accountKey
+     * @param dataLength
+     * @param ixs
+     * @private
+     */
+    private async addIxsInitData(
+        accountKey: PublicKey,
+        dataLength: number,
+        ixs: TransactionInstruction[]
+    ): Promise<void> {
+        const accountSize = 32+dataLength;
+        const lamportsDeposit = await tryWithRetries(
+            () => this.provider.connection.getMinimumBalanceForRentExemption(accountSize),
+            this.retryPolicy
+        );
+
+        ixs.push(
+            SystemProgram.createAccount({
+                fromPubkey: this.provider.publicKey,
+                newAccountPubkey: accountKey,
+                lamports: lamportsDeposit,
+                space: accountSize,
+                programId: this.program.programId
+            })
+        );
+
+        ixs.push(
+            await this.program.methods
+                .initData()
+                .accounts({
+                    signer: this.provider.publicKey,
+                    data: accountKey
+                })
+                .instruction()
+        );
+    }
+
+    private async addTxsWriteData(
         reversedTxId: Buffer,
         writeData: Buffer,
         txs: SolanaTx[],
@@ -1121,88 +1261,73 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
 
         let pointer = 0;
         if(fetchedDataAccount==null) {
-            const dataSize = writeData.length;
-            const accountSize = 32+dataSize;
-            const lamports = await tryWithRetries(
-                () => this.provider.connection.getMinimumBalanceForRentExemption(accountSize),
-                this.retryPolicy
-            );
+            const instructions: TransactionInstruction[] = [];
+            await this.addIxsInitData(txDataKey.publicKey, writeData.length, instructions);
+            pointer += await this.addIxsWriteData(txDataKey.publicKey, writeData, pointer, 420, instructions);
 
-            const accIx = SystemProgram.createAccount({
-                fromPubkey: this.provider.publicKey,
-                newAccountPubkey: txDataKey.publicKey,
-                lamports,
-                space: accountSize,
-                programId: this.program.programId
-            });
-
-            const initIx = await this.program.methods
-                .initData()
-                .accounts({
-                    signer: this.provider.publicKey,
-                    data: txDataKey.publicKey
-                })
-                .instruction();
-
-            const writeLen = Math.min(writeData.length-pointer, 420);
-
-            const writeIx = await this.program.methods
-                .writeData(pointer, writeData.slice(pointer, pointer+writeLen))
-                .accounts({
-                    signer: this.provider.publicKey,
-                    data: txDataKey.publicKey
-                })
-                .instruction();
-
-            console.log("[To BTC: Solana.Claim] Write partial tx data ("+pointer+" .. "+(pointer+writeLen)+")/"+writeData.length);
-
-            pointer += writeLen;
-
-            const initTx = new Transaction();
-            initTx.feePayer = this.provider.publicKey;
-
-            SolanaSwapProgram.applyFeeRate(initTx, SolanaSwapProgram.CUCosts.DATA_CREATE_AND_WRITE, feeRate);
-            initTx.add(accIx);
-            initTx.add(initIx);
-            initTx.add(writeIx);
-            SolanaSwapProgram.applyFeeRateEnd(initTx, SolanaSwapProgram.CUCosts.DATA_CREATE_AND_WRITE, feeRate);
-
+            txs.push(this.createTransaction(
+                instructions,
+                SolanaSwapProgram.CUCosts.DATA_CREATE_AND_WRITE,
+                feeRate, [txDataKey]
+            ));
             await this.saveDataAccount(txDataKey.publicKey);
-            txs.push({
-                tx: initTx,
-                signers: [txDataKey]
-            });
         }
 
         while(pointer<writeData.length) {
-            const writeLen = Math.min(writeData.length-pointer, 950);
+            const instructions: TransactionInstruction[] = [];
+            pointer += await this.addIxsWriteData(txDataKey.publicKey, writeData, pointer, 950, instructions);
 
-            const writeTx = new Transaction();
-            writeTx.feePayer = this.provider.publicKey;
-
-            const writeIx = await this.program.methods
-                .writeData(pointer, writeData.slice(pointer, pointer+writeLen))
-                .accounts({
-                    signer: this.provider.publicKey,
-                    data: txDataKey.publicKey
-                })
-                .instruction();
-
-            SolanaSwapProgram.applyFeeRate(writeTx, SolanaSwapProgram.CUCosts.DATA_WRITE, feeRate);
-            writeTx.add(writeIx);
-            SolanaSwapProgram.applyFeeRateEnd(writeTx, SolanaSwapProgram.CUCosts.DATA_WRITE, feeRate);
-
-            txs.push({
-                tx: writeTx,
-                signers: []
-            });
-
-            console.log("[To BTC: Solana.Claim] Write partial tx data ("+pointer+" .. "+(pointer+writeLen)+")/"+writeData.length);
-
-            pointer += writeLen;
+            txs.push(this.createTransaction(
+                instructions,
+                SolanaSwapProgram.CUCosts.DATA_WRITE,
+                feeRate, [txDataKey]
+            ));
         }
 
         return txDataKey.publicKey;
+    }
+
+    private addTxsWriteTransactionData(
+        tx: {hex: string, txid: string},
+        vout: number,
+        feeRate: string,
+        txs: SolanaTx[]
+    ): Promise<PublicKey> {
+        const reversedTxId = Buffer.from(tx.txid, "hex").reverse();
+        const writeData: Buffer = Buffer.concat([
+            Buffer.from(new BN(vout).toArray("le", 4)),
+            Buffer.from(tx.hex, "hex")
+        ]);
+        logger.debug("addTxsWriteTransactionData(): writing transaction data: ", writeData.toString("hex"));
+
+        return this.addTxsWriteData(reversedTxId, writeData, txs, feeRate);
+    }
+
+    private async addTxsVerifyAndClaim(
+        swapData: SolanaSwapData,
+        storeDataKey: PublicKey,
+        merkleProof: {reversedTxId: Buffer, pos: number, merkle: Buffer[]},
+        commitedHeader: SolanaBtcStoredHeader,
+        feeRate: string,
+        txs: SolanaTx[]
+    ): Promise<void> {
+        const solanaTx = new Transaction();
+        solanaTx.feePayer = this.provider.publicKey;
+
+        //Verify instruction always needs to be the first one
+        solanaTx.add(await this.btcRelay.createVerifyIx(merkleProof.reversedTxId, swapData.confirmations, merkleProof.pos, merkleProof.merkle, commitedHeader));
+        SolanaSwapProgram.applyFeeRate(solanaTx, null, feeRate);
+
+        //Claim instruction can be located after fee rate is applied
+        const claimInstructions: TransactionInstruction[] = [];
+        await this.addIxsClaim(swapData, storeDataKey, claimInstructions);
+        claimInstructions.forEach(ix => solanaTx.add(ix));
+        SolanaSwapProgram.applyFeeRateEnd(solanaTx, null, feeRate);
+
+        txs.push({
+            tx: solanaTx,
+            signers: []
+        });
     }
 
     async txsClaimWithTxData(
@@ -1217,113 +1342,26 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
         feeRate?: string
     ): Promise<SolanaTx[] | null> {
         if(feeRate==null) feeRate = await this.getClaimFeeRate(swapData);
-
-        const instructions: TransactionInstruction[] = [];
-        let computeBudget: number = 0;
-        computeBudget += await this.checkAtaExistsAndInit(swapData, initAta, instructions);
+        const shouldInitAta = await this.checkAtaExists(swapData, initAta);
 
         const merkleProof = await this.btcRelay.bitcoinRpc.getMerkleProof(tx.txid, tx.blockhash);
-        console.log("[To BTC: Solana.Claim] Merkle proof computed: ", merkleProof);
+        logger.debug("txsClaimWithTxData(): merkle proof computed: ", merkleProof);
 
         const txs: SolanaTx[] = [];
-        await this.getCommitedHeaderAndSynchronize(blockheight, swapData.getConfirmations(), tx.blockhash, txs, synchronizer);
+        if(commitedHeader==null) commitedHeader = await this.getCommitedHeaderAndSynchronize(
+            blockheight, swapData.getConfirmations(),
+            tx.blockhash, txs, synchronizer
+        );
 
-        const writeData: Buffer = Buffer.concat([
-            Buffer.from(new BN(vout).toArray("le", 4)),
-            Buffer.from(tx.hex, "hex")
-        ]);
-        console.log("[To BTC: Solana.Claim] Writing transaction data: ", writeData.toString("hex"));
-
-        const storeDataKey = await this.writeTransactionData(merkleProof.reversedTxId, writeData, txs, feeRate);
+        const storeDataKey = await this.addTxsWriteTransactionData(tx, vout, feeRate, txs);
         if(storageAccHolder!=null) storageAccHolder.storageAcc = storeDataKey;
+        logger.debug("txsClaimWithTxData(): tx data written successfully, key: "+storeDataKey.toBase58());
 
-        console.log("[To BTC: Solana.Claim] Tx data written");
-
-        const verifyIx = await this.btcRelay.createVerifyIx(merkleProof.reversedTxId, swapData.confirmations, merkleProof.pos, merkleProof.merkle, commitedHeader);
-        let claimIx: TransactionInstruction;
-        let computeBudget: number;
-        if(swapData.isPayOut()) {
-            computeBudget = SolanaSwapProgram.CUCosts.CLAIM_ONCHAIN_PAY_OUT;
-            claimIx = await this.program.methods
-                .claimerClaimPayOut(Buffer.alloc(0))
-                .accounts({
-                    signer: this.provider.publicKey,
-                    initializer: swapData.isPayIn() ? swapData.offerer : swapData.claimer,
-                    escrowState: this.SwapEscrowState(Buffer.from(swapData.paymentHash, "hex")),
-                    ixSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
-                    claimerAta: swapData.claimerAta,
-                    vault: this.SwapVault(swapData.token),
-                    vaultAuthority: this.SwapVaultAuthority,
-                    tokenProgram: TOKEN_PROGRAM_ID,
-                    data: txDataKey.publicKey
-                })
-                .instruction();
-        } else {
-            computeBudget = SolanaSwapProgram.CUCosts.CLAIM_ONCHAIN;
-            claimIx = await this.program.methods
-                .claimerClaim(Buffer.alloc(0))
-                .accounts({
-                    signer: this.provider.publicKey,
-                    initializer: swapData.isPayIn() ? swapData.offerer : swapData.claimer,
-                    escrowState: this.SwapEscrowState(Buffer.from(swapData.paymentHash, "hex")),
-                    ixSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
-                    claimerUserData: this.SwapUserVault(swapData.claimer, swapData.token),
-                    data: txDataKey.publicKey
-                })
-                .instruction();
-        }
-
-        if(ataInitIx!=null) {
-            const ataInitTx = new Transaction();
-            ataInitTx.feePayer = this.provider.publicKey;
-
-            SolanaSwapProgram.applyFeeRate(ataInitTx, SolanaBase.BaseCUCosts.ATA_INIT, feeRate);
-            ataInitTx.add(ataInitIx);
-            SolanaSwapProgram.applyFeeRateEnd(ataInitTx, SolanaBase.BaseCUCosts.ATA_INIT, feeRate);
-
-            txs.push({
-                tx: ataInitTx,
-                signers: []
-            });
-        }
-
-        const solanaTx = new Transaction();
-        solanaTx.feePayer = this.provider.publicKey;
-
-        solanaTx.add(verifyIx);
-        SolanaSwapProgram.applyFeeRate(solanaTx, null, feeRate);
-        solanaTx.add(claimIx);
-        SolanaSwapProgram.applyFeeRateEnd(solanaTx, null, feeRate);
-
-        // if(Utils.getTxSize(solanaTx, this.provider.publicKey)>1232) {
-        //     //TX too large
-        //     solanaTx.instructions.pop();
-        // }
-
-        txs.push({
-            tx: solanaTx,
-            signers: []
-        });
-
-        if(swapData.isPayOut()) {
-            if (swapData.token.equals(this.WSOL_ADDRESS) && swapData.claimer.equals(this.provider.publicKey)) {
-                //Move to normal SOL
-                const tx = new Transaction();
-                tx.feePayer = this.provider.publicKey;
-                SolanaSwapProgram.applyFeeRate(tx, SolanaBase.BaseCUCosts.ATA_CLOSE, feeRate);
-                tx.add(
-                    createCloseAccountInstruction(swapData.claimerAta, this.provider.publicKey, this.provider.publicKey)
-                );
-                SolanaSwapProgram.applyFeeRateEnd(tx, SolanaBase.BaseCUCosts.ATA_CLOSE, feeRate);
-                txs.push({
-                    tx,
-                    signers: []
-                });
-            }
-        }
+        if(shouldInitAta) await this.addTxsInitAta(swapData, feeRate, txs);
+        await this.addTxsVerifyAndClaim(swapData, storeDataKey, merkleProof, commitedHeader, feeRate, txs);
+        if(this.checkShouldUnwrap(swapData)) this.addTxsUnwrap(swapData, feeRate, txs);
 
         return txs;
-
     }
 
     async refund(swapData: SolanaSwapData, check?: boolean, initAta?: boolean, waitForConfirmation?: boolean, abortSignal?: AbortSignal, feeRate?: string): Promise<string> {
