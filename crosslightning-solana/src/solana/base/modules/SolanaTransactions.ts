@@ -1,13 +1,14 @@
 import {
     Commitment, ComputeBudgetInstruction,
-    ComputeBudgetProgram, Keypair,
-    SendOptions, Signer, Transaction,
+    ComputeBudgetProgram, Finality, Keypair, RpcResponseAndContext,
+    SendOptions, SignatureResult, Signer, Transaction,
     TransactionExpiredBlockheightExceededError, TransactionInstruction
 } from "@solana/web3.js";
 import {tryWithRetries} from "../../../utils/RetryUtils";
 import {SolanaModule} from "../SolanaModule";
 import * as bs58 from "bs58";
 import {SolanaFees} from "./SolanaFees";
+import {sign} from "tweetnacl";
 
 export type SolanaTx = {tx: Transaction, signers: Signer[]};
 
@@ -16,85 +17,7 @@ export class SolanaTransactions extends SolanaModule {
     private cbkBeforeTxSigned: (tx: SolanaTx) => Promise<void>;
     private cbkSendTransaction: (tx: Buffer, options?: SendOptions) => Promise<string>;
 
-    ///////////////////
-    //// Transactions
-    public confirmTransaction(rawTx: Buffer, signature: string, blockhash: string, lastValidBlockHeight: number, abortSignal?: AbortSignal, commitment?: Commitment) {
-        return new Promise<void>((resolve, reject) => {
-            if(abortSignal!=null && abortSignal.aborted) {
-                reject("Aborted");
-                return;
-            }
-
-            const abortController = new AbortController();
-
-            const intervalWatchdog = setInterval(() => {
-                this.provider.connection.getSignatureStatus(signature).then(status => {
-                    if(status!=null && status.value!=null && status.value.confirmationStatus===commitment) {
-                        console.log("SolanaSwapProgram: confirmTransaction(): Confirmed from watchdog!");
-                        if(status.value.err!=null) {
-                            reject(new Error("Transaction reverted!"));
-                        } else {
-                            resolve();
-                        }
-                        abortController.abort();
-                    }
-                }).catch(e => console.error(e));
-                this.sendRawTransaction(rawTx, {skipPreflight: true}).then(result => {
-                    console.log("SolanaSwapProgram: resendTransaction(): ", result);
-                }).catch(e => console.error("SolanaSwapProgram: resendTransaction(): ", e));
-            }, this.retryPolicy?.transactionResendInterval || 3000);
-            abortController.signal.addEventListener("abort", () => clearInterval(intervalWatchdog));
-
-            this.provider.connection.confirmTransaction({
-                signature: signature,
-                blockhash: blockhash,
-                lastValidBlockHeight: lastValidBlockHeight,
-                abortSignal: abortController.signal
-            }, commitment).then((result) => {
-                console.log("SolanaSwapProgram: confirmTransaction(): Confirmed from ws!");
-                if(result.value.err!=null) {
-                    reject(new Error("Transaction reverted!"));
-                } else {
-                    resolve();
-                }
-                abortController.abort();
-            }).catch((err) => {
-                console.log("SolanaSwapProgram: confirmTransaction(): Rejected from ws!");
-                const wasAborted = abortController.signal.aborted;
-                abortController.abort();
-                if(!wasAborted) {
-                    //Check if it really isn't confirmed
-                    console.log("SolanaSwapProgram: confirmTransaction(): Running ultimate check!");
-                    tryWithRetries(() => this.provider.connection.getSignatureStatus(signature)).then(status => {
-                        if(status!=null && status.value!=null && status.value.confirmationStatus===commitment) {
-                            console.log("SolanaSwapProgram: confirmTransaction(): Confirmed on ultimate check!");
-                            if(status.value.err!=null) {
-                                reject(new Error("Transaction reverted!"));
-                            } else {
-                                resolve();
-                            }
-                            return;
-                        }
-                        if(err instanceof TransactionExpiredBlockheightExceededError || err.toString().startsWith("TransactionExpiredBlockheightExceededError")) {
-                            reject(new Error("Transaction expired before confirmation, please try again!"));
-                        } else {
-                            reject(err);
-                        }
-                    }).catch(e => reject(e));
-                    return;
-                }
-                reject(err);
-            });
-
-            if(abortSignal!=null) abortSignal.addEventListener("abort", () => {
-                abortController.abort();
-                reject("Aborted");
-            });
-        });
-
-    }
-
-    public async sendRawTransaction(data: Buffer, options?: SendOptions): Promise<string> {
+    private async sendRawTransaction(data: Buffer, options?: SendOptions): Promise<string> {
         let result: string = null;
         if(this.cbkSendTransaction!=null) result = await this.cbkSendTransaction(data, options);
         if(result==null) result = await this.solanaFeeEstimator.submitTx(data, options);
@@ -102,7 +25,93 @@ export class SolanaTransactions extends SolanaModule {
         return result;
     }
 
-    public async sendAndConfirm(txs: SolanaTx[], waitForConfirmation?: boolean, abortSignal?: AbortSignal, parallel?: boolean, onBeforePublish?: (txId: string, rawTx: string) => Promise<void>): Promise<string[]> {
+    private txConfirmationAndResendWatchdog(rawTx: Buffer, signature: string, finality?: Finality, abortSignal?: AbortSignal): Promise<void> {
+        return new Promise((resolve, reject) => {
+            let watchdogInterval: NodeJS.Timer;
+            watchdogInterval = setInterval(async () => {
+                const result = await this.sendRawTransaction(rawTx, {skipPreflight: true}).catch(
+                    e => console.error("SolanaSwapProgram: resendTransaction(): ", e)
+                );
+                console.log("SolanaSwapProgram: resendTransaction(): ", result)
+
+                const status = await this.getTxIdStatus(signature, finality).catch(
+                    e => console.error(e)
+                );
+                if(status==null || status==="pending" || status==="not_found") return;
+                if(status==="success") resolve();
+                if(status==="reverted") reject(new Error("Transaction reverted!"));
+                clearInterval(watchdogInterval);
+            }, this.retryPolicy?.transactionResendInterval || 3000);
+
+            if(abortSignal!=null) abortSignal.addEventListener("abort", () => {
+                clearInterval(watchdogInterval);
+                reject(abortSignal.reason);
+            });
+        })
+    }
+
+    private async txConfirmFromWebsocket(
+        signature: string,
+        blockhash: string,
+        lastValidBlockHeight: number,
+        finality?: Finality,
+        abortSignal?: AbortSignal
+    ): Promise<void> {
+        let result: RpcResponseAndContext<SignatureResult>;
+        try {
+            result = await this.provider.connection.confirmTransaction({
+                signature: signature,
+                blockhash: blockhash,
+                lastValidBlockHeight: lastValidBlockHeight,
+                abortSignal
+            }, finality);
+            console.log("SolanaSwapProgram: confirmTransaction(): Confirmed from ws!");
+        } catch (err) {
+            if(abortSignal!=null && abortSignal.aborted) throw err;
+            console.log("SolanaSwapProgram: confirmTransaction(): Running ultimate check!");
+            const status = await tryWithRetries(
+                () => this.getTxIdStatus(signature, finality)
+            );
+            if(status==="success") return;
+            if(status==="reverted") throw new Error("Transaction reverted!");
+            if(err instanceof TransactionExpiredBlockheightExceededError || err.toString().startsWith("TransactionExpiredBlockheightExceededError")) {
+                throw new Error("Transaction expired before confirmation, please try again!");
+            } else {
+                throw err;
+            }
+        }
+        if(result.value.err!=null) throw new Error("Transaction reverted!");
+    }
+
+    private async confirmTransaction(solanaTx: SolanaTx, abortSignal?: AbortSignal, finality?: Finality) {
+        const abortController = new AbortController();
+        if(abortSignal!=null) abortSignal.addEventListener("abort", () => {
+            abortController.abort();
+        });
+
+        const rawTx = solanaTx.tx.serialize();
+        const signature = bs58.encode(solanaTx.tx.signature);
+
+        try {
+            await Promise.race([
+                this.txConfirmationAndResendWatchdog(rawTx, signature, finality, abortController.signal),
+                this.txConfirmFromWebsocket(signature, solanaTx.tx.recentBlockhash, solanaTx.tx.lastValidBlockHeight, finality, abortController.signal)
+            ]);
+        } catch (e) {
+            abortController.abort(e);
+            throw e;
+        }
+        abortController.abort();
+    }
+
+    /**
+     * Prepares solana transactions, assigns recentBlockhash if needed, applies Phantom hotfix,
+     *  sets feePayer to ourselves, calls beforeTxSigned callback & signs transaction with provided signers array
+     *
+     * @param txs
+     * @private
+     */
+    private async prepareTransactions(txs: SolanaTx[]): Promise<void> {
         let latestBlockData: {blockhash: string, lastValidBlockHeight: number} = null;
 
         for(let tx of txs) {
@@ -112,18 +121,32 @@ export class SolanaTransactions extends SolanaModule {
                 tx.tx.lastValidBlockHeight = latestBlockData.lastValidBlockHeight;
             }
 
+            //This is a hotfix for Phantom adding compute unit price instruction on the first position & breaking
+            // required instructions order (e.g. btc relay verify needs to be 0th instruction in a tx)
             if(this.provider.signer==null && tx.tx.signatures.length===0) {
                 const foundIx = tx.tx.instructions.find(ix => ix.programId.equals(ComputeBudgetProgram.programId) && ComputeBudgetInstruction.decodeInstructionType(ix)==="SetComputeUnitPrice")
                 if(foundIx==null) tx.tx.instructions.splice(tx.tx.instructions.length-1, 0, ComputeBudgetProgram.setComputeUnitPrice({microLamports: 1}));
             }
+
             tx.tx.feePayer = this.provider.publicKey;
             if(this.cbkBeforeTxSigned!=null) await this.cbkBeforeTxSigned(tx);
             if(tx.signers!=null && tx.signers.length>0) for(let signer of tx.signers) tx.tx.sign(signer);
         }
+    }
 
+    private async sendSignedTransaction(solTx: SolanaTx, options?: SendOptions, onBeforePublish?: (txId: string, rawTx: string) => Promise<void>): Promise<string> {
+        console.log("Send TX: ", solTx);
+        if(onBeforePublish!=null) await onBeforePublish(bs58.encode(solTx.tx.signature), await this.serializeTx(solTx));
+        const serializedTx = solTx.tx.serialize();
+        const txResult = await tryWithRetries(() => this.sendRawTransaction(serializedTx, options), this.retryPolicy);
+        console.log("Send signed TX: ", txResult);
+        return txResult;
+    }
+
+    public async sendAndConfirm(txs: SolanaTx[], waitForConfirmation?: boolean, abortSignal?: AbortSignal, parallel?: boolean, onBeforePublish?: (txId: string, rawTx: string) => Promise<void>): Promise<string[]> {
+        await this.prepareTransactions(txs)
         const signedTxs = await this.provider.wallet.signAllTransactions(txs.map(e => e.tx));
-
-        console.trace("[SolanaSwapProgram]: sendAndConfirm");
+        signedTxs.forEach((tx, index) => txs[index].tx = tx);
 
         const options = {
             skipPreflight: true
@@ -131,70 +154,21 @@ export class SolanaTransactions extends SolanaModule {
 
         const signatures: string[] = [];
         if(parallel) {
-            const promises = [];
-            for(let i=0;i<signedTxs.length;i++) {
-                const tx = signedTxs[i];
-                const unsignedTx = txs[i];
-                console.log("Send TX: ", tx);
-                if(onBeforePublish!=null) await onBeforePublish(bs58.encode(tx.signature), await this.serializeTx({
-                    tx,
-                    signers: unsignedTx.signers
-                }));
-                const serializedTx = tx.serialize();
-                const txResult = await tryWithRetries(() => this.sendRawTransaction(serializedTx, options), this.retryPolicy);
-                console.log("Send signed TX: ", txResult);
-                if(waitForConfirmation) {
-                    promises.push(this.confirmTransaction(
-                        serializedTx,
-                        txResult,
-                        tx.recentBlockhash,
-                        unsignedTx.tx.lastValidBlockHeight || latestBlockData?.lastValidBlockHeight,
-                        abortSignal,
-                        "confirmed"
-                    ));
-                }
-                signatures.push(txResult);
+            const promises: Promise<void>[] = [];
+            for(let solTx of txs) {
+                const signature = await this.sendSignedTransaction(solTx, options, onBeforePublish);
+                if(waitForConfirmation) promises.push(this.confirmTransaction(solTx, abortSignal, "confirmed"));
+                signatures.push(signature);
             }
-            if(promises.length>0) {
-                await Promise.all(promises);
-            }
+            if(promises.length>0) await Promise.all(promises);
         } else {
-            let lastTx;
-            let lastUnsignedTx;
-            if(!waitForConfirmation) {
-                lastTx = signedTxs.pop();
-                lastUnsignedTx = txs.pop();
-            }
-            for(let i=0;i<signedTxs.length;i++) {
-                const tx = signedTxs[i];
-                const unsignedTx = txs[i];
-                console.log("Send TX: ", tx);
-                if(onBeforePublish!=null) await onBeforePublish(bs58.encode(tx.signature), await this.serializeTx({
-                    tx,
-                    signers: unsignedTx.signers
-                }));
-                const serializedTx = tx.serialize();
-                const txResult = await tryWithRetries(() => this.sendRawTransaction(serializedTx, options), this.retryPolicy);
-                console.log("Send signed TX: ", txResult);
-                await this.confirmTransaction(
-                    serializedTx,
-                    txResult,
-                    tx.recentBlockhash,
-                    unsignedTx.tx.lastValidBlockHeight || latestBlockData?.lastValidBlockHeight,
-                    abortSignal,
-                    "confirmed"
-                );
-                signatures.push(txResult);
-            }
-            if(lastTx!=null) {
-                console.log("Send TX: ", lastTx);
-                if(onBeforePublish!=null) await onBeforePublish(bs58.encode(lastTx.signature), await this.serializeTx({
-                    tx: lastTx,
-                    signers: lastUnsignedTx.signers
-                }));
-                const txResult = await tryWithRetries(() => this.sendRawTransaction(lastTx.serialize(), options), this.retryPolicy);
-                console.log("Send signed TX: ", txResult);
-                signatures.push(txResult);
+            for(let i=0;i<txs.length;i++) {
+                const solTx = txs[i];
+                const signature = await this.sendSignedTransaction(solTx, options, onBeforePublish);
+                const confirmPromise = this.confirmTransaction(solTx, abortSignal, "confirmed");
+                //Don't await the last promise when !waitForConfirmation
+                if(i<txs.length-1 || waitForConfirmation) await confirmPromise;
+                signatures.push(signature);
             }
         }
 
@@ -233,19 +207,16 @@ export class SolanaTransactions extends SolanaModule {
         });
         if(txReceipt==null) {
             const currentBlockheight = await this.provider.connection.getBlockHeight("processed");
-            if(currentBlockheight>parsedTx.tx.lastValidBlockHeight) {
-                return "not_found";
-            } else {
-                return "pending";
-            }
+            if(currentBlockheight>parsedTx.tx.lastValidBlockHeight) return "not_found";
+            return "pending";
         }
         if(txReceipt.meta.err) return "reverted";
         return "success";
     }
 
-    public async getTxIdStatus(txId: string): Promise<"pending" | "success" | "not_found" | "reverted"> {
+    public async getTxIdStatus(txId: string, finality?: Finality): Promise<"pending" | "success" | "not_found" | "reverted"> {
         const txReceipt = await this.provider.connection.getTransaction(txId, {
-            commitment: "confirmed",
+            commitment: finality || "confirmed",
             maxSupportedTransactionVersion: 0
         });
         if(txReceipt==null) return "not_found";
@@ -253,37 +224,11 @@ export class SolanaTransactions extends SolanaModule {
         return "success";
     }
 
-    public createTransaction(
-        instructions: TransactionInstruction[],
-        computeBudget: number,
-        feeRate?: string,
-        signers?: Signer[]
-    ): SolanaTx {
-        const tx = new Transaction();
-        tx.feePayer = this.provider.publicKey;
-
-        SolanaFees.applyFeeRate(tx, computeBudget, feeRate);
-        instructions.forEach(ix => tx.add(ix));
-        SolanaFees.applyFeeRateEnd(tx, computeBudget, feeRate);
-
-        return {
-            tx,
-            signers: signers==null ? [] : signers
-        };
-    }
-
-    public onBeforeTxReplace(callback: (oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>): void {
-    }
-    public offBeforeTxReplace(callback: (oldTx: string, oldTxId: string, newTx: string, newTxId: string) => Promise<void>): boolean {
-        return true;
-    }
-
     public onBeforeTxSigned(callback: (tx: SolanaTx) => Promise<void>): void {
-        console.trace("[SolanaSwapProgram]: onBeforeTxSigned");
         this.cbkBeforeTxSigned = callback;
     }
+
     public offBeforeTxSigned(callback: (tx: SolanaTx) => Promise<void>): boolean {
-        console.trace("[SolanaSwapProgram]: offBeforeTxSigned");
         this.cbkBeforeTxSigned = null;
         return true;
     }
@@ -291,6 +236,7 @@ export class SolanaTransactions extends SolanaModule {
     public onSendTransaction(callback: (tx: Buffer, options?: SendOptions) => Promise<string>): void {
         this.cbkSendTransaction = callback;
     }
+
     public offSendTransaction(callback: (tx: Buffer, options?: SendOptions) => Promise<string>): boolean {
         this.cbkSendTransaction = null;
         return true;

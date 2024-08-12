@@ -4,34 +4,6 @@ import {Message, ParsedMessage, PartiallyDecodedInstruction, PublicKey, Transact
 import * as programIdl from "./programIdl.json";
 import {SwapProgram} from "./programTypes";
 
-export type SolanaInitializeEvent = Event<SwapProgram["events"][0], Record<string, any>>;
-export type SolanaRefundEvent = Event<SwapProgram["events"][1], Record<string, any>>;
-export type SolanaClaimEvent = Event<SwapProgram["events"][2], Record<string, any>>;
-export type SolanaSwapEvent = Event<SwapProgram["events"][number], Record<string, any>>;
-
-type DecodedFieldOrNull<D, Defined> = D extends IdlField ? DecodeType<D["type"], Defined> : unknown;
-type ArgsTuple<A extends IdlField[], Defined> = {
-    [K in A[number]["name"]]: DecodedFieldOrNull<Extract<A[number], { name: K }>, Defined>
-};
-
-export type InitializeIxType = {
-    name: "offererInitialize",
-    accounts: {
-        [key in SwapProgram["instructions"][3]["accounts"][number]["name"]]: PublicKey
-    },
-    data: ArgsTuple<SwapProgram["instructions"][3]["args"], IdlTypes<SwapProgram>>
-};
-
-export type InitializePayInIxType = {
-    name: "offererInitializePayIn",
-    accounts: {
-        [key in SwapProgram["instructions"][2]["accounts"][number]["name"]]: PublicKey
-    },
-    data: ArgsTuple<SwapProgram["instructions"][2]["args"], IdlTypes<SwapProgram>>
-};
-
-export type IxWithAccounts = InitializeIxType | InitializePayInIxType;
-
 const coder = new BorshCoder(programIdl as any);
 const programPubKey = new PublicKey(programIdl.metadata.address);
 const nameMappedInstructions = {};

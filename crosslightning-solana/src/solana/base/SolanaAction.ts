@@ -1,24 +1,32 @@
 import {PublicKey, Signer, Transaction, TransactionInstruction} from "@solana/web3.js";
 import {SolanaTx} from "./modules/SolanaTransactions";
-import {AnchorProvider} from "@coral-xyz/anchor";
 import {SolanaFees} from "./modules/SolanaFees";
 import {SolanaBase} from "./SolanaBase";
 
 
 export class SolanaAction {
 
-    readonly computeBudget: number;
+    computeBudget: number;
     private readonly root: SolanaBase;
     private readonly instructions: TransactionInstruction[];
-    private readonly feeRate: string;
+    private feeRate: string;
     private readonly signers: Signer[];
+    private firstIxBeforeComputeBudget: boolean = false;
 
-    constructor(root: SolanaBase, instructions: TransactionInstruction[] | TransactionInstruction, computeBudget: number, feeRate?: string, signers?: Signer[]) {
+    constructor(
+        root: SolanaBase,
+        instructions: TransactionInstruction[] | TransactionInstruction = [],
+        computeBudget: number = 0,
+        feeRate?: string,
+        signers?: Signer[],
+        firstIxBeforeComputeBudget?: boolean
+    ) {
         this.root = root;
         this.instructions = Array.isArray(instructions) ? instructions : [instructions];
         this.computeBudget = computeBudget;
         this.feeRate = feeRate;
         this.signers = signers || [];
+        if(firstIxBeforeComputeBudget!=null) this.firstIxBeforeComputeBudget = firstIxBeforeComputeBudget;
     }
 
     private estimateFee(): Promise<string> {
@@ -31,25 +39,64 @@ export class SolanaAction {
         return this.root.Fees.getFeeRate(mutableAccounts);
     }
 
-    ixs(): TransactionInstruction[] {
+    public addIx(instruction: TransactionInstruction, computeBudget?: number, signers?: Signer[]) {
+        this.instructions.push(instruction);
+        if(this.computeBudget==null) {
+            this.computeBudget = computeBudget;
+        } else {
+            if(computeBudget!=null) this.computeBudget+=computeBudget;
+        }
+    }
+
+    public add(action: SolanaAction): this {
+        return this.addAction(action);
+    }
+
+    public addAction(action: SolanaAction, index: number = this.instructions.length): this {
+        if(action.firstIxBeforeComputeBudget) {
+            if(this.instructions.length>0)
+                throw new Error("Tried to add firstIxBeforeComputeBudget action to existing action with instructions");
+            this.firstIxBeforeComputeBudget = true;
+        }
+        if(this.firstIxBeforeComputeBudget && this.instructions.length>0 && index===0)
+            throw new Error("Tried adding to firstIxBeforeComputeBudget action on 0th index");
+        if(this.computeBudget==null && action.computeBudget!=null) this.computeBudget = action.computeBudget;
+        if(this.computeBudget!=null && action.computeBudget!=null) this.computeBudget += action.computeBudget;
+        this.instructions.splice(index, 0, ...action.instructions);
+        this.signers.push(...action.signers);
+        if(this.feeRate==null) this.feeRate = action.feeRate;
+        return this;
+    }
+
+    public ixs(): TransactionInstruction[] {
         return this.instructions;
     }
 
-    addIxs(instructions: TransactionInstruction[]): number {
+    public addToIxs(instructions: TransactionInstruction[]): number {
         this.instructions.forEach(ix => instructions.push(ix));
         return this.computeBudget || 0;
     }
 
-    async tx(feeRate?: string): Promise<SolanaTx> {
+    public async tx(feeRate?: string, block?: {blockhash: string, blockHeight: number}): Promise<SolanaTx> {
         const tx = new Transaction();
         tx.feePayer = this.root.provider.publicKey;
 
         if(feeRate==null) feeRate = this.feeRate;
         if(feeRate==null) feeRate = await this.estimateFee();
 
+        let instructions = this.instructions;
+        if(instructions.length>0 && this.firstIxBeforeComputeBudget) {
+            tx.add(this.instructions[0]);
+            instructions = this.instructions.slice(1);
+        }
         SolanaFees.applyFeeRate(tx, this.computeBudget, feeRate);
-        this.instructions.forEach(ix => tx.add(ix));
+        instructions.forEach(ix => tx.add(ix));
         SolanaFees.applyFeeRateEnd(tx, this.computeBudget, feeRate);
+
+        if(block!=null) {
+            tx.recentBlockhash = block.blockhash;
+            tx.lastValidBlockHeight = block.blockHeight + this.root.TX_SLOT_VALIDITY;
+        }
 
         return {
             tx,
@@ -57,15 +104,8 @@ export class SolanaAction {
         }
     }
 
-    async addTx(txs: SolanaTx[], feeRate?: string): Promise<void> {
-        txs.push(await this.tx(feeRate));
+    public async addToTxs(txs: SolanaTx[], feeRate?: string, block?: {blockhash: string, blockHeight: number}): Promise<void> {
+        txs.push(await this.tx(feeRate, block));
     }
-
-    // combine(action: SolanaAction): SolanaAction {
-    //     action.addIxs(this.instructions);
-    //     if(this.computeBudget==null && action.computeBudget!=null) this.computeBudget = action.computeBudget;
-    //     if(this.computeBudget!=null && action.computeBudget!=null) this.computeBudget += action.computeBudget;
-    //     return this;
-    // }
 
 }

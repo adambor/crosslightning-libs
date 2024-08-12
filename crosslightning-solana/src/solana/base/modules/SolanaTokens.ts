@@ -1,8 +1,8 @@
 import {SolanaModule} from "../SolanaModule";
-import {PublicKey, SystemProgram, Transaction} from "@solana/web3.js";
+import {PublicKey, SystemProgram, Transaction, TransactionInstruction} from "@solana/web3.js";
 import {
     Account, createAssociatedTokenAccountInstruction,
-    createCloseAccountInstruction, createTransferInstruction,
+    createCloseAccountInstruction, createSyncNativeInstruction, createTransferInstruction,
     getAccount, getAssociatedTokenAddress,
     getAssociatedTokenAddressSync,
     TokenAccountNotFoundError
@@ -11,6 +11,7 @@ import * as BN from "bn.js";
 import {tryWithRetries} from "../../../utils/RetryUtils";
 import {SolanaFees} from "./SolanaFees";
 import {SolanaTx} from "./SolanaTransactions";
+import {SolanaAction} from "../SolanaAction";
 
 export class SolanaTokens extends SolanaModule {
 
@@ -31,6 +32,14 @@ export class SolanaTokens extends SolanaModule {
             if(e instanceof TokenAccountNotFoundError) return null;
             throw e;
         });
+    }
+
+    public async ataExists(ata: PublicKey) {
+        const account = await tryWithRetries<Account>(
+            () => this.getATAOrNull(ata),
+            this.retryPolicy
+        );
+        return account!=null;
     }
 
     public getATARentExemptLamports(): Promise<BN> {
@@ -148,6 +157,48 @@ export class SolanaTokens extends SolanaModule {
             tx: tx,
             signers: []
         }];
+    }
+
+    public InitAta(publicKey: PublicKey, token: PublicKey, requiredAta?: PublicKey): SolanaAction {
+        const ata = getAssociatedTokenAddressSync(token, publicKey);
+        if(requiredAta!=null && !ata.equals(requiredAta)) return null;
+        return new SolanaAction(
+            this.root,
+            createAssociatedTokenAccountInstruction(
+                this.provider.publicKey,
+                ata,
+                publicKey,
+                token
+            ),
+            SolanaTokens.CUCosts.ATA_INIT
+        )
+    }
+
+    public Wrap(publicKey: PublicKey, amount: BN, initAta: boolean): SolanaAction {
+        const ata = getAssociatedTokenAddressSync(this.WSOL_ADDRESS, publicKey);
+        const action = new SolanaAction(this.root);
+        if(initAta) action.addIx(
+            createAssociatedTokenAccountInstruction(publicKey, ata, publicKey, this.WSOL_ADDRESS),
+            SolanaTokens.CUCosts.ATA_INIT
+        );
+        action.addIx(
+            SystemProgram.transfer({
+                fromPubkey: publicKey,
+                toPubkey: ata,
+                lamports: BigInt(amount.toString(10))
+            }),
+            SolanaTokens.CUCosts.WRAP_SOL
+        );
+        action.addIx(createSyncNativeInstruction(ata));
+        return action;
+    }
+
+    public Unwrap(publicKey: PublicKey) {
+        const ata = getAssociatedTokenAddressSync(this.WSOL_ADDRESS, publicKey);
+        return new SolanaAction(this.root,
+            createCloseAccountInstruction(ata, publicKey, publicKey),
+            SolanaTokens.CUCosts.ATA_CLOSE
+        );
     }
 
 }

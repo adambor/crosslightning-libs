@@ -27,25 +27,23 @@ export class SolanaBlocks extends SolanaModule {
     }> {
         let slot = await this.root.Slots.getCachedSlot(commitment);
 
-        let error;
         for(let i=0;i<10;i++) {
-            try {
-                return {
-                    block: await this.getParsedBlock(slot),
-                    slot
-                }
-            } catch (e) {
-                console.error(e);
+            const block = await this.getParsedBlock(slot).catch(e => {
                 if(e.toString().startsWith("SolanaJSONRPCError: failed to get block: Block not available for slot")) {
-                    slot--;
-                    error = e;
-                } else {
-                    throw e;
+                    return null;
                 }
+                throw e;
+            });
+
+            if(block!=null) return {
+                block,
+                slot
             }
+
+            slot--;
         }
 
-        throw error;
+        throw new Error("Ran out of tries trying to find a parsedBlock");
     }
 
     //Parsed block caching

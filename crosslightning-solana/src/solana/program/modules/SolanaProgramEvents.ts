@@ -1,18 +1,27 @@
 import {SolanaEvents} from "../../base/modules/SolanaEvents";
-import {BorshCoder, Event, EventParser} from "@coral-xyz/anchor";
-import {IdlEvent} from "@coral-xyz/anchor/dist/cjs/idl";
-import {ConfirmedSignatureInfo, PublicKey} from "@solana/web3.js";
+import {BorshCoder, Event, EventParser, Idl} from "@coral-xyz/anchor";
+import {IdlEvent, IdlInstruction} from "@coral-xyz/anchor/dist/cjs/idl";
+import {ConfirmedSignatureInfo, ParsedMessage, PartiallyDecodedInstruction, PublicKey} from "@solana/web3.js";
 import {SolanaProgramBase} from "../SolanaProgramBase";
+import {IxWithAccounts} from "../../swaps/SolanaSwapProgram";
+import * as programIdl from "../../swaps/programIdl.json";
 
 export class SolanaProgramEvents extends SolanaEvents {
 
-    programCoder: BorshCoder;
-    eventParser: EventParser;
+    private readonly programCoder: BorshCoder;
+    private readonly eventParser: EventParser;
+    readonly root: SolanaProgramBase<any>;
+    private readonly nameMappedInstructions: {[name: string]: IdlInstruction};
 
-    constructor(root: SolanaProgramBase<any>) {
+    constructor(root: SolanaProgramBase<Idl>) {
         super(root);
+        this.root = root;
         this.programCoder = new BorshCoder(root.program.idl);
         this.eventParser = new EventParser(root.program.programId, this.programCoder);
+        this.nameMappedInstructions = {};
+        for(let ix of root.program.idl.instructions) {
+            this.nameMappedInstructions[ix.name] = ix;
+        }
     }
 
     /**
@@ -54,4 +63,31 @@ export class SolanaProgramEvents extends SolanaEvents {
             }
         }, abortSignal);
     }
+
+    public decodeInstructions(transactionMessage: ParsedMessage): IxWithAccounts[] {
+        const instructions: IxWithAccounts[] = [];
+
+        for(let _ix of transactionMessage.instructions) {
+            if(!_ix.programId.equals(this.root.program.programId)) {
+                instructions.push(null);
+                continue;
+            }
+
+            const ix: PartiallyDecodedInstruction = _ix as PartiallyDecodedInstruction;
+            if(ix.data==null) continue;
+
+            const parsedIx: any = this.programCoder.instruction.decode(ix.data, 'base58');
+            const accountsData = this.nameMappedInstructions[parsedIx.name];
+            if(accountsData!=null && accountsData.accounts!=null) {
+                parsedIx.accounts = {};
+                for(let i=0;i<accountsData.accounts.length;i++) {
+                    parsedIx.accounts[accountsData.accounts[i].name] = ix.accounts[i];
+                }
+            }
+            instructions.push(parsedIx);
+        }
+
+        return instructions;
+    }
+
 }

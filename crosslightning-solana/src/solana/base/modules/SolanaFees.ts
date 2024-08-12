@@ -1,4 +1,5 @@
 import {ComputeBudgetProgram, PublicKey, SystemProgram, Transaction} from "@solana/web3.js";
+import BN from "bn.js";
 import {SolanaModule} from "../SolanaModule";
 
 
@@ -94,5 +95,19 @@ export class SolanaFees extends SolanaModule {
         return arr.length>2 ? arr[1] : "0";
     }
 
+    static getPriorityFee(computeUnits: number, feeRate: string): BN {
+        if(feeRate==null) return new BN(0);
+
+        const hashArr = feeRate.split("#");
+        if(hashArr.length>1) {
+            feeRate = hashArr[0];
+        }
+
+        const arr = feeRate.split(";");
+        const cuPrice = new BN(arr[0]);
+        const staticFee = new BN(arr[1]);
+
+        return staticFee.add(cuPrice.mul(new BN(computeUnits)).div(new BN(1000000)));
+    }
 
 }
