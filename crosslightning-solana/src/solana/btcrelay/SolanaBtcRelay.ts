@@ -15,10 +15,6 @@ import {MethodsBuilder} from "@coral-xyz/anchor/dist/cjs/program/namespace/metho
 import {SolanaProgramBase} from "../program/SolanaProgramBase";
 import {SolanaFees} from "../base/modules/SolanaFees";
 
-const HEADER_SEED = "header";
-const FORK_SEED = "fork";
-const BTC_RELAY_STATE_SEED = "state";
-
 const BASE_FEE_SOL_PER_BLOCKHEADER = new BN(5000);
 
 const MAX_CLOSE_IX_PER_TX = 10;
@@ -37,19 +33,11 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
         });
     }
 
-    BtcRelayMainState: PublicKey;
-    BtcRelayHeader: (hash: Buffer) => PublicKey = (hash: Buffer) => PublicKey.findProgramAddressSync(
-        [Buffer.from(HEADER_SEED), hash],
-        this.program.programId
-    )[0];
-    BtcRelayFork: (forkId: number, pubkey: PublicKey) => PublicKey = (forkId: number, pubkey: PublicKey) => {
-        const buff = Buffer.alloc(8);
-        buff.writeBigUint64LE(BigInt(forkId));
-        return PublicKey.findProgramAddressSync(
-            [Buffer.from(FORK_SEED), buff, pubkey.toBuffer()],
-            this.program.programId
-        )[0];
-    };
+    BtcRelayMainState = this.pda("state");
+    BtcRelayHeader = this.pda("header", (hash: Buffer) => [hash]);
+    BtcRelayFork = this.pda("fork",
+        (forkId: number, pubkey: PublicKey) => [new BN(forkId).toBuffer("le", 8), pubkey.toBuffer()]
+    );
 
     bitcoinRpc: BitcoinRpc<B>;
 
@@ -65,11 +53,6 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
     ) {
         super(provider, programIdl, programAddress, null, solanaFeeEstimator);
         this.bitcoinRpc = bitcoinRpc;
-
-        this.BtcRelayMainState = PublicKey.findProgramAddressSync(
-            [Buffer.from(BTC_RELAY_STATE_SEED)],
-            this.program.programId
-        )[0];
     }
 
     /**
@@ -407,8 +390,6 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
 
         return lastCheckedId;
     }
-
-
 
     /**
      * Estimate required synchronization fee (worst case) to synchronize btc relay to the required blockheight

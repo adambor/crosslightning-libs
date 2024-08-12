@@ -14,7 +14,7 @@ import {SolanaTx} from "./SolanaTransactions";
 
 export class SolanaTokens extends SolanaModule {
 
-    protected static readonly CUCosts = {
+    public static readonly CUCosts = {
         WRAP_SOL: 10000,
         ATA_CLOSE: 10000,
         ATA_INIT: 40000,

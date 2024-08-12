@@ -89,7 +89,7 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
         if(transaction.meta.err!=null) return null;
 
         const instructions = Utils.decodeInstructions(transaction.transaction.message);
-        const parsedEvents = this.solanaSwapProgram.eventParser.parseLogs(transaction.meta.logMessages);
+        const parsedEvents = this.solanaSwapProgram.Events.eventParser.parseLogs(transaction.meta.logMessages);
 
         const events: SolanaSwapEvent[] = [];
         for(let event of parsedEvents) {
