@@ -1,19 +1,28 @@
 import {ChainEvents, ClaimEvent, EventListener, InitializeEvent, RefundEvent, SwapEvent} from "crosslightning-base";
 import {SolanaSwapData} from "../swaps/SolanaSwapData";
-import {AnchorProvider} from "@coral-xyz/anchor";
+import {AnchorProvider, IdlEvents} from "@coral-xyz/anchor";
 import {SolanaSwapProgram} from "../swaps/SolanaSwapProgram";
-import Utils, {
-    IxWithAccounts,
-    onceAsync,
-    SolanaClaimEvent,
-    SolanaInitializeEvent,
-    SolanaRefundEvent
-} from "../swaps/Utils";
-import {tryWithRetries} from "../../utils/RetryUtils";
+import {
+    onceAsync, tryWithRetries
+} from "../../utils/Utils";
 import {ParsedTransactionWithMeta, PublicKey} from "@solana/web3.js";
 import * as BN from "bn.js";
 import {SwapTypeEnum} from "../swaps/SwapTypeEnum";
-import {EventObject} from "./SolanaChainEvents";
+import {
+    InstructionWithAccounts,
+    ProgramEvent,
+    SingleInstructionWithAccounts
+} from "../program/modules/SolanaProgramEvents";
+import {SwapProgram} from "../swaps/programTypes";
+
+export type EventObject = {
+    events: ProgramEvent<SwapProgram>[],
+    instructions: InstructionWithAccounts<SwapProgram>[],
+    blockTime: number,
+    signature: string
+};
+
+export type InitInstruction = SingleInstructionWithAccounts<SwapProgram["instructions"][2 | 3], SwapProgram>;
 
 export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
 
@@ -31,9 +40,9 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
      * Fetches and parses transaction instructions
      *
      * @private
-     * @returns {Promise<IxWithAccounts[]>} array of parsed instructions
+     * @returns {Promise<InstructionWithAccounts<SwapProgram>[]>} array of parsed instructions
      */
-    private async getTransactionInstructions(signature: string): Promise<IxWithAccounts[]> {
+    private async getTransactionInstructions(signature: string): Promise<InstructionWithAccounts<SwapProgram>[]> {
         const transaction = await tryWithRetries<ParsedTransactionWithMeta>(async () => {
             const res = await this.provider.connection.getParsedTransaction(signature, {
                 commitment: "confirmed",
@@ -44,7 +53,7 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
         });
         if(transaction==null) return null;
         if(transaction.meta.err!=null) return null;
-        return Utils.decodeInstructions(transaction.transaction.message);
+        return this.solanaSwapProgram.Events.decodeInstructions(transaction.transaction.message);
     }
 
     /**
@@ -55,7 +64,10 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
      * @private
      * @returns {SolanaSwapData} converted and parsed swap data
      */
-    private instructionToSwapData(initIx: IxWithAccounts, txoHash: number[]): SolanaSwapData {
+    private instructionToSwapData(
+        initIx: InitInstruction,
+        txoHash: number[]
+    ): SolanaSwapData {
         const paymentHash: Buffer = Buffer.from(initIx.data.swapData.hash);
         let securityDeposit: BN = new BN(0);
         let claimerBounty: BN = new BN(0);
@@ -102,34 +114,34 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
 
             const initIx = eventObject.instructions.find(
                 ix => ix.name === "offererInitializePayIn" || ix.name === "offererInitialize"
-            )
+            ) as InitInstruction;
             if(initIx == null) return null;
 
             return this.instructionToSwapData(initIx, txoHash);
         }
     }
 
-    protected parseInitializeEvent(event: SolanaInitializeEvent, eventObject: EventObject): InitializeEvent<SolanaSwapData> {
-        const paymentHash: Buffer = Buffer.from(event.data.hash);
+    protected parseInitializeEvent(data: IdlEvents<SwapProgram>["InitializeEvent"], eventObject: EventObject): InitializeEvent<SolanaSwapData> {
+        const paymentHash: Buffer = Buffer.from(data.hash);
 
         return new InitializeEvent<SolanaSwapData>(
             paymentHash.toString("hex"),
-            event.data.sequence,
-            Buffer.from(event.data.txoHash).toString("hex"),
-            SwapTypeEnum.toChainSwapType(event.data.kind),
-            onceAsync<SolanaSwapData>(this.getSwapDataGetter(eventObject, event.data.txoHash))
+            data.sequence,
+            Buffer.from(data.txoHash).toString("hex"),
+            SwapTypeEnum.toChainSwapType(data.kind),
+            onceAsync<SolanaSwapData>(this.getSwapDataGetter(eventObject, data.txoHash))
         );
     }
 
-    protected parseRefundEvent(event: SolanaRefundEvent): RefundEvent<SolanaSwapData> {
-        const paymentHash: Buffer = Buffer.from(event.data.hash);
-        return new RefundEvent<SolanaSwapData>(paymentHash.toString("hex"), event.data.sequence);
+    protected parseRefundEvent(data: IdlEvents<SwapProgram>["RefundEvent"]): RefundEvent<SolanaSwapData> {
+        const paymentHash: Buffer = Buffer.from(data.hash);
+        return new RefundEvent<SolanaSwapData>(paymentHash.toString("hex"), data.sequence);
     }
 
-    protected parseClaimEvent(event: SolanaClaimEvent): ClaimEvent<SolanaSwapData> {
-        const secret: Buffer = Buffer.from(event.data.secret);
-        const paymentHash: Buffer = Buffer.from(event.data.hash);
-        return new ClaimEvent<SolanaSwapData>(paymentHash.toString("hex"), event.data.sequence, secret.toString("hex"));
+    protected parseClaimEvent(data: IdlEvents<SwapProgram>["ClaimEvent"]): ClaimEvent<SolanaSwapData> {
+        const secret: Buffer = Buffer.from(data.secret);
+        const paymentHash: Buffer = Buffer.from(data.hash);
+        return new ClaimEvent<SolanaSwapData>(paymentHash.toString("hex"), data.sequence, secret.toString("hex"));
     }
 
     /**
@@ -143,13 +155,13 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
             let parsedEvent: SwapEvent<SolanaSwapData>;
             switch(event.name) {
                 case "ClaimEvent":
-                    parsedEvent = this.parseClaimEvent(event as SolanaClaimEvent);
+                    parsedEvent = this.parseClaimEvent(event.data);
                     break;
                 case "RefundEvent":
-                    parsedEvent = this.parseRefundEvent(event as SolanaRefundEvent);
+                    parsedEvent = this.parseRefundEvent(event.data);
                     break;
                 case "InitializeEvent":
-                    parsedEvent = this.parseInitializeEvent(event as SolanaInitializeEvent, eventObject);
+                    parsedEvent = this.parseInitializeEvent(event.data, eventObject);
                     break;
             }
             (parsedEvent as any).meta = {
@@ -171,14 +183,14 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
      * @protected
      * @returns event handler to be passed to program's addEventListener function
      */
-    protected getWsEventHandler(
-        name: "InitializeEvent" | "RefundEvent" | "ClaimEvent"
-    ): (data: any, slotNumber: number, signature: string) => void {
-        return (data: any, slotNumber: number, signature: string) => {
+    protected getWsEventHandler<E extends "InitializeEvent" | "RefundEvent" | "ClaimEvent">(
+        name: E
+    ): (data: IdlEvents<SwapProgram>[E], slotNumber: number, signature: string) => void {
+        return (data: IdlEvents<SwapProgram>[E], slotNumber: number, signature: string) => {
             console.log("[Solana Events WebSocket] Process signature: ", signature);
 
             this.processEvent({
-                events: [{name, data}],
+                events: [{name, data: data as any}],
                 instructions: null, //Instructions will be fetched on-demand if required
                 blockTime: Math.floor(Date.now()/1000),
                 signature
@@ -196,9 +208,9 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
      */
     protected setupWebsocket() {
         const program = this.solanaSwapProgram.program;
-        this.eventListeners.push(program.addEventListener("InitializeEvent", this.getWsEventHandler("InitializeEvent")));
-        this.eventListeners.push(program.addEventListener("ClaimEvent", this.getWsEventHandler("ClaimEvent")));
-        this.eventListeners.push(program.addEventListener("RefundEvent", this.getWsEventHandler("RefundEvent")));
+        this.eventListeners.push(program.addEventListener<"InitializeEvent">("InitializeEvent", this.getWsEventHandler("InitializeEvent")));
+        this.eventListeners.push(program.addEventListener<"ClaimEvent">("ClaimEvent", this.getWsEventHandler("ClaimEvent")));
+        this.eventListeners.push(program.addEventListener<"RefundEvent">("RefundEvent", this.getWsEventHandler("RefundEvent")));
     }
 
     init(): Promise<void> {

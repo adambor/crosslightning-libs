@@ -1,5 +1,5 @@
 import {AnchorProvider, Idl, Program} from "@coral-xyz/anchor";
-import {SolanaFeeEstimator} from "../../utils/SolanaFeeEstimator";
+import {SolanaFees} from "../base/modules/SolanaFees";
 import {SolanaBase, SolanaRetryPolicy} from "../base/SolanaBase";
 import {SolanaProgramEvents} from "./modules/SolanaProgramEvents";
 import {Keypair, PublicKey} from "@solana/web3.js";
@@ -9,14 +9,14 @@ export class SolanaProgramBase<T extends Idl> extends SolanaBase {
 
     program: Program<T>;
 
-    public readonly Events: SolanaProgramEvents;
+    public readonly Events: SolanaProgramEvents<T>;
 
     constructor(
         provider: AnchorProvider,
         programIdl: any,
         programAddress?: string,
         retryPolicy?: SolanaRetryPolicy,
-        solanaFeeEstimator: SolanaFeeEstimator = new SolanaFeeEstimator(provider.connection)
+        solanaFeeEstimator: SolanaFees = new SolanaFees(provider.connection)
     ) {
         super(provider, retryPolicy, solanaFeeEstimator);
         this.program = new Program<T>(programIdl as any, programAddress || programIdl.metadata.address, provider);

@@ -1,19 +1,34 @@
 import {SolanaEvents} from "../../base/modules/SolanaEvents";
-import {BorshCoder, Event, EventParser, Idl} from "@coral-xyz/anchor";
-import {IdlEvent, IdlInstruction} from "@coral-xyz/anchor/dist/cjs/idl";
+import {BorshCoder, DecodeType, Event, EventParser, Idl, IdlEvents, IdlTypes, Instruction} from "@coral-xyz/anchor";
+import {IdlEvent, IdlField, IdlInstruction} from "@coral-xyz/anchor/dist/cjs/idl";
 import {ConfirmedSignatureInfo, ParsedMessage, PartiallyDecodedInstruction, PublicKey} from "@solana/web3.js";
 import {SolanaProgramBase} from "../SolanaProgramBase";
-import {IxWithAccounts} from "../../swaps/SolanaSwapProgram";
-import * as programIdl from "../../swaps/programIdl.json";
 
-export class SolanaProgramEvents extends SolanaEvents {
+type DecodedFieldOrNull<D, Defined> = D extends IdlField ? DecodeType<D["type"], Defined> : unknown;
+type ArgsTuple<A extends IdlField[], Defined> = {
+    [K in A[number]["name"]]: DecodedFieldOrNull<Extract<A[number], { name: K }>, Defined>
+};
+
+export type InstructionWithAccounts<IDL extends Idl> = SingleInstructionWithAccounts<IDL["instructions"][number], IDL>;
+
+export type SingleInstructionWithAccounts<I extends IdlInstruction, IDL extends Idl> = {
+    name: I["name"],
+    accounts: {
+        [key in I["accounts"][number]["name"]]: PublicKey
+    },
+    data: ArgsTuple<I["args"], IdlTypes<IDL>>
+};
+
+export type ProgramEvent<IDL extends Idl> = Event<IDL["events"][number], Record<string, any>>;
+
+export class SolanaProgramEvents<IDL extends Idl> extends SolanaEvents {
 
     private readonly programCoder: BorshCoder;
     private readonly eventParser: EventParser;
     readonly root: SolanaProgramBase<any>;
     private readonly nameMappedInstructions: {[name: string]: IdlInstruction};
 
-    constructor(root: SolanaProgramBase<Idl>) {
+    constructor(root: SolanaProgramBase<IDL>) {
         super(root);
         this.root = root;
         this.programCoder = new BorshCoder(root.program.idl);
@@ -30,19 +45,14 @@ export class SolanaProgramEvents extends SolanaEvents {
      * @param signature
      * @private
      */
-    private async getEvents(signature: string): Promise<Event<IdlEvent, Record<string, any>>[]> {
+    private async getEvents(signature: string): Promise<ProgramEvent<IDL>[]> {
         const tx = await this.provider.connection.getTransaction(signature, {
             commitment: "confirmed",
             maxSupportedTransactionVersion: 0
         });
         if(tx.meta.err) return [];
 
-        const eventsGenerator = this.eventParser.parseLogs(tx.meta.logMessages);
-
-        const events: Event<IdlEvent, Record<string, any>>[] = [];
-        for(let log of eventsGenerator) {
-            events.push(log);
-        }
+        const events = this.parseLogs(tx.meta.logMessages);
         events.reverse();
 
         return events;
@@ -50,7 +60,7 @@ export class SolanaProgramEvents extends SolanaEvents {
 
     public findInEvents<T>(
         topicKey: PublicKey,
-        processor: (event: Event<IdlEvent, Record<string, any>>) => Promise<T>,
+        processor: (event: ProgramEvent<IDL>) => Promise<T>,
         abortSignal?: AbortSignal
     ): Promise<T> {
         return this.findInSignatures<T>(topicKey, async (signatures: ConfirmedSignatureInfo[]) => {
@@ -64,8 +74,8 @@ export class SolanaProgramEvents extends SolanaEvents {
         }, abortSignal);
     }
 
-    public decodeInstructions(transactionMessage: ParsedMessage): IxWithAccounts[] {
-        const instructions: IxWithAccounts[] = [];
+    public decodeInstructions(transactionMessage: ParsedMessage): InstructionWithAccounts<IDL>[] {
+        const instructions: InstructionWithAccounts<IDL>[] = [];
 
         for(let _ix of transactionMessage.instructions) {
             if(!_ix.programId.equals(this.root.program.programId)) {
@@ -76,18 +86,34 @@ export class SolanaProgramEvents extends SolanaEvents {
             const ix: PartiallyDecodedInstruction = _ix as PartiallyDecodedInstruction;
             if(ix.data==null) continue;
 
-            const parsedIx: any = this.programCoder.instruction.decode(ix.data, 'base58');
+            const parsedIx: Instruction = this.programCoder.instruction.decode(ix.data, 'base58');
             const accountsData = this.nameMappedInstructions[parsedIx.name];
+            let accounts: {[name: string]: PublicKey};
             if(accountsData!=null && accountsData.accounts!=null) {
-                parsedIx.accounts = {};
+                accounts = {};
                 for(let i=0;i<accountsData.accounts.length;i++) {
-                    parsedIx.accounts[accountsData.accounts[i].name] = ix.accounts[i];
+                    accounts[accountsData.accounts[i].name] = ix.accounts[i];
                 }
             }
-            instructions.push(parsedIx);
+            instructions.push({
+                name: parsedIx.name,
+                data: parsedIx.data as any,
+                accounts: accounts as any
+            });
         }
 
         return instructions;
+    }
+
+    public parseLogs(logs: string[]): ProgramEvent<IDL>[] {
+        const eventsGenerator = this.eventParser.parseLogs(logs);
+
+        const events: ProgramEvent<IDL>[] = [];
+        for(let log of eventsGenerator) {
+            events.push(log as ProgramEvent<IDL>);
+        }
+
+        return events;
     }
 
 }

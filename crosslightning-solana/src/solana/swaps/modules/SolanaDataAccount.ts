@@ -1,14 +1,11 @@
-import {SolanaSwapModule} from "./SolanaSwapModule";
+import {SolanaSwapModule} from "../SolanaSwapModule";
 import {AccountInfo, PublicKey, Signer, SystemProgram} from "@solana/web3.js";
 import {IStorageManager, StorageObject} from "crosslightning-base";
 import {SolanaSwapProgram} from "../SolanaSwapProgram";
 import {SolanaAction} from "../../base/SolanaAction";
 import {SolanaTx} from "../../base/modules/SolanaTransactions";
-import {getLogger} from "../Utils";
-import {tryWithRetries} from "../../../utils/RetryUtils";
+import {getLogger, tryWithRetries} from "../../../utils/Utils";
 import {randomBytes} from "crypto";
-
-const logger = getLogger("SolanaActionData: ");
 
 export class StoredDataAccount implements StorageObject {
 
@@ -33,7 +30,7 @@ export class StoredDataAccount implements StorageObject {
 
 }
 
-export class SolanaActionData extends SolanaSwapModule {
+export class SolanaDataAccount extends SolanaSwapModule {
 
     readonly SwapTxDataAlt = this.root.keypair(
         (reversedTxId: Buffer, signer: Signer) => [Buffer.from(signer.secretKey), reversedTxId]
@@ -81,7 +78,7 @@ export class SolanaActionData extends SolanaSwapModule {
                     data: accountKey.publicKey
                 })
                 .instruction(),
-        ], SolanaActionData.CUCosts.DATA_CREATE, null, [accountKey]);
+        ], SolanaDataAccount.CUCosts.DATA_CREATE, null, [accountKey]);
     }
 
     /**
@@ -99,7 +96,7 @@ export class SolanaActionData extends SolanaSwapModule {
                     data: publicKey
                 })
                 .instruction(),
-            SolanaActionData.CUCosts.DATA_REMOVE,
+            SolanaDataAccount.CUCosts.DATA_REMOVE,
             await this.root.Fees.getFeeRate([this.provider.publicKey, publicKey])
         );
     }
@@ -122,9 +119,6 @@ export class SolanaActionData extends SolanaSwapModule {
     ): Promise<{bytesWritten: number, action: SolanaAction}> {
         const writeLen = Math.min(writeData.length-offset, sizeLimit);
 
-        logger.debug("addIxsWriteData(): Write partial tx data ("+offset+" .. "+(offset+writeLen)+")/"+writeData.length+
-            " key: "+accountKey.publicKey.toBase58());
-
         return {
             bytesWritten: writeLen,
             action: new SolanaAction(this.root,
@@ -135,7 +129,7 @@ export class SolanaActionData extends SolanaSwapModule {
                         data: accountKey.publicKey
                     })
                     .instruction(),
-                SolanaActionData.CUCosts.DATA_WRITE
+                SolanaDataAccount.CUCosts.DATA_WRITE
             )
         };
     }
@@ -151,7 +145,8 @@ export class SolanaActionData extends SolanaSwapModule {
 
     public async init() {
         await this.storage.init();
-        await this.storage.loadData(StoredDataAccount);
+        const loadedData = await this.storage.loadData(StoredDataAccount);
+        this.logger.info("init(): initialized & loaded stored data accounts, count: "+loadedData.length);
     }
 
     public removeDataAccount(publicKey: PublicKey): Promise<void> {
@@ -176,7 +171,7 @@ export class SolanaActionData extends SolanaSwapModule {
             } catch (e) {}
         }
 
-        logger.debug("sweepDataAccounts(): closing old data accounts: ", closePublicKeys);
+        this.logger.debug("sweepDataAccounts(): closing old data accounts: ", closePublicKeys);
 
         let txns: SolanaTx[] = [];
         for(let publicKey of closePublicKeys) {
@@ -185,7 +180,8 @@ export class SolanaActionData extends SolanaSwapModule {
 
         const result = await this.root.Transactions.sendAndConfirm(txns, true, null, true);
 
-        logger.info("sweepDataAccounts(): old data accounts closed: ", closePublicKeys);
+        this.logger.info("sweepDataAccounts(): old data accounts closed: "+
+            closePublicKeys.map(pk => pk.toBase58()).join());
 
         for(let publicKey of closePublicKeys) {
             await this.removeDataAccount(publicKey);
@@ -219,6 +215,8 @@ export class SolanaActionData extends SolanaSwapModule {
                 bytesWritten,
                 action: writeAction
             } = await this.WriteData(txDataKey, writeData, pointer, 420);
+            this.logger.debug("addTxsWriteData(): Write partial data ("+pointer+" .. "+(pointer+bytesWritten)+")/"+writeData.length+
+                " key: "+txDataKey.publicKey.toBase58());
             pointer += bytesWritten;
             action.add(writeAction);
 
@@ -231,6 +229,8 @@ export class SolanaActionData extends SolanaSwapModule {
                 bytesWritten,
                 action
             } = await this.WriteData(txDataKey, writeData, pointer, 950);
+            this.logger.debug("addTxsWriteData(): Write partial data ("+pointer+" .. "+(pointer+bytesWritten)+")/"+writeData.length+
+                " key: "+txDataKey.publicKey.toBase58());
             pointer += bytesWritten;
             await action.addToTxs(txs, feeRate);
         }

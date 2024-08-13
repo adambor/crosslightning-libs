@@ -1,4 +1,4 @@
-import {SolanaSwapModule} from "./SolanaSwapModule";
+import {SolanaSwapModule} from "../SolanaSwapModule";
 import {SolanaSwapData} from "../SolanaSwapData";
 import {SolanaAction} from "../../base/SolanaAction";
 import {TOKEN_PROGRAM_ID} from "@solana/spl-token";
@@ -6,16 +6,12 @@ import {ChainSwapType, RelaySynchronizer, SwapDataVerificationError} from "cross
 import {PublicKey, SYSVAR_INSTRUCTIONS_PUBKEY} from "@solana/web3.js";
 import {SolanaTx} from "../../base/modules/SolanaTransactions";
 import {SolanaBtcStoredHeader} from "../../btcrelay/headers/SolanaBtcStoredHeader";
-import {tryWithRetries} from "../../../utils/RetryUtils";
-import {getLogger} from "../Utils";
+import {tryWithRetries} from "../../../utils/Utils";
 import {SolanaBtcRelay} from "../../btcrelay/SolanaBtcRelay";
 import {SolanaSwapProgram} from "../SolanaSwapProgram";
 import * as BN from "bn.js";
-import {SolanaFees} from "../../base/modules/SolanaFees";
 
-const logger = getLogger("SolanaActionData: ");
-
-export class SolanaActionClaim extends SolanaSwapModule {
+export class SwapClaim extends SolanaSwapModule {
 
     private static readonly CUCosts = {
         CLAIM: 25000,
@@ -79,20 +75,15 @@ export class SolanaActionClaim extends SolanaSwapModule {
         merkleProof: {reversedTxId: Buffer, pos: number, merkle: Buffer[]},
         commitedHeader: SolanaBtcStoredHeader
     ): Promise<SolanaAction> {
-        const action = new SolanaAction(this.root,
-            await this.btcRelay.createVerifyIx(
-                merkleProof.reversedTxId,
-                swapData.confirmations,
-                merkleProof.pos,
-                merkleProof.merkle,
-                commitedHeader
-            ),
-            0,
-            null,
-            null,
-            true
+        const action = await this.btcRelay.Verify(
+            merkleProof.reversedTxId,
+            swapData.confirmations,
+            merkleProof.pos,
+            merkleProof.merkle,
+            commitedHeader
         );
         action.addAction(await this.Claim(swapData, storeDataKey));
+        action.computeBudget = null;
         return action;
     }
 
@@ -103,9 +94,9 @@ export class SolanaActionClaim extends SolanaSwapModule {
 
     private getComputeBudget(swapData: SolanaSwapData) {
         if(swapData.isPayOut()) {
-            return SolanaActionClaim.CUCosts[swapData.getType()===ChainSwapType.HTLC ? "CLAIM_PAY_OUT" : "CLAIM_ONCHAIN_PAY_OUT"]
+            return SwapClaim.CUCosts[swapData.getType()===ChainSwapType.HTLC ? "CLAIM_PAY_OUT" : "CLAIM_ONCHAIN_PAY_OUT"]
         } else {
-            return SolanaActionClaim.CUCosts[swapData.getType()===ChainSwapType.HTLC ? "CLAIM" : "CLAIM_ONCHAIN"];
+            return SwapClaim.CUCosts[swapData.getType()===ChainSwapType.HTLC ? "CLAIM" : "CLAIM_ONCHAIN"];
         }
     }
 
@@ -145,9 +136,9 @@ export class SolanaActionClaim extends SolanaSwapModule {
 
         //TODO: We don't have to synchronize to tip, only to our required blockheight
         const resp = await synchronizer.syncToLatestTxs();
-        logger.debug("getCommitedHeaderAndSynchronize(): BTC Relay not synchronized to required blockheight, "+
+        this.logger.debug("getCommitedHeaderAndSynchronize(): BTC Relay not synchronized to required blockheight, "+
             "synchronizing ourselves in "+resp.txs.length+" txs");
-        logger.debug("getCommitedHeaderAndSynchronize(): BTC Relay computed header map: ",resp.computedHeaderMap);
+        this.logger.debug("getCommitedHeaderAndSynchronize(): BTC Relay computed header map: ",resp.computedHeaderMap);
         resp.txs.forEach(tx => txs.push(tx));
 
         //Retrieve computed header
@@ -165,7 +156,7 @@ export class SolanaActionClaim extends SolanaSwapModule {
             Buffer.from(new BN(vout).toArray("le", 4)),
             Buffer.from(tx.hex, "hex")
         ]);
-        logger.debug("addTxsWriteTransactionData(): writing transaction data: ", writeData.toString("hex"));
+        this.logger.debug("addTxsWriteTransactionData(): writing transaction data: ", writeData.toString("hex"));
 
         return this.root.DataAccount.addTxsWriteData(reversedTxId, writeData, txs, feeRate);
     }
@@ -195,13 +186,17 @@ export class SolanaActionClaim extends SolanaSwapModule {
 
         const action = new SolanaAction(this.root);
 
+        const shouldUnwrap = this.shouldUnwrap(swapData);
         if(shouldInitAta) {
             const initAction = this.root.Tokens.InitAta(swapData.offerer, swapData.token, swapData.offererAta);
             if(initAction==null) throw new SwapDataVerificationError("Invalid claimer token account address");
             action.add(initAction);
         }
         action.add(await this.Claim(swapData, secret));
-        if(this.shouldUnwrap(swapData)) action.add(this.root.Tokens.Unwrap(this.provider.publicKey))
+        if(shouldUnwrap) action.add(this.root.Tokens.Unwrap(this.provider.publicKey));
+
+        this.logger.debug("txsClaimWithSecret(): creating claim transaction, swap: "+swapData.getHash()+
+            " initializingAta: "+shouldInitAta+" unwrapping: "+shouldUnwrap);
 
         return [await action.tx(feeRate)];
     }
@@ -223,7 +218,7 @@ export class SolanaActionClaim extends SolanaSwapModule {
         if(feeRate==null) feeRate = await this.root.getClaimFeeRate(swapData);
 
         const merkleProof = await this.btcRelay.bitcoinRpc.getMerkleProof(tx.txid, tx.blockhash);
-        logger.debug("txsClaimWithTxData(): merkle proof computed: ", merkleProof);
+        this.logger.debug("txsClaimWithTxData(): merkle proof computed: ", merkleProof);
 
         const txs: SolanaTx[] = [];
         if(commitedHeader==null) commitedHeader = await this.getCommitedHeaderAndSynchronize(
@@ -233,8 +228,8 @@ export class SolanaActionClaim extends SolanaSwapModule {
 
         const storeDataKey = await this.addTxsWriteTransactionData(tx, vout, feeRate, txs);
         if(storageAccHolder!=null) storageAccHolder.storageAcc = storeDataKey;
-        logger.debug("txsClaimWithTxData(): tx data written successfully, key: "+storeDataKey.toBase58());
 
+        const shouldUnwrap = this.shouldUnwrap(swapData);
         if(shouldInitAta) {
             const initAction = this.root.Tokens.InitAta(swapData.offerer, swapData.token, swapData.offererAta);
             if(initAction==null) throw new SwapDataVerificationError("Invalid claimer token account address");
@@ -242,7 +237,10 @@ export class SolanaActionClaim extends SolanaSwapModule {
         }
         const claimAction = await this.VerifyAndClaim(swapData, storeDataKey, merkleProof, commitedHeader);
         await claimAction.addToTxs(txs, feeRate);
-        if(this.shouldUnwrap(swapData)) await this.root.Tokens.Unwrap(this.provider.publicKey).addToTxs(txs, feeRate);
+        if(shouldUnwrap) await this.root.Tokens.Unwrap(this.provider.publicKey).addToTxs(txs, feeRate);
+
+        this.logger.debug("txsClaimWithTxData(): creating claim transaction, swap: "+swapData.getHash()+
+            " initializingAta: "+shouldInitAta+" unwrapping: "+shouldUnwrap+" num txns: "+txs.length);
 
         return txs;
     }
@@ -277,7 +275,9 @@ export class SolanaActionClaim extends SolanaSwapModule {
 
         feeRate = feeRate || await this.getClaimFeeRate(swapData);
 
-        return new BN(-this.root.ESCROW_STATE_RENT_EXEMPT+5000).add(SolanaFees.getPriorityFee(this.getComputeBudget(swapData), feeRate));
+        return new BN(-this.root.ESCROW_STATE_RENT_EXEMPT+5000).add(
+            this.root.Fees.getPriorityFee(this.getComputeBudget(swapData), feeRate)
+        );
     }
 
     public async getRawClaimFee(swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
@@ -286,7 +286,9 @@ export class SolanaActionClaim extends SolanaSwapModule {
         feeRate = feeRate || await this.getClaimFeeRate(swapData);
 
         //Include rent exempt in claim fee, to take into consideration worst case cost when user destroys ATA
-        return new BN(this.root.Tokens.SPL_ATA_RENT_EXEMPT+5000).add(SolanaFees.getPriorityFee(this.getComputeBudget(swapData), feeRate));
+        return new BN(this.root.Tokens.SPL_ATA_RENT_EXEMPT+5000).add(
+            this.root.Fees.getPriorityFee(this.getComputeBudget(swapData), feeRate)
+        );
     }
 
 }

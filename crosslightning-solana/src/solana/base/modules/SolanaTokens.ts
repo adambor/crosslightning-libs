@@ -8,10 +8,9 @@ import {
     TokenAccountNotFoundError
 } from "@solana/spl-token";
 import * as BN from "bn.js";
-import {tryWithRetries} from "../../../utils/RetryUtils";
-import {SolanaFees} from "./SolanaFees";
 import {SolanaTx} from "./SolanaTransactions";
 import {SolanaAction} from "../SolanaAction";
+import {tryWithRetries} from "../../../utils/Utils";
 
 export class SolanaTokens extends SolanaModule {
 
@@ -21,6 +20,48 @@ export class SolanaTokens extends SolanaModule {
         ATA_INIT: 40000,
         TRANSFER: 50000
     };
+
+    public InitAta(publicKey: PublicKey, token: PublicKey, requiredAta?: PublicKey): SolanaAction {
+        const ata = getAssociatedTokenAddressSync(token, publicKey);
+        if(requiredAta!=null && !ata.equals(requiredAta)) return null;
+        return new SolanaAction(
+            this.root,
+            createAssociatedTokenAccountInstruction(
+                this.provider.publicKey,
+                ata,
+                publicKey,
+                token
+            ),
+            SolanaTokens.CUCosts.ATA_INIT
+        )
+    }
+
+    public Wrap(publicKey: PublicKey, amount: BN, initAta: boolean): SolanaAction {
+        const ata = getAssociatedTokenAddressSync(this.WSOL_ADDRESS, publicKey);
+        const action = new SolanaAction(this.root);
+        if(initAta) action.addIx(
+            createAssociatedTokenAccountInstruction(publicKey, ata, publicKey, this.WSOL_ADDRESS),
+            SolanaTokens.CUCosts.ATA_INIT
+        );
+        action.addIx(
+            SystemProgram.transfer({
+                fromPubkey: publicKey,
+                toPubkey: ata,
+                lamports: BigInt(amount.toString(10))
+            }),
+            SolanaTokens.CUCosts.WRAP_SOL
+        );
+        action.addIx(createSyncNativeInstruction(ata));
+        return action;
+    }
+
+    public Unwrap(publicKey: PublicKey) {
+        const ata = getAssociatedTokenAddressSync(this.WSOL_ADDRESS, publicKey);
+        return new SolanaAction(this.root,
+            createCloseAccountInstruction(ata, publicKey, publicKey),
+            SolanaTokens.CUCosts.ATA_CLOSE
+        );
+    }
 
     public readonly WSOL_ADDRESS = new PublicKey("So11111111111111111111111111111111111111112");
     public readonly SPL_ATA_RENT_EXEMPT = 2039280;
@@ -99,14 +140,14 @@ export class SolanaTokens extends SolanaModule {
             if(account!=null) {
                 feeRate = feeRate || await this.root.Fees.getFeeRate([this.provider.publicKey, recipient, wsolAta]);
                 computeBudget += SolanaTokens.CUCosts.ATA_CLOSE;
-                SolanaFees.applyFeeRate(tx, computeBudget, feeRate);
+                this.root.Fees.applyFeeRateBegin(tx, computeBudget, feeRate);
                 //Unwrap
                 tx.add(
                     createCloseAccountInstruction(wsolAta, this.provider.publicKey, this.provider.publicKey)
                 );
             } else {
                 feeRate = feeRate || await this.root.Fees.getFeeRate([this.provider.publicKey, recipient]);
-                SolanaFees.applyFeeRate(tx, computeBudget, feeRate);
+                this.root.Fees.applyFeeRateBegin(tx, computeBudget, feeRate);
             }
 
             tx.add(
@@ -117,7 +158,7 @@ export class SolanaTokens extends SolanaModule {
                 })
             );
 
-            SolanaFees.applyFeeRateEnd(tx, computeBudget, feeRate);
+            this.root.Fees.applyFeeRateEnd(tx, computeBudget, feeRate);
 
             return [{
                 tx,
@@ -138,7 +179,7 @@ export class SolanaTokens extends SolanaModule {
         const tx = new Transaction();
         tx.feePayer = this.provider.publicKey;
 
-        SolanaFees.applyFeeRate(tx, computeBudget, feeRate);
+        this.root.Fees.applyFeeRateBegin(tx, computeBudget, feeRate);
 
         const account = await tryWithRetries<Account>(() => this.getATAOrNull(dstAta), this.retryPolicy);
         console.log("Account ATA: ", account);
@@ -151,54 +192,12 @@ export class SolanaTokens extends SolanaModule {
         const ix = createTransferInstruction(ata, dstAta, this.provider.publicKey, BigInt(amount.toString(10)));
         tx.add(ix);
 
-        SolanaFees.applyFeeRateEnd(tx, computeBudget, feeRate);
+        this.root.Fees.applyFeeRateEnd(tx, computeBudget, feeRate);
 
         return [{
             tx: tx,
             signers: []
         }];
-    }
-
-    public InitAta(publicKey: PublicKey, token: PublicKey, requiredAta?: PublicKey): SolanaAction {
-        const ata = getAssociatedTokenAddressSync(token, publicKey);
-        if(requiredAta!=null && !ata.equals(requiredAta)) return null;
-        return new SolanaAction(
-            this.root,
-            createAssociatedTokenAccountInstruction(
-                this.provider.publicKey,
-                ata,
-                publicKey,
-                token
-            ),
-            SolanaTokens.CUCosts.ATA_INIT
-        )
-    }
-
-    public Wrap(publicKey: PublicKey, amount: BN, initAta: boolean): SolanaAction {
-        const ata = getAssociatedTokenAddressSync(this.WSOL_ADDRESS, publicKey);
-        const action = new SolanaAction(this.root);
-        if(initAta) action.addIx(
-            createAssociatedTokenAccountInstruction(publicKey, ata, publicKey, this.WSOL_ADDRESS),
-            SolanaTokens.CUCosts.ATA_INIT
-        );
-        action.addIx(
-            SystemProgram.transfer({
-                fromPubkey: publicKey,
-                toPubkey: ata,
-                lamports: BigInt(amount.toString(10))
-            }),
-            SolanaTokens.CUCosts.WRAP_SOL
-        );
-        action.addIx(createSyncNativeInstruction(ata));
-        return action;
-    }
-
-    public Unwrap(publicKey: PublicKey) {
-        const ata = getAssociatedTokenAddressSync(this.WSOL_ADDRESS, publicKey);
-        return new SolanaAction(this.root,
-            createCloseAccountInstruction(ata, publicKey, publicKey),
-            SolanaTokens.CUCosts.ATA_CLOSE
-        );
     }
 
 }

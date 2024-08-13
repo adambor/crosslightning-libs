@@ -1,29 +1,19 @@
 import {ConfirmedSignatureInfo, ParsedTransactionWithMeta} from "@solana/web3.js";
-import {AnchorProvider, Event} from "@coral-xyz/anchor";
+import {AnchorProvider, IdlEvents} from "@coral-xyz/anchor";
 import * as fs from "fs/promises";
 import {SolanaSwapProgram} from "../swaps/SolanaSwapProgram";
-import Utils, {IxWithAccounts, SolanaSwapEvent} from "../swaps/Utils";
-import {SolanaChainEventsBrowser} from "./SolanaChainEventsBrowser";
+import {EventObject, SolanaChainEventsBrowser} from "./SolanaChainEventsBrowser";
+import {SwapProgram} from "../swaps/programTypes";
 
 const BLOCKHEIGHT_FILENAME = "/blockheight.txt";
 const LOG_FETCH_INTERVAL = 5*1000;
 const LOG_FETCH_LIMIT = 500;
-
-const WS_TX_FETCH_RETRY_TIMEOUT = 500;
-
-export type EventObject = {
-    events: SolanaSwapEvent[],
-    instructions: IxWithAccounts[],
-    blockTime: number,
-    signature: string
-};
 
 export class SolanaChainEvents extends SolanaChainEventsBrowser {
 
     private readonly directory: string;
     private readonly logFetchInterval: number;
     private readonly logFetchLimit: number;
-    private readonly wsTxFetchRetryTimeout: number;
 
     private signaturesProcessing: {
         [signature: string]: Promise<boolean>
@@ -41,7 +31,6 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
         this.directory = directory;
         this.logFetchInterval = logFetchInterval || LOG_FETCH_INTERVAL;
         this.logFetchLimit = logFetchLimit || LOG_FETCH_LIMIT;
-        this.wsTxFetchRetryTimeout = wsTxFetchRetryTimeout || WS_TX_FETCH_RETRY_TIMEOUT;
     }
 
     /**
@@ -88,13 +77,8 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
     private getEventObjectFromTransaction(transaction: ParsedTransactionWithMeta): EventObject {
         if(transaction.meta.err!=null) return null;
 
-        const instructions = Utils.decodeInstructions(transaction.transaction.message);
-        const parsedEvents = this.solanaSwapProgram.Events.eventParser.parseLogs(transaction.meta.logMessages);
-
-        const events: SolanaSwapEvent[] = [];
-        for(let event of parsedEvents) {
-            events.push(event as SolanaSwapEvent);
-        }
+        const instructions = this.solanaSwapProgram.Events.decodeInstructions(transaction.transaction.message);
+        const events = this.solanaSwapProgram.Events.parseLogs(transaction.meta.logMessages);
 
         return {
             instructions,
@@ -140,16 +124,16 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
      * @protected
      * @returns event handler to be passed to program's addEventListener function
      */
-    protected getWsEventHandler(
-        name: "InitializeEvent" | "RefundEvent" | "ClaimEvent"
-    ): (data: any, slotNumber: number, signature: string) => void {
-        return (data: any, slotNumber: number, signature: string) => {
+    protected getWsEventHandler<E extends "InitializeEvent" | "RefundEvent" | "ClaimEvent">(
+        name: E
+    ): (data: IdlEvents<SwapProgram>[E], slotNumber: number, signature: string) => void {
+        return (data: IdlEvents<SwapProgram>[E], slotNumber: number, signature: string) => {
             if(this.signaturesProcessing[signature]!=null) return;
 
             console.log("[Solana Events WebSocket] Process signature: ", signature);
 
             this.signaturesProcessing[signature] = this.processEvent({
-                events: [{name, data}],
+                events: [{name, data: data as any}],
                 instructions: null, //Instructions will be fetched on-demand if required
                 blockTime: Math.floor(Date.now()/1000),
                 signature

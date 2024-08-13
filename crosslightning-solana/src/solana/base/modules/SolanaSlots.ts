@@ -23,6 +23,7 @@ export class SolanaSlots extends SolanaModule {
         }
         slotPromise.catch(e => {
             if(this.slotCache[commitment]!=null && this.slotCache[commitment].slot===slotPromise) delete this.slotCache[commitment];
+            throw e;
         })
         return {
             slot: slotPromise,
@@ -32,7 +33,7 @@ export class SolanaSlots extends SolanaModule {
 
     ///////////////////
     //// Slots
-    public async getCachedSlotAndTimestamp(commitment: Commitment): Promise<{
+    public async getSlotAndTimestamp(commitment: Commitment): Promise<{
         slot: number,
         timestamp: number
     }> {
@@ -48,7 +49,7 @@ export class SolanaSlots extends SolanaModule {
         };
     }
 
-    public async getCachedSlot(commitment: Commitment): Promise<number> {
+    public async getSlot(commitment: Commitment): Promise<number> {
         let cachedSlotData = this.slotCache[commitment];
 
         if(cachedSlotData!=null && Date.now()-cachedSlotData.timestamp<this.SLOT_CACHE_TIME) {

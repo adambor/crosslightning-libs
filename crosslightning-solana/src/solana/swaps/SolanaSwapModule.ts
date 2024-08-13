@@ -1,8 +1,7 @@
-import {SolanaModule} from "../../base/SolanaModule";
-import {SolanaSwapProgram} from "../SolanaSwapProgram";
+import {SolanaModule} from "../base/SolanaModule";
+import {SolanaSwapProgram} from "./SolanaSwapProgram";
 import {Program} from "@coral-xyz/anchor";
-import {SwapProgram} from "../programTypes";
-
+import {SwapProgram} from "./programTypes";
 
 export class SolanaSwapModule extends SolanaModule {
 

@@ -1,8 +1,7 @@
 import {SolanaSwapData} from "./SolanaSwapData";
-import {AnchorProvider, DecodeType, IdlAccounts, IdlEvents, IdlTypes, Event, Idl} from "@coral-xyz/anchor";
+import {AnchorProvider, IdlAccounts} from "@coral-xyz/anchor";
 import * as BN from "bn.js";
 import {
-    ParsedMessage, PartiallyDecodedInstruction,
     PublicKey, SendOptions,
     Signer,
 } from "@solana/web3.js";
@@ -16,50 +15,18 @@ import {RelaySynchronizer} from "crosslightning-base/dist";
 import {
     getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
-import {SolanaFeeEstimator} from "../../utils/SolanaFeeEstimator";
+import {SolanaFees} from "../base/modules/SolanaFees";
 import {SwapProgram} from "./programTypes";
 import {SolanaRetryPolicy} from "../base/SolanaBase";
-import {getLogger} from "./Utils";
 import {SolanaProgramBase} from "../program/SolanaProgramBase";
 import {SolanaTx} from "../base/modules/SolanaTransactions";
-import {SolanaActionInit, SolanaPreFetchData, SolanaPreFetchVerification} from "./modules/SolanaActionInit";
-import {SolanaActionData, StoredDataAccount} from "./modules/SolanaActionData";
-import {SolanaActionRefund} from "./modules/SolanaActionRefund";
-import {SolanaActionClaim} from "./modules/SolanaActionClaim";
+import {SwapInit, SolanaPreFetchData, SolanaPreFetchVerification} from "./modules/SwapInit";
+import {SolanaDataAccount, StoredDataAccount} from "./modules/SolanaDataAccount";
+import {SwapRefund} from "./modules/SwapRefund";
+import {SwapClaim} from "./modules/SwapClaim";
 import {SolanaLpVault} from "./modules/SolanaLpVault";
-import {IdlField} from "@coral-xyz/anchor/dist/cjs/idl";
-
-export type SolanaInitializeEvent = Event<SwapProgram["events"][0], Record<string, any>>;
-export type SolanaRefundEvent = Event<SwapProgram["events"][1], Record<string, any>>;
-export type SolanaClaimEvent = Event<SwapProgram["events"][2], Record<string, any>>;
-export type SolanaSwapEvent = Event<SwapProgram["events"][number], Record<string, any>>;
-
-type DecodedFieldOrNull<D, Defined> = D extends IdlField ? DecodeType<D["type"], Defined> : unknown;
-type ArgsTuple<A extends IdlField[], Defined> = {
-    [K in A[number]["name"]]: DecodedFieldOrNull<Extract<A[number], { name: K }>, Defined>
-};
-
-export type InitializeIxType = {
-    name: SwapProgram["instructions"][3]["name"],
-    accounts: {
-        [key in SwapProgram["instructions"][3]["accounts"][number]["name"]]: PublicKey
-    },
-    data: ArgsTuple<SwapProgram["instructions"][3]["args"], IdlTypes<SwapProgram>>
-};
-
-export type InitializePayInIxType = {
-    name: SwapProgram["instructions"][2]["name"],
-    accounts: {
-        [key in SwapProgram["instructions"][2]["accounts"][number]["name"]]: PublicKey
-    },
-    data: ArgsTuple<SwapProgram["instructions"][2]["args"], IdlTypes<SwapProgram>>
-};
-
-export type IxWithAccounts = InitializeIxType | InitializePayInIxType;
 
 export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements SwapContract<SolanaSwapData, SolanaTx, SolanaPreFetchData, SolanaPreFetchVerification> {
-
-    readonly logger = getLogger("SolanaSwapProgram: ");
 
     ////////////////////////
     //// Constants
@@ -85,10 +52,10 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
 
     ////////////////////////
     //// Services
-    readonly Init: SolanaActionInit;
-    readonly Refund: SolanaActionRefund;
-    readonly Claim: SolanaActionClaim;
-    readonly DataAccount: SolanaActionData;
+    readonly Init: SwapInit;
+    readonly Refund: SwapRefund;
+    readonly Claim: SwapClaim;
+    readonly DataAccount: SolanaDataAccount;
     readonly LpVault: SolanaLpVault;
 
     constructor(
@@ -97,14 +64,14 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
         storage: IStorageManager<StoredDataAccount>,
         programAddress?: string,
         retryPolicy?: SolanaRetryPolicy,
-        solanaFeeEstimator: SolanaFeeEstimator = btcRelay.solanaFeeEstimator || new SolanaFeeEstimator(signer.connection)
+        solanaFeeEstimator: SolanaFees = btcRelay.Fees || new SolanaFees(signer.connection)
     ) {
         super(signer, programIdl, programAddress, retryPolicy, solanaFeeEstimator);
 
-        this.Init = new SolanaActionInit(this);
-        this.Refund = new SolanaActionRefund(this);
-        this.Claim = new SolanaActionClaim(this, btcRelay);
-        this.DataAccount = new SolanaActionData(this, storage);
+        this.Init = new SwapInit(this);
+        this.Refund = new SwapRefund(this);
+        this.Claim = new SwapClaim(this, btcRelay);
+        this.DataAccount = new SolanaDataAccount(this, storage);
         this.LpVault = new SolanaLpVault(this);
     }
 
@@ -259,13 +226,11 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
         //Check if paid or what
         const status = await this.Events.findInEvents(escrowStateKey, async (event) => {
             if(event.name==="ClaimEvent") {
-                const eventData: IdlEvents<SwapProgram>["ClaimEvent"] = event.data as any;
-                if(!eventData.sequence.eq(data.sequence)) return null;
+                if(!event.data.sequence.eq(data.sequence)) return null;
                 return SwapCommitStatus.PAID;
             }
             if(event.name==="RefundEvent") {
-                const eventData: IdlEvents<SwapProgram>["RefundEvent"] = event.data as any;
-                if(!eventData.sequence.eq(data.sequence)) return null;
+                if(!event.data.sequence.eq(data.sequence)) return null;
                 if(this.isExpired(data)) return SwapCommitStatus.EXPIRED;
                 return SwapCommitStatus.NOT_COMMITED;
             }

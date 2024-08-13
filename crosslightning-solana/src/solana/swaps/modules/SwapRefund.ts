@@ -1,11 +1,10 @@
-import {SolanaSwapModule} from "./SolanaSwapModule";
+import {SolanaSwapModule} from "../SolanaSwapModule";
 import {SolanaSwapData} from "../SolanaSwapData";
 import {createHash} from "crypto";
 import {sign} from "tweetnacl";
 import {SignatureVerificationError, SwapDataVerificationError} from "crosslightning-base";
 import * as BN from "bn.js";
 import {SolanaTx} from "../../base/modules/SolanaTransactions";
-import {tryWithRetries} from "../../../utils/RetryUtils";
 import {
     Ed25519Program,
     PublicKey,
@@ -16,10 +15,10 @@ import {
     TOKEN_PROGRAM_ID
 } from "@solana/spl-token";
 import {SolanaAction} from "../../base/SolanaAction";
-import {SolanaFees} from "../../base/modules/SolanaFees";
+import {tryWithRetries} from "../../../utils/Utils";
 
 
-export class SolanaActionRefund extends SolanaSwapModule {
+export class SwapRefund extends SolanaSwapModule {
 
     private static readonly CUCosts = {
         REFUND: 15000,
@@ -50,7 +49,7 @@ export class SolanaActionRefund extends SolanaSwapModule {
                         tokenProgram: TOKEN_PROGRAM_ID
                     })
                     .instruction(),
-                SolanaActionRefund.CUCosts.REFUND_PAY_OUT
+                SwapRefund.CUCosts.REFUND_PAY_OUT
             );
         } else {
             return new SolanaAction(this.root,
@@ -61,7 +60,7 @@ export class SolanaActionRefund extends SolanaSwapModule {
                         offererUserData: this.root.SwapUserVault(swapData.offerer, swapData.token)
                     })
                     .instruction(),
-                SolanaActionRefund.CUCosts.REFUND
+                SwapRefund.CUCosts.REFUND
             );
         }
     }
@@ -97,20 +96,13 @@ export class SolanaActionRefund extends SolanaSwapModule {
      */
     private getRefundMessage(swapData: SolanaSwapData, prefix: string, timeout: string): Buffer {
         const messageBuffers = [
-            null,
-            Buffer.alloc(8),
-            Buffer.alloc(8),
-            Buffer.alloc(8),
-            null,
-            Buffer.alloc(8)
+            Buffer.from(prefix, "ascii"),
+            swapData.amount.toBuffer("le", 8),
+            swapData.expiry.toBuffer("le", 8),
+            swapData.sequence.toBuffer("le", 8),
+            Buffer.from(swapData.paymentHash, "hex"),
+            new BN(timeout).toBuffer("le", 8)
         ];
-
-        messageBuffers[0] = Buffer.from(prefix, "ascii");
-        messageBuffers[1].writeBigUInt64LE(BigInt(swapData.amount.toString(10)));
-        messageBuffers[2].writeBigUInt64LE(BigInt(swapData.expiry.toString(10)));
-        messageBuffers[3].writeBigUInt64LE(BigInt(swapData.sequence.toString(10)));
-        messageBuffers[4] = Buffer.from(swapData.paymentHash, "hex");
-        messageBuffers[5].writeBigUInt64LE(BigInt(timeout));
 
         return createHash("sha256").update(Buffer.concat(messageBuffers)).digest();
     }
@@ -251,9 +243,11 @@ export class SolanaActionRefund extends SolanaSwapModule {
 
         feeRate = feeRate || await this.getRefundFeeRate(swapData);
 
-        const computeBudget = swapData.payIn ? SolanaActionRefund.CUCosts.REFUND_PAY_OUT : SolanaActionRefund.CUCosts.REFUND;
+        const computeBudget = swapData.payIn ? SwapRefund.CUCosts.REFUND_PAY_OUT : SwapRefund.CUCosts.REFUND;
 
-        return new BN(-this.root.ESCROW_STATE_RENT_EXEMPT+10000).add(SolanaFees.getPriorityFee(computeBudget, feeRate));
+        return new BN(-this.root.ESCROW_STATE_RENT_EXEMPT+10000).add(
+            this.root.Fees.getPriorityFee(computeBudget, feeRate)
+        );
     }
 
     /**
@@ -264,9 +258,11 @@ export class SolanaActionRefund extends SolanaSwapModule {
 
         feeRate = feeRate || await this.getRefundFeeRate(swapData);
 
-        const computeBudget = swapData.payIn ? SolanaActionRefund.CUCosts.REFUND_PAY_OUT : SolanaActionRefund.CUCosts.REFUND;
+        const computeBudget = swapData.payIn ? SwapRefund.CUCosts.REFUND_PAY_OUT : SwapRefund.CUCosts.REFUND;
 
-        return new BN(10000).add(SolanaFees.getPriorityFee(computeBudget, feeRate));
+        return new BN(10000).add(
+            this.root.Fees.getPriorityFee(computeBudget, feeRate)
+        );
     }
 
 }

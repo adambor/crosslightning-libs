@@ -1,6 +1,5 @@
 import {PublicKey, Signer, Transaction, TransactionInstruction} from "@solana/web3.js";
 import {SolanaTx} from "./modules/SolanaTransactions";
-import {SolanaFees} from "./modules/SolanaFees";
 import {SolanaBase} from "./SolanaBase";
 
 
@@ -89,9 +88,9 @@ export class SolanaAction {
             tx.add(this.instructions[0]);
             instructions = this.instructions.slice(1);
         }
-        SolanaFees.applyFeeRate(tx, this.computeBudget, feeRate);
+        this.root.Fees.applyFeeRateBegin(tx, this.computeBudget, feeRate);
         instructions.forEach(ix => tx.add(ix));
-        SolanaFees.applyFeeRateEnd(tx, this.computeBudget, feeRate);
+        this.root.Fees.applyFeeRateEnd(tx, this.computeBudget, feeRate);
 
         if(block!=null) {
             tx.recentBlockhash = block.blockhash;

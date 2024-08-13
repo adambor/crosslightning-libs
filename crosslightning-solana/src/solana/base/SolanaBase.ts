@@ -1,14 +1,14 @@
 import {Signer} from "@solana/web3.js";
 import {AnchorProvider} from "@coral-xyz/anchor";
-import {SolanaFeeEstimator} from "../../utils/SolanaFeeEstimator";
-import {SolanaBlocks} from "./modules/SolanaBlocks";
 import {SolanaFees} from "./modules/SolanaFees";
+import {SolanaBlocks} from "./modules/SolanaBlocks";
 import {SolanaSlots} from "./modules/SolanaSlots";
 import {SolanaTokens} from "./modules/SolanaTokens";
 import {SolanaTransactions} from "./modules/SolanaTransactions";
 import {SolanaAddresses} from "./modules/SolanaAddresses";
 import {SolanaSignatures} from "./modules/SolanaSignatures";
 import {SolanaEvents} from "./modules/SolanaEvents";
+import {getLogger} from "../../utils/Utils";
 
 export type SolanaRetryPolicy = {
     maxRetries?: number,
@@ -25,8 +25,6 @@ export class SolanaBase {
     readonly provider: AnchorProvider & {signer?: Signer};
     readonly retryPolicy: SolanaRetryPolicy;
 
-    readonly solanaFeeEstimator: SolanaFeeEstimator;
-
     public readonly Blocks: SolanaBlocks;
     public readonly Fees: SolanaFees;
     public readonly Slots: SolanaSlots;
@@ -36,17 +34,18 @@ export class SolanaBase {
     public readonly Signatures: SolanaSignatures;
     public readonly Events: SolanaEvents;
 
+    protected readonly logger = getLogger(this.constructor.name+": ");
+
     constructor(
         provider: AnchorProvider & {signer?: Signer},
         retryPolicy?: SolanaRetryPolicy,
-        solanaFeeEstimator: SolanaFeeEstimator = new SolanaFeeEstimator(provider.connection)
+        solanaFeeEstimator: SolanaFees = new SolanaFees(provider.connection)
     ) {
         this.provider = provider;
-        this.solanaFeeEstimator = solanaFeeEstimator;
         this.retryPolicy = retryPolicy;
 
         this.Blocks = new SolanaBlocks(this);
-        this.Fees = new SolanaFees(this);
+        this.Fees = solanaFeeEstimator;
         this.Slots = new SolanaSlots(this);
         this.Tokens = new SolanaTokens(this);
         this.Transactions = new SolanaTransactions(this);

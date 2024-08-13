@@ -11,11 +11,9 @@ import {
     getAssociatedTokenAddressSync,
     TOKEN_PROGRAM_ID
 } from "@solana/spl-token";
-import {SolanaSwapModule} from "./SolanaSwapModule";
+import {SolanaSwapModule} from "../SolanaSwapModule";
 import {SolanaTx} from "../../base/modules/SolanaTransactions";
-import {tryWithRetries} from "../../../utils/RetryUtils";
-import {SolanaBase} from "../../base/SolanaBase";
-import {SolanaFees} from "../../base/modules/SolanaFees";
+import {tryWithRetries} from "../../../utils/Utils";
 
 export type SolanaPreFetchVerification = {
     latestSlot?: {
@@ -34,7 +32,7 @@ export type SolanaPreFetchData = {
     timestamp: number
 }
 
-export class SolanaActionInit extends SolanaSwapModule {
+export class SwapInit extends SolanaSwapModule {
 
     public readonly SIGNATURE_SLOT_BUFFER = 20;
     public readonly SIGNATURE_PREFETCH_DATA_VALIDITY = 5000;
@@ -82,7 +80,7 @@ export class SolanaActionInit extends SolanaSwapModule {
                         tokenProgram: TOKEN_PROGRAM_ID,
                     })
                     .instruction(),
-                SolanaActionInit.CUCosts.INIT_PAY_IN
+                SwapInit.CUCosts.INIT_PAY_IN
             );
         } else {
             return new SolanaAction(this.root,
@@ -99,7 +97,7 @@ export class SolanaActionInit extends SolanaSwapModule {
                         offererUserData: this.root.SwapUserVault(swapData.offerer, swapData.token),
                     })
                     .instruction(),
-                SolanaActionInit.CUCosts.INIT
+                SwapInit.CUCosts.INIT
             );
         }
     }
@@ -187,9 +185,13 @@ export class SolanaActionInit extends SolanaSwapModule {
             preFetchedData.latestSlot!=null &&
             preFetchedData.latestSlot.timestamp>Date.now()-this.root.Slots.SLOT_CACHE_TIME
         ) {
-            return Promise.resolve(preFetchedData.latestSlot.slot+Math.floor((Date.now()-preFetchedData.latestSlot.timestamp)/this.root.SLOT_TIME));
+            const estimatedSlotsPassed = Math.floor((Date.now()-preFetchedData.latestSlot.timestamp)/this.root.SLOT_TIME);
+            const estimatedCurrentSlot = preFetchedData.latestSlot.slot+estimatedSlotsPassed;
+            this.logger.debug("getSlotForSignature(): slot: "+preFetchedData.latestSlot.slot+
+                " estimated passed slots: "+estimatedSlotsPassed+" estimated current slot: "+estimatedCurrentSlot);
+            return Promise.resolve(estimatedCurrentSlot);
         }
-        return this.root.Slots.getCachedSlot("processed");
+        return this.root.Slots.getSlot("processed");
     }
 
     /**
@@ -212,7 +214,7 @@ export class SolanaActionInit extends SolanaSwapModule {
 
     public async preFetchForInitSignatureVerification(data: SolanaPreFetchData): Promise<SolanaPreFetchVerification> {
         const [latestSlot, txBlock] = await Promise.all([
-            this.root.Slots.getCachedSlotAndTimestamp("processed"),
+            this.root.Slots.getSlotAndTimestamp("processed"),
             this.root.Blocks.getParsedBlock(data.slot)
         ]);
         return {
@@ -370,7 +372,7 @@ export class SolanaActionInit extends SolanaSwapModule {
         const txSlot = parseInt(transactionSlotStr);
 
         const lastValidTransactionSlot = txSlot+this.root.TX_SLOT_VALIDITY;
-        const latestSlot = await this.root.Slots.getCachedSlot("finalized");
+        const latestSlot = await this.root.Slots.getSlot("finalized");
         const slotsLeft = lastValidTransactionSlot-latestSlot+this.SIGNATURE_SLOT_BUFFER;
 
         if(slotsLeft<0) return true;
@@ -405,6 +407,7 @@ export class SolanaActionInit extends SolanaSwapModule {
 
         const txs: SolanaTx[] = [];
 
+        let isWrapping: boolean = false;
         const isWrappedInSignedTx = feeRate!=null && feeRate.split("#").length>1;
         if(!isWrappedInSignedTx && swapData.token.equals(this.root.Tokens.WSOL_ADDRESS)) {
             const ataAcc = await tryWithRetries<Account>(
@@ -417,12 +420,16 @@ export class SolanaActionInit extends SolanaSwapModule {
                 //Need to wrap more SOL to WSOL
                 await this.root.Tokens.Wrap(swapData.offerer, swapData.amount.sub(balance), ataAcc==null)
                     .addToTxs(txs, feeRate, block);
+                isWrapping = true;
             }
         }
 
         const initTx = await (await this.InitPayIn(swapData, new BN(timeout), feeRate)).tx(feeRate, block);
         initTx.tx.addSignature(swapData.claimer, Buffer.from(signatureStr, "hex"));
         txs.push(initTx);
+
+        this.logger.debug("txsInitPayIn(): create swap init TX, swap: "+swapData.getHash()+
+            " wrapping client-side: "+isWrapping+" feerate: "+feeRate);
 
         return txs;
     }
@@ -445,6 +452,8 @@ export class SolanaActionInit extends SolanaSwapModule {
         const initTx = await (await this.InitNotPayIn(swapData, new BN(timeout), feeRate)).tx(feeRate, block);
         initTx.tx.addSignature(swapData.offerer, Buffer.from(signatureStr, "hex"));
 
+        this.logger.debug("txsInit(): create swap init TX, swap: "+swapData.getHash()+" feerate: "+feeRate);
+
         return [initTx];
     }
 
@@ -460,19 +469,22 @@ export class SolanaActionInit extends SolanaSwapModule {
         if (paymentHash != null) accounts.push(this.root.SwapEscrowState(Buffer.from(paymentHash, "hex")));
 
         const shouldCheckWSOLAta = token != null && offerer != null && token.equals(this.root.Tokens.WSOL_ADDRESS);
-        const [feeRate, _account] = await Promise.all([
+        let [feeRate, _account] = await Promise.all([
             this.root.Fees.getFeeRate(accounts),
             shouldCheckWSOLAta ?
                 this.root.Tokens.getATAOrNull(getAssociatedTokenAddressSync(token, new PublicKey(offerer))) :
                 Promise.resolve(null)
         ]);
 
-        if(!shouldCheckWSOLAta) return feeRate;
+        if(shouldCheckWSOLAta) {
+            const account: Account = _account;
+            const balance: BN = account == null ? new BN(0) : new BN(account.amount.toString());
+            //Add an indication about whether the ATA is initialized & balance it contains
+            feeRate += "#" + (account != null ? "0" : "1") + ";" + balance.toString(10);
+        }
 
-        const account: Account = _account;
-        const balance: BN = account == null ? new BN(0) : new BN(account.amount.toString());
-        //Add an indication about whether the ATA is initialized & balance it contains
-        return feeRate + "#" + (account != null ? "0" : "1") + ";" + balance.toString(10);
+        this.logger.debug("getInitPayInFeeRate(): feerate computed: "+feeRate);
+        return feeRate;
     }
 
     public getInitFeeRate(offerer?: string, claimer?: string, token?: PublicKey, paymentHash?: string): Promise<string> {
@@ -496,10 +508,12 @@ export class SolanaActionInit extends SolanaSwapModule {
                 ? await this.getInitPayInFeeRate(swapData.getOfferer(), swapData.getClaimer(), swapData.token, swapData.paymentHash)
                 : await this.getInitFeeRate(swapData.getOfferer(), swapData.getClaimer(), swapData.token, swapData.paymentHash));
 
-        const computeBudget = swapData.payIn ? SolanaActionInit.CUCosts.INIT_PAY_IN : SolanaActionInit.CUCosts.INIT;
+        const computeBudget = swapData.payIn ? SwapInit.CUCosts.INIT_PAY_IN : SwapInit.CUCosts.INIT;
         const baseFee = swapData.payIn ? 10000 : 10000 + 5000;
 
-        return new BN(this.root.ESCROW_STATE_RENT_EXEMPT+baseFee).add(SolanaFees.getPriorityFee(computeBudget, feeRate));
+        return new BN(this.root.ESCROW_STATE_RENT_EXEMPT+baseFee).add(
+            this.root.Fees.getPriorityFee(computeBudget, feeRate)
+        );
     }
 
 }

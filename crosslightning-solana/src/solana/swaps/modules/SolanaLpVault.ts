@@ -1,18 +1,15 @@
-import {SolanaSwapModule} from "./SolanaSwapModule";
+import {SolanaSwapModule} from "../SolanaSwapModule";
 import {SolanaAction} from "../../base/SolanaAction";
 import * as BN from "bn.js";
-import {PublicKey, SystemProgram, Transaction, TransactionInstruction} from "@solana/web3.js";
+import {PublicKey, SystemProgram} from "@solana/web3.js";
 import {
     Account,
-    createAssociatedTokenAccountInstruction, createCloseAccountInstruction, createSyncNativeInstruction,
     getAssociatedTokenAddress,
     getAssociatedTokenAddressSync,
     TOKEN_PROGRAM_ID
 } from "@solana/spl-token";
 import {SolanaTx} from "../../base/modules/SolanaTransactions";
-import {tryWithRetries} from "../../../utils/RetryUtils";
-import {SolanaBase} from "../../base/SolanaBase";
-
+import {tryWithRetries} from "../../../utils/Utils";
 
 export class SolanaLpVault extends SolanaSwapModule {
 
@@ -70,18 +67,23 @@ export class SolanaLpVault extends SolanaSwapModule {
             action.add(this.root.Tokens.InitAta(this.provider.publicKey, token));
         }
         action.add(await this.Withdraw(token, amount));
-        if(token.equals(this.root.Tokens.WSOL_ADDRESS)) action.add(this.root.Tokens.Unwrap(this.provider.publicKey));
+        const shouldUnwrap = token.equals(this.root.Tokens.WSOL_ADDRESS);
+        if(shouldUnwrap) action.add(this.root.Tokens.Unwrap(this.provider.publicKey));
+
+        this.logger.debug("txsWithdraw(): withdraw TX created, token: "+token.toString()+
+            " amount: "+amount.toString(10)+" unwrapping: "+shouldUnwrap);
 
         return [await action.tx(feeRate)];
     }
 
     async txsDeposit(token: PublicKey, amount: BN, feeRate?: string): Promise<SolanaTx[]> {
-        const ata = await getAssociatedTokenAddress(token, this.provider.publicKey);
+        const ata = getAssociatedTokenAddressSync(token, this.provider.publicKey);
 
         feeRate = feeRate || await this.getFeeRate(token);
 
         const action = new SolanaAction(this.root);
 
+        let wrapping: boolean = false;
         if(token.equals(this.root.Tokens.WSOL_ADDRESS)) {
             const account = await tryWithRetries<Account>(
                 () => this.root.Tokens.getATAOrNull(ata),
@@ -90,9 +92,13 @@ export class SolanaLpVault extends SolanaSwapModule {
             let balance: BN = account==null ? new BN(0) : new BN(account.amount.toString());
             if(balance.lt(amount)) {
                 action.add(this.root.Tokens.Wrap(this.provider.publicKey, amount.sub(balance), account==null));
+                wrapping = true;
             }
         }
         action.addAction(await this.Deposit(token, amount));
+
+        this.logger.debug("txsDeposit(): deposit TX created, token: "+token.toString()+
+            " amount: "+amount.toString(10)+" wrapping: "+wrapping);
 
         return [await action.tx(feeRate)];
     }

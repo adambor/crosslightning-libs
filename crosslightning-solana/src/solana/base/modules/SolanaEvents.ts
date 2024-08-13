@@ -26,6 +26,14 @@ export class SolanaEvents extends SolanaModule {
         }
     }
 
+    /**
+     * Runs a search backwards in time, processing transaction signatures for a specific topic public key
+     *
+     * @param topicKey
+     * @param processor called for every batch of returned signatures, should return a value if the correct signature
+     *  was found, or null if the search should continue
+     * @param abortSignal
+     */
     public async findInSignatures<T>(
         topicKey: PublicKey,
         processor: (signatures: ConfirmedSignatureInfo[]) => Promise<T>,
