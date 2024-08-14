@@ -894,7 +894,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             metadata.times.swapSigned = Date.now();
 
             //Create swap
-            const createdSwap = new ToBtcLnSwapAbs<T>(parsedBody.pr, parsedAuth.swapFee, parsedAuth.routingFeeSats, new BN(sigData.timeout));
+            const createdSwap = new ToBtcLnSwapAbs<T>(parsedBody.pr, parsedAuth.swapFeeSats, parsedAuth.routingFeeSats, new BN(sigData.timeout));
             createdSwap.data = payObject;
             createdSwap.metadata = metadata;
 

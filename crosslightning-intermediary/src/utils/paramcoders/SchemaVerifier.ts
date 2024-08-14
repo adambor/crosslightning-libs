@@ -65,7 +65,7 @@ export function verifySchema<T extends RequestSchema>(req: any, schema: T): Requ
             continue;
         }
 
-        if(val==null && type>=100) {
+        if(val==null && (type as number)>=100) {
             resultSchema[fieldName] = null;
             continue;
         }
