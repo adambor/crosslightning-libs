@@ -32,6 +32,8 @@ export function getLogger(prefix: string) {
     };
 }
 
+const logger = getLogger("Utils: ");
+
 export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
     maxRetries?: number, delay?: number, exponential?: boolean
 }, errorAllowed?: (e: any) => boolean, abortSignal?: AbortSignal): Promise<T> {
@@ -49,7 +51,7 @@ export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
         } catch (e) {
             if(errorAllowed!=null && errorAllowed(e)) throw e;
             err = e;
-            console.error("tryWithRetries: "+i, e);
+            logger.error("tryWithRetries(): error on try number: "+i, e);
         }
         if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
         if(i!==retryPolicy.maxRetries-1) {
@@ -105,7 +107,7 @@ export class SolanaTxUtils {
      * @param feePayer the publicKey of the signer
      * @returns size in bytes of the transaction
      */
-    static getTxSize(tx: Transaction, feePayer: PublicKey): number {
+    public static getTxSize(tx: Transaction, feePayer: PublicKey): number {
         const feePayerPk = [feePayer.toBase58()];
 
         const signers = new Set<string>(feePayerPk);

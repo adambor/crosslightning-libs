@@ -22,7 +22,23 @@ export class SwapClaim extends SolanaSwapModule {
 
     readonly btcRelay: SolanaBtcRelay<any>;
 
+    /**
+     * Claim action which uses the provided hex encoded secret for claiming the swap
+     *
+     * @param swapData
+     * @param secret
+     * @constructor
+     * @private
+     */
     private Claim(swapData: SolanaSwapData, secret: string): Promise<SolanaAction>;
+    /**
+     * Claim action which uses data in the provided data ccount with dataKey to claim the swap
+     *
+     * @param swapData
+     * @param dataKey
+     * @constructor
+     * @private
+     */
     private Claim(swapData: SolanaSwapData, dataKey: PublicKey): Promise<SolanaAction>;
     private async Claim(
         swapData: SolanaSwapData,
@@ -69,6 +85,18 @@ export class SwapClaim extends SolanaSwapModule {
         }
     }
 
+    /**
+     * Verify and claim action required for BTC on-chain swaps verified through btc relay, adds the btc relay verify
+     *  instruction to the 0th index in the transaction, also intentionally sets compute budget to null such that no
+     *  compute budget instruction is added, since that takes up too much space and txs are limited to 1232 bytes
+     *
+     * @param swapData
+     * @param storeDataKey
+     * @param merkleProof
+     * @param commitedHeader
+     * @constructor
+     * @private
+     */
     private async VerifyAndClaim(
         swapData: SolanaSwapData,
         storeDataKey: PublicKey,
@@ -92,6 +120,12 @@ export class SwapClaim extends SolanaSwapModule {
         this.btcRelay = btcRelay;
     }
 
+    /**
+     * Gets the compute budget required for claiming the swap
+     *
+     * @param swapData
+     * @private
+     */
     private getComputeBudget(swapData: SolanaSwapData) {
         if(swapData.isPayOut()) {
             return SwapClaim.CUCosts[swapData.getType()===ChainSwapType.HTLC ? "CLAIM_PAY_OUT" : "CLAIM_ONCHAIN_PAY_OUT"]
@@ -106,21 +140,23 @@ export class SwapClaim extends SolanaSwapModule {
      * If synchronizer is passed & blockhash is not found, it produces transactions to sync up the btc relay to the
      *  current chain tip & adds them to the txs array
      *
-     * @param blockheight
-     * @param requiredConfirmations
-     * @param blockhash
-     * @param txs
-     * @param synchronizer
+     * @param txBlockheight transaction blockheight
+     * @param requiredConfirmations required confirmation for the swap to be claimable with that TX
+     * @param blockhash blockhash of the block which includes the transaction
+     * @param txs solana transaction array, in case we need to synchronize the btc relay ourselves the synchronization
+     *  txns are added here
+     * @param synchronizer optional synchronizer to use to synchronize the btc relay in case it is not yet synchronized
+     *  to the required blockheight
      * @private
      */
     private async getCommitedHeaderAndSynchronize(
-        blockheight: number,
+        txBlockheight: number,
         requiredConfirmations: number,
         blockhash: string,
         txs: SolanaTx[],
         synchronizer?: RelaySynchronizer<SolanaBtcStoredHeader, SolanaTx, any>,
     ): Promise<SolanaBtcStoredHeader> {
-        const requiredBlockheight = blockheight+requiredConfirmations-1;
+        const requiredBlockheight = txBlockheight+requiredConfirmations-1;
 
         const result = await tryWithRetries(
             () => this.btcRelay.retrieveLogAndBlockheight({
@@ -142,9 +178,19 @@ export class SwapClaim extends SolanaSwapModule {
         resp.txs.forEach(tx => txs.push(tx));
 
         //Retrieve computed header
-        return resp.computedHeaderMap[blockheight];
+        return resp.computedHeaderMap[txBlockheight];
     }
 
+    /**
+     * Adds the transactions required for initialization and writing of transaction data to the data account
+     *
+     * @param tx transaction to be written
+     * @param vout vout of the transaction to use to satisfy swap conditions
+     * @param feeRate fee rate for the transactions
+     * @param txs solana transaction array, init & write transactions are added here
+     * @private
+     * @returns {Promise<PublicKey>} publicKey/address of the data account
+     */
     private addTxsWriteTransactionData(
         tx: {hex: string, txid: string},
         vout: number,
@@ -173,6 +219,17 @@ export class SwapClaim extends SolanaSwapModule {
             swapData.claimer.equals(this.provider.publicKey);
     }
 
+    /**
+     * Creates transactions claiming the swap using a secret (for HTLC swaps)
+     *
+     * @param swapData swap to claim
+     * @param secret hex encoded secret pre-image to the HTLC hash
+     * @param checkExpiry whether to check if the swap is already expired (trying to claim an expired swap with a secret
+     *  is dangerous because we might end up revealing the secret to the counterparty without being able to claim the swap)
+     * @param initAta whether to init the claimer's ATA if it doesn't exist
+     * @param feeRate fee rate to use for the transaction
+     * @param skipAtaCheck whether to check if ATA exists
+     */
     async txsClaimWithSecret(swapData: SolanaSwapData, secret: string, checkExpiry?: boolean, initAta?: boolean, feeRate?: string, skipAtaCheck?: boolean): Promise<SolanaTx[]> {
         //We need to be sure that this transaction confirms in time, otherwise we reveal the secret to the counterparty
         // and won't claim the funds
@@ -201,6 +258,19 @@ export class SwapClaim extends SolanaSwapModule {
         return [await action.tx(feeRate)];
     }
 
+    /**
+     * Creates transaction claiming the swap using a confirmed transaction data (for BTC on-chain swaps)
+     *
+     * @param swapData swap to claim
+     * @param blockheight blockheight of the bitcoin transaction
+     * @param tx bitcoin transaction that satisfies the swap condition
+     * @param vout vout of the bitcoin transaction that satisfies the swap condition
+     * @param commitedHeader commited header data from btc relay (fetched internally if null)
+     * @param synchronizer optional synchronizer to use in case we need to sync up the btc relay ourselves
+     * @param initAta whether to initialize claimer's ATA
+     * @param storageAccHolder an object holder filled in with the created data account where tx data is written
+     * @param feeRate fee rate to be used for the transactions
+     */
     async txsClaimWithTxData(
         swapData: SolanaSwapData,
         blockheight: number,
@@ -270,6 +340,10 @@ export class SwapClaim extends SolanaSwapModule {
         return this.root.Fees.getFeeRate(accounts);
     }
 
+    /**
+     * Get the estimated solana transaction fee of the claim transaction, this fee might be negative since it
+     *  includes the rebate for closing the swap PDA
+     */
     public async getClaimFee(swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
         if(swapData==null) return new BN(-this.root.ESCROW_STATE_RENT_EXEMPT+5000);
 
@@ -280,6 +354,10 @@ export class SwapClaim extends SolanaSwapModule {
         );
     }
 
+    /**
+     * Get the estimated solana transaction fee of the claim transaction in the worst case scenario in case where the
+     *  ATA needs to be initialized again (i.e. adding the ATA rent exempt lamports to the fee)
+     */
     public async getRawClaimFee(swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
         if(swapData==null) return new BN(5000);
 

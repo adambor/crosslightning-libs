@@ -24,6 +24,11 @@ export type EventObject = {
 
 export type InitInstruction = SingleInstructionWithAccounts<SwapProgram["instructions"][2 | 3], SwapProgram>;
 
+/**
+ * Solana on-chain event handler for front-end systems without access to fs, uses pure WS to subscribe, might lose
+ *  out on some events if the network is unreliable, front-end systems should take this into consideration and not
+ *  rely purely on events
+ */
 export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
 
     protected readonly listeners: EventListener<SolanaSwapData>[] = [];

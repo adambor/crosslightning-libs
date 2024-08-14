@@ -58,6 +58,14 @@ export class SolanaProgramEvents<IDL extends Idl> extends SolanaEvents {
         return events;
     }
 
+    /**
+     * Runs a search backwards in time, processing the events for a specific topic public key
+     *
+     * @param topicKey
+     * @param processor called for every event, should return a value if the correct event was found, or null
+     *  if the search should continue
+     * @param abortSignal
+     */
     public findInEvents<T>(
         topicKey: PublicKey,
         processor: (event: ProgramEvent<IDL>) => Promise<T>,
@@ -74,6 +82,12 @@ export class SolanaProgramEvents<IDL extends Idl> extends SolanaEvents {
         }, abortSignal);
     }
 
+    /**
+     * Decodes the instructions for this program from the transaction, leaves null in the returned instructions array
+     *  for every instruction that doesn't correspond to this program (as those are impossible to parse)
+     *
+     * @param transactionMessage
+     */
     public decodeInstructions(transactionMessage: ParsedMessage): InstructionWithAccounts<IDL>[] {
         const instructions: InstructionWithAccounts<IDL>[] = [];
 
@@ -105,6 +119,11 @@ export class SolanaProgramEvents<IDL extends Idl> extends SolanaEvents {
         return instructions;
     }
 
+    /**
+     * Parses program event related to this program from transaction logs
+     *
+     * @param logs
+     */
     public parseLogs(logs: string[]): ProgramEvent<IDL>[] {
         const eventsGenerator = this.eventParser.parseLogs(logs);
 

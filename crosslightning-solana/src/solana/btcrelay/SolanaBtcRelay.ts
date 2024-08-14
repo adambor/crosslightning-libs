@@ -34,6 +34,15 @@ function serializeBlockHeader(e: BtcBlock): SolanaBtcHeader {
 
 export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> implements BtcRelay<SolanaBtcStoredHeader, {tx: Transaction, signers: Signer[]}, B> {
 
+    /**
+     * Creates initialization action for initializing the btc relay
+     *
+     * @param header
+     * @param epochStart
+     * @param pastBlocksTimestamps
+     * @constructor
+     * @private
+     */
     private async Initialize(header: B, epochStart: number, pastBlocksTimestamps: number[]): Promise<SolanaAction> {
         const serializedBlock = serializeBlockHeader(header);
         return new SolanaAction(this,
@@ -56,7 +65,9 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
     }
 
     /**
-     * Creates verify action to be used with the swap program
+     * Creates verify action to be used with the swap program, specifies the action to be firstIxBeforeComputeBudget,
+     *  such that the verify instruction will always be the 0th in the transaction, this is required because
+     *  swap program expects the verify instruction to be at the 0th position
      *
      * @param reversedTxId
      * @param confirmations

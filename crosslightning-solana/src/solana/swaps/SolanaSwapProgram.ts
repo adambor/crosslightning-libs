@@ -141,12 +141,22 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
 
     ////////////////////////////////////////////
     //// Swap data utils
+    /**
+     * Checks whether the claim is claimable by us, that means not expired, we are claimer & the swap is commited
+     *
+     * @param data
+     */
     isClaimable(data: SolanaSwapData): Promise<boolean> {
         if(!this.areWeClaimer(data)) return Promise.resolve(false);
         if(this.isExpired(data)) return Promise.resolve(false);
         return this.isCommited(data);
     }
 
+    /**
+     * Checks whether a swap is commited, i.e. the swap still exists on-chain and was not claimed nor refunded
+     *
+     * @param swapData
+     */
     async isCommited(swapData: SolanaSwapData): Promise<boolean> {
         const paymentHash = Buffer.from(swapData.paymentHash, "hex");
 
@@ -156,6 +166,12 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
         return swapData.correctPDA(account);
     }
 
+    /**
+     * Checks whether the swap is expired, takes into consideration possible on-chain time skew, therefore for claimer
+     *  the swap expires a bit sooner than it should've & for the offerer it expires a bit later
+     *
+     * @param data
+     */
     isExpired(data: SolanaSwapData): boolean {
         let currentTimestamp: BN = new BN(Math.floor(Date.now()/1000));
         if(this.areWeOfferer(data)) currentTimestamp = currentTimestamp.sub(new BN(this.refundGracePeriod));
@@ -163,17 +179,25 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
         return data.expiry.lt(currentTimestamp);
     }
 
+    /**
+     * Checks if the swap is refundable by us, checks if we are offerer, if the swap is already expired & if the swap
+     *  is still commited
+     *
+     * @param data
+     */
     isRequestRefundable(data: SolanaSwapData): Promise<boolean> {
         //Swap can only be refunded by the offerer
         if(!this.areWeOfferer(data)) return Promise.resolve(false);
-
-        const currentTimestamp = new BN(Math.floor(Date.now()/1000)-this.refundGracePeriod);
-        const isExpired = data.expiry.lt(currentTimestamp);
-        if(!isExpired) return Promise.resolve(false);
-
+        if(!this.isExpired(data)) return Promise.resolve(false);
         return this.isCommited(data);
     }
 
+    /**
+     * Checks whether we are claimer for a specific swap, also check the claimerAta is correct for the swap in
+     *  case of payOut=true swap
+     *
+     * @param swapData
+     */
     areWeClaimer(swapData: SolanaSwapData): boolean {
         if(swapData.isPayOut()) {
             //Also check that swapData's ATA is correct
@@ -183,10 +207,20 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
         return swapData.claimer.equals(this.provider.publicKey);
     }
 
+    /**
+     * Checks whether we are offerer for the specific swap
+     *
+     * @param swapData
+     */
     areWeOfferer(swapData: SolanaSwapData): boolean {
         return swapData.offerer.equals(this.provider.publicKey);
     }
 
+    /**
+     * Sets us (provider's public key) as claimer for the swap (also sets payOut=true, payIn=false & claimerAta)
+     *
+     * @param swapData
+     */
     setUsAsClaimer(swapData: SolanaSwapData) {
         swapData.claimer = this.provider.publicKey;
         swapData.payIn = false;
@@ -194,12 +228,24 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
         swapData.claimerAta = getAssociatedTokenAddressSync(swapData.token, this.provider.publicKey);
     }
 
+    /**
+     * Sets us (provider's public key) as offerer for the swap (also sets payIn=true & offererAta)
+     *
+     * @param swapData
+     */
     setUsAsOfferer(swapData: SolanaSwapData) {
         swapData.offerer = this.provider.publicKey;
         swapData.offererAta = getAssociatedTokenAddressSync(swapData.token, this.provider.publicKey);
         swapData.payIn = true;
     }
 
+    /**
+     * Get the swap payment hash to be used for an on-chain swap, this just uses a sha256 hash of the values
+     *
+     * @param outputScript output script required to claim the swap
+     * @param amount sats sent required to claim the swap
+     * @param nonce swap nonce uniquely identifying the transaction to prevent replay attacks
+     */
     getHashForOnchain(outputScript: Buffer, amount: BN, nonce: BN): Buffer {
         return createHash("sha256").update(Buffer.concat([
             Buffer.from(nonce.toArray("le", 8)),
@@ -210,6 +256,12 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
 
     ////////////////////////////////////////////
     //// Swap data getters
+    /**
+     * Gets the status of the specific swap, this also checks if we are offerer/claimer & checks for expiry (to see
+     *  if swap is refundable)
+     *
+     * @param data
+     */
     async getCommitStatus(data: SolanaSwapData): Promise<SwapCommitStatus> {
         const escrowStateKey = this.SwapEscrowState(Buffer.from(data.paymentHash, "hex"));
         const escrowState: IdlAccounts<SwapProgram>["escrowState"] = await this.program.account.escrowState.fetchNullable(escrowStateKey);
@@ -243,6 +295,11 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
         return SwapCommitStatus.NOT_COMMITED;
     }
 
+    /**
+     * Checks the status of the specific payment hash
+     *
+     * @param paymentHash
+     */
     async getPaymentHashStatus(paymentHash: string): Promise<SwapCommitStatus> {
         const escrowStateKey = this.SwapEscrowState(Buffer.from(paymentHash, "hex"));
         const abortController = new AbortController();
@@ -271,6 +328,12 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
         return SwapCommitStatus.NOT_COMMITED;
     }
 
+    /**
+     * Returns the data committed for a specific payment hash, or null if no data is currently commited for
+     *  the specific swap
+     *
+     * @param paymentHashHex
+     */
     async getCommitedData(paymentHashHex: string): Promise<SolanaSwapData> {
         const paymentHash = Buffer.from(paymentHashHex, "hex");
 
@@ -327,7 +390,7 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
     async getBalance(token: PublicKey, inContract: boolean): Promise<BN> {
         if(inContract) return await this.getIntermediaryBalance(this.provider.publicKey.toString(), token);
 
-        let balance = await this.Tokens.getTokenBalance(token);
+        let balance = await this.Tokens.getTokenBalance(this.provider.publicKey, token);
         if(token.equals(this.Tokens.WSOL_ADDRESS)) {
             const feeCosts = new BN(5000).add(await this.getCommitFee(null));
             balance = BN.max(balance.sub(feeCosts), new BN(0));
@@ -336,41 +399,19 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
         return balance;
     }
 
-    async getIntermediaryData(address: string, token: PublicKey): Promise<{
+    getIntermediaryData(address: string, token: PublicKey): Promise<{
         balance: BN,
         reputation: IntermediaryReputationType
     }> {
-        const data: IdlAccounts<SwapProgram>["userAccount"] = await this.program.account.userAccount.fetchNullable(this.SwapUserVault(new PublicKey(address), token));
-
-        if(data==null) return null;
-
-        const response: any = [];
-
-        for(let i=0;i<data.successVolume.length;i++) {
-            response[i] = {
-                successVolume: data.successVolume[i],
-                successCount: data.successCount[i],
-                failVolume: data.failVolume[i],
-                failCount: data.failCount[i],
-                coopCloseVolume: data.coopCloseVolume[i],
-                coopCloseCount: data.coopCloseCount[i]
-            };
-        }
-
-        return {
-            balance: data.amount,
-            reputation: response
-        };
+        return this.LpVault.getIntermediaryData(address, token);
     }
 
-    async getIntermediaryReputation(address: string, token: PublicKey): Promise<IntermediaryReputationType> {
-        const intermediaryData = await this.getIntermediaryData(address, token);
-        return intermediaryData?.reputation;
+    getIntermediaryReputation(address: string, token: PublicKey): Promise<IntermediaryReputationType> {
+        return this.LpVault.getIntermediaryReputation(address, token);
     }
 
-    async getIntermediaryBalance(address: string, token: PublicKey): Promise<BN> {
-        const intermediaryData = await this.getIntermediaryData(address, token);
-        return intermediaryData?.balance;
+    getIntermediaryBalance(address: string, token: PublicKey): Promise<BN> {
+        return this.LpVault.getIntermediaryBalance(address, token);
     }
 
     getAddress(): string {
@@ -429,7 +470,7 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
     }
 
     txsInit(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, txoHash?: Buffer, skipChecks?: boolean, feeRate?: string): Promise<SolanaTx[]> {
-        return this.Init.txsInit(swapData, timeout, prefix, signature, txoHash, skipChecks, feeRate);
+        return this.Init.txsInit(swapData, timeout, prefix, signature, skipChecks, feeRate);
     }
 
     txsWithdraw(token: PublicKey, amount: BN, feeRate?: string): Promise<SolanaTx[]> {
@@ -457,7 +498,6 @@ export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements
     ): Promise<string> {
         const result = await this.txsClaimWithSecret(swapData, secret, checkExpiry, initAta, feeRate);
         const [signature] = await this.Transactions.sendAndConfirm(result, waitForConfirmation, abortSignal);
-        console.log("[To BTCLN: Solana.PaymentResult] Transaction sent: ", signature);
         return signature;
     }
 

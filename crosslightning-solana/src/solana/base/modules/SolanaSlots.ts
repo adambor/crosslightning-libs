@@ -14,6 +14,12 @@ export class SolanaSlots extends SolanaModule {
         }
     } = {};
 
+    /**
+     * Initiates fetch of a given slot & saves it to cache
+     *
+     * @param commitment
+     * @private
+     */
     private fetchAndSaveSlot(commitment: Commitment): {slot: Promise<number>, timestamp: number} {
         const slotPromise = this.provider.connection.getSlot(commitment);
         const timestamp = Date.now();
@@ -33,6 +39,12 @@ export class SolanaSlots extends SolanaModule {
 
     ///////////////////
     //// Slots
+    /**
+     * Gets the latest slot for a given commitment, with the timestamp of when that slot was actually retrieved from
+     *  the RPC (useful for when slots are cached), does no estimation on the current slot number based on cached value
+     *
+     * @param commitment
+     */
     public async getSlotAndTimestamp(commitment: Commitment): Promise<{
         slot: number,
         timestamp: number
@@ -49,6 +61,12 @@ export class SolanaSlots extends SolanaModule {
         };
     }
 
+    /**
+     * Gets the slot for a given commitment, uses slot cache & tries to estimate current slot based on the cached
+     *  value, cache has relatively short expiry of just 12 slots (4.8 seconds)
+     *
+     * @param commitment
+     */
     public async getSlot(commitment: Commitment): Promise<number> {
         let cachedSlotData = this.slotCache[commitment];
 

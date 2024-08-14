@@ -436,12 +436,12 @@ export class SwapInit extends SolanaSwapModule {
      *  the init transaction (if indicated by the fee rate) or adds the wrapping in a separate transaction (if no
      *  indication in the fee rate)
      *
-     * @param swapData
-     * @param timeout
-     * @param prefix
-     * @param signature
-     * @param skipChecks
-     * @param feeRate
+     * @param swapData swap to initialize
+     * @param timeout init signature timeout
+     * @param prefix init signature prefix
+     * @param signature init signature
+     * @param skipChecks whether to skip signature validity checks
+     * @param feeRate fee rate to use for the transaction
      */
     public async txsInitPayIn(
         swapData: SolanaSwapData,
@@ -500,15 +500,14 @@ export class SwapInit extends SolanaSwapModule {
     /**
      * Creates init transactions (InitNotPayIn) with a valid signature from an intermediary
      *
-     * @param swapData
-     * @param timeout
-     * @param prefix
-     * @param signature
-     * @param txoHash
-     * @param skipChecks
-     * @param feeRate
+     * @param swapData swap to initialize
+     * @param timeout init signature timeout
+     * @param prefix init signature prefix
+     * @param signature init signature
+     * @param skipChecks whether to skip signature validity checks
+     * @param feeRate fee rate to use for the transaction
      */
-    public async txsInit(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, txoHash?: Buffer, skipChecks?: boolean, feeRate?: string): Promise<SolanaTx[]> {
+    public async txsInit(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, skipChecks?: boolean, feeRate?: string): Promise<SolanaTx[]> {
         if(!skipChecks) {
             await tryWithRetries(
                 () => this.isSignatureValid(swapData, timeout, prefix, signature, feeRate),
@@ -589,7 +588,7 @@ export class SwapInit extends SolanaSwapModule {
     }
 
     /**
-     * Get the estimated solana fee of the init transaction
+     * Get the estimated solana fee of the init transaction, this includes the required deposit for creating swap PDA
      */
     async getInitFee(swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
         if(swapData==null) return new BN(this.root.ESCROW_STATE_RENT_EXEMPT+10000);

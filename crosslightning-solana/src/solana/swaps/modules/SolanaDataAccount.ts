@@ -47,7 +47,7 @@ export class SolanaDataAccount extends SolanaSwapModule {
     };
 
     /**
-     * Adds instructions for initialization of data account
+     * Action for initialization of the data account
      *
      * @param accountKey
      * @param dataLength
@@ -82,7 +82,7 @@ export class SolanaDataAccount extends SolanaSwapModule {
     }
 
     /**
-     * Returns transactions for closing the specific data account
+     * Action for closing the specific data account
      *
      * @param publicKey
      */
@@ -102,14 +102,15 @@ export class SolanaDataAccount extends SolanaSwapModule {
     }
 
     /**
-     * Adds instructions for writting data to a specific account
+     * Action for writing data to a data account, writes up to sizeLimit starting from the offset position of the
+     *  provided writeData buffer
      *
-     * @param accountKey
-     * @param writeData
-     * @param offset
-     * @param sizeLimit
+     * @param accountKey account public key to write to
+     * @param writeData buffer holding the write data
+     * @param offset data from buffer starting at offset are written
+     * @param sizeLimit maximum amount of data to be written to the data account in this action
      * @private
-     * @returns {number} bytes written to the data account
+     * @returns {Promise<{bytesWritten: number, action: SolanaAction}>} bytes written to the data account & action
      */
     private async WriteData(
         accountKey: Signer,
@@ -139,16 +140,32 @@ export class SolanaDataAccount extends SolanaSwapModule {
         this.storage = storage;
     }
 
+    /**
+     * Saves data account to the storage, the storage is required such that we are able to close the accounts later
+     *  manually in case the claim doesn't happen (expires due to fees, etc.)
+     *
+     * @param publicKey
+     * @private
+     */
     private saveDataAccount(publicKey: PublicKey): Promise<void> {
         return this.storage.saveData(publicKey.toBase58(), new StoredDataAccount(publicKey));
     }
 
+    /**
+     * Initializes the data account handler, loads the existing data accounts which should be checked and closed
+     */
     public async init() {
         await this.storage.init();
         const loadedData = await this.storage.loadData(StoredDataAccount);
         this.logger.info("init(): initialized & loaded stored data accounts, count: "+loadedData.length);
     }
 
+    /**
+     * Removes data account from the list of accounts that should be checked for reclaiming the locked SOL, this should
+     *  be called after a batch of transactions claiming the swap was confirmed
+     *
+     * @param publicKey
+     */
     public removeDataAccount(publicKey: PublicKey): Promise<void> {
         return this.storage.removeData(publicKey.toBase58());
     }
@@ -188,6 +205,14 @@ export class SolanaDataAccount extends SolanaSwapModule {
         }
     }
 
+    /**
+     * Adds the transactions writing (and also initializing if it doesn't exist) data to the data account
+     *
+     * @param reversedTxId reversed btc tx id is used to derive the data account address
+     * @param writeData full data to be written to the data account
+     * @param txs solana transactions array, where txns for writing & initializing will be added
+     * @param feeRate fee rate to use for the transactions
+     */
     public async addTxsWriteData(
         reversedTxId: Buffer,
         writeData: Buffer,

@@ -5,6 +5,9 @@ import {SolanaProgramEvents} from "./modules/SolanaProgramEvents";
 import {Keypair, PublicKey} from "@solana/web3.js";
 import {createHash} from "crypto";
 
+/**
+ * Base class providing program specific utilities
+ */
 export class SolanaProgramBase<T extends Idl> extends SolanaBase {
 
     program: Program<T>;
@@ -24,7 +27,18 @@ export class SolanaProgramBase<T extends Idl> extends SolanaBase {
         this.Events = new SolanaProgramEvents(this);
     }
 
+    /**
+     * Derives static PDA address from the seed
+     *
+     * @param seed
+     */
     public pda(seed: string): PublicKey;
+    /**
+     * Returns a function for deriving a dynamic PDA address from seed + dynamic arguments
+     *
+     * @param seed
+     * @param func function translating the function argument to Buffer[]
+     */
     public pda<T extends Array<any>>(seed: string, func: (...args: T) => Buffer[]): (...args: T) => PublicKey;
     public pda<T extends Array<any>>(seed: string, func?: (...args: T) => Buffer[]): PublicKey | ((...args: T) => PublicKey) {
         if(func==null) {
@@ -41,7 +55,11 @@ export class SolanaProgramBase<T extends Idl> extends SolanaBase {
             )[0]
         }
     }
-
+    /**
+     * Returns a function for deriving a dynamic deterministic keypair from dynamic arguments
+     *
+     * @param func function translating the function argument to Buffer[] to be used for deriving the keypair
+     */
     public keypair<T extends Array<any>>(func: (...args: T) => Buffer[]): (...args: T) => Keypair {
         return (...args: T) => {
             const res = func(...args);

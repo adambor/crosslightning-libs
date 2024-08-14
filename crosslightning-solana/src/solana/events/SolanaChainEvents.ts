@@ -9,6 +9,10 @@ const BLOCKHEIGHT_FILENAME = "/blockheight.txt";
 const LOG_FETCH_INTERVAL = 5*1000;
 const LOG_FETCH_LIMIT = 500;
 
+/**
+ * Event handler for backend Node.js systems with access to fs, uses HTTP polling in combination with WS to not miss
+ *  any events
+ */
 export class SolanaChainEvents extends SolanaChainEventsBrowser {
 
     private readonly directory: string;
@@ -18,6 +22,8 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
     private signaturesProcessing: {
         [signature: string]: Promise<boolean>
     } = {};
+    private stopped: boolean;
+    private timeout: NodeJS.Timeout;
 
     constructor(
         directory: string,
@@ -250,13 +256,15 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
     }
 
     async setupHttpPolling() {
+        this.stopped = false;
         let func;
         func = async () => {
             await this.checkEvents().catch(e => {
                 console.error("Failed to fetch Sol log");
                 console.error(e);
             });
-            setTimeout(func, this.logFetchInterval);
+            if(this.stopped) return;
+            this.timeout = setTimeout(func, this.logFetchInterval);
         };
         await func();
     }
@@ -268,6 +276,12 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
 
         await this.setupHttpPolling();
         this.setupWebsocket();
+    }
+
+    stop(): Promise<void> {
+        this.stopped = true;
+        if(this.timeout!=null) clearTimeout(this.timeout)
+        return super.stop();
     }
 
 }

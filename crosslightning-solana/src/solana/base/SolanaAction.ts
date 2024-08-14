@@ -67,15 +67,6 @@ export class SolanaAction {
         return this;
     }
 
-    public ixs(): TransactionInstruction[] {
-        return this.instructions;
-    }
-
-    public addToIxs(instructions: TransactionInstruction[]): number {
-        this.instructions.forEach(ix => instructions.push(ix));
-        return this.computeBudget || 0;
-    }
-
     public async tx(feeRate?: string, block?: {blockhash: string, blockHeight: number}): Promise<SolanaTx> {
         const tx = new Transaction();
         tx.feePayer = this.root.provider.publicKey;
@@ -100,7 +91,7 @@ export class SolanaAction {
         return {
             tx,
             signers: this.signers
-        }
+        };
     }
 
     public async addToTxs(txs: SolanaTx[], feeRate?: string, block?: {blockhash: string, blockHeight: number}): Promise<void> {
