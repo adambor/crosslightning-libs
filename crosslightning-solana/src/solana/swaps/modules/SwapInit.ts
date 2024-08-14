@@ -1,4 +1,4 @@
-import {ParsedAccountsModeBlockResponse, PublicKey, Signer, SystemProgram, Transaction} from "@solana/web3.js";
+import {ParsedAccountsModeBlockResponse, PublicKey, SystemProgram, Transaction} from "@solana/web3.js";
 import {SignatureVerificationError, SwapCommitStatus, SwapDataVerificationError} from "crosslightning-base";
 import * as BN from "bn.js";
 import {SolanaSwapData} from "../SolanaSwapData";
@@ -6,8 +6,6 @@ import {SolanaAction} from "../../base/SolanaAction";
 import {
     Account,
     createAssociatedTokenAccountIdempotentInstruction,
-    createAssociatedTokenAccountInstruction,
-    createSyncNativeInstruction,
     getAssociatedTokenAddressSync,
     TOKEN_PROGRAM_ID
 } from "@solana/spl-token";
@@ -43,7 +41,7 @@ export class SwapInit extends SolanaSwapModule {
     };
 
     /**
-     * Returns Init action based on the data passed in swapData
+     * bare Init action based on the data passed in swapData
      *
      * @param swapData
      * @param timeout
@@ -102,6 +100,15 @@ export class SwapInit extends SolanaSwapModule {
         }
     }
 
+    /**
+     * InitPayIn action which includes SOL to WSOL wrapping if indicated by the fee rate
+     *
+     * @param swapData
+     * @param timeout
+     * @param feeRate
+     * @constructor
+     * @private
+     */
     private async InitPayIn(swapData: SolanaSwapData, timeout: BN, feeRate: string): Promise<SolanaAction> {
         if(!swapData.isPayIn()) throw new Error("Must be payIn==true");
         const action = new SolanaAction(this.root);
@@ -110,6 +117,16 @@ export class SwapInit extends SolanaSwapModule {
         return action;
     }
 
+    /**
+     * InitNotPayIn action with additional createAssociatedTokenAccountIdempotentInstruction instruction, such that
+     *  a recipient ATA is created if it doesn't exist
+     *
+     * @param swapData
+     * @param timeout
+     * @param feeRate
+     * @constructor
+     * @private
+     */
     private async InitNotPayIn(swapData: SolanaSwapData, timeout: BN, feeRate: string): Promise<SolanaAction> {
         if(swapData.isPayIn()) throw new Error("Must be payIn==false");
         const action = new SolanaAction(this.root);
@@ -134,6 +151,14 @@ export class SwapInit extends SolanaSwapModule {
         return this.root.Tokens.Wrap(swapData.offerer, swapData.amount.sub(data.balance), data.initAta);
     }
 
+    /**
+     * Extracts data about SOL to WSOL wrapping from the fee rate, fee rate is used to convey this information from
+     *  the user to the intermediary, such that the intermediary creates valid signature for transaction including
+     *  the SOL to WSOL wrapping instructions
+     *
+     * @param feeRate
+     * @private
+     */
     private extractAtaDataFromFeeRate(feeRate: string): {balance: BN, initAta: boolean} | null {
         const hashArr = feeRate==null ? [] : feeRate.split("#");
         if(hashArr.length<=1) return null;
@@ -161,6 +186,15 @@ export class SwapInit extends SolanaSwapModule {
         return data.balance.lt(swapData.amount);
     }
 
+    /**
+     * Returns the transaction to be signed as an initialization signature from the intermediary, also adds
+     *  SOL to WSOL wrapping if indicated by the fee rate
+     *
+     * @param swapData
+     * @param timeout
+     * @param feeRate
+     * @private
+     */
     private async getTxToSign(swapData: SolanaSwapData, timeout: string, feeRate?: string): Promise<Transaction> {
         const action = swapData.isPayIn() ?
             await this.InitPayIn(swapData, new BN(timeout), feeRate) :
@@ -169,6 +203,13 @@ export class SwapInit extends SolanaSwapModule {
         return (await action.tx(feeRate)).tx;
     }
 
+    /**
+     * Returns auth prefix to be used with a specific swap, payIn=true & payIn=false use different prefixes (these
+     *  actually have no meaning for the smart contract/solana program in the Solana case)
+     *
+     * @param swapData
+     * @private
+     */
     private getAuthPrefix(swapData: SolanaSwapData): string {
         return swapData.isPayIn() ? "claim_initialize" : "initialize";
     }
@@ -212,6 +253,12 @@ export class SwapInit extends SolanaSwapModule {
         return this.root.Blocks.getParsedBlock(txSlot).then(val => val.blockhash);
     }
 
+    /**
+     * Pre-fetches slot & block based on priorly received SolanaPreFetchData, such that it can later be used
+     *  by signature verification
+     *
+     * @param data
+     */
     public async preFetchForInitSignatureVerification(data: SolanaPreFetchData): Promise<SolanaPreFetchVerification> {
         const [latestSlot, txBlock] = await Promise.all([
             this.root.Slots.getSlotAndTimestamp("processed"),
@@ -226,6 +273,10 @@ export class SwapInit extends SolanaSwapModule {
         }
     }
 
+    /**
+     * Pre-fetches block data required for signing the init message by the LP, this can happen in parallel before
+     *  signing takes place making the quoting quicker
+     */
     public async preFetchBlockDataForSignatures(): Promise<SolanaPreFetchData> {
         const latestParsedBlock = await this.root.Blocks.findLatestParsedBlock("finalized");
         return {
@@ -380,6 +431,18 @@ export class SwapInit extends SolanaSwapModule {
         return false;
     }
 
+    /**
+     * Creates init transaction (InitPayIn) with a valid signature from an LP, also adds a SOL to WSOL wrapping ix to
+     *  the init transaction (if indicated by the fee rate) or adds the wrapping in a separate transaction (if no
+     *  indication in the fee rate)
+     *
+     * @param swapData
+     * @param timeout
+     * @param prefix
+     * @param signature
+     * @param skipChecks
+     * @param feeRate
+     */
     public async txsInitPayIn(
         swapData: SolanaSwapData,
         timeout: string,
@@ -434,6 +497,17 @@ export class SwapInit extends SolanaSwapModule {
         return txs;
     }
 
+    /**
+     * Creates init transactions (InitNotPayIn) with a valid signature from an intermediary
+     *
+     * @param swapData
+     * @param timeout
+     * @param prefix
+     * @param signature
+     * @param txoHash
+     * @param skipChecks
+     * @param feeRate
+     */
     public async txsInit(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string, txoHash?: Buffer, skipChecks?: boolean, feeRate?: string): Promise<SolanaTx[]> {
         if(!skipChecks) {
             await tryWithRetries(
@@ -457,6 +531,15 @@ export class SwapInit extends SolanaSwapModule {
         return [initTx];
     }
 
+    /**
+     * Returns the fee rate to be used for a specific init transaction, also adding indication whether the WSOL ATA
+     *  should be initialized in the init transaction and/or current balance in the WSOL ATA
+     *
+     * @param offerer
+     * @param claimer
+     * @param token
+     * @param paymentHash
+     */
     public async getInitPayInFeeRate(offerer?: string, claimer?: string, token?: PublicKey, paymentHash?: string): Promise<string> {
         const accounts: PublicKey[] = [];
 
@@ -487,6 +570,14 @@ export class SwapInit extends SolanaSwapModule {
         return feeRate;
     }
 
+    /**
+     * Returns the fee rate to be used for a specific init transaction
+     *
+     * @param offerer
+     * @param claimer
+     * @param token
+     * @param paymentHash
+     */
     public getInitFeeRate(offerer?: string, claimer?: string, token?: PublicKey, paymentHash?: string): Promise<string> {
         const accounts: PublicKey[] = [];
 
@@ -498,7 +589,7 @@ export class SwapInit extends SolanaSwapModule {
     }
 
     /**
-     * Get the estimated solana fee of the commit transaction
+     * Get the estimated solana fee of the init transaction
      */
     async getInitFee(swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
         if(swapData==null) return new BN(this.root.ESCROW_STATE_RENT_EXEMPT+10000);
