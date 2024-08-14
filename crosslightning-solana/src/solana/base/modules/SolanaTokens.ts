@@ -1,5 +1,5 @@
 import {SolanaModule} from "../SolanaModule";
-import {PublicKey, SystemProgram, Transaction, TransactionInstruction} from "@solana/web3.js";
+import {PublicKey, SystemProgram} from "@solana/web3.js";
 import {
     Account, createAssociatedTokenAccountInstruction,
     createCloseAccountInstruction, createSyncNativeInstruction, createTransferInstruction,

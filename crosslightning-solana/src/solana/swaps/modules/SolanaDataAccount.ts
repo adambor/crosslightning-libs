@@ -4,7 +4,7 @@ import {IStorageManager, StorageObject} from "crosslightning-base";
 import {SolanaSwapProgram} from "../SolanaSwapProgram";
 import {SolanaAction} from "../../base/SolanaAction";
 import {SolanaTx} from "../../base/modules/SolanaTransactions";
-import {getLogger, tryWithRetries} from "../../../utils/Utils";
+import {tryWithRetries} from "../../../utils/Utils";
 import {randomBytes} from "crypto";
 
 export class StoredDataAccount implements StorageObject {

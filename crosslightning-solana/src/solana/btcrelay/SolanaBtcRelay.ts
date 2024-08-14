@@ -3,8 +3,7 @@ import {
     PublicKey,
     Signer,
     SystemProgram,
-    Transaction,
-    TransactionInstruction
+    Transaction
 } from "@solana/web3.js";
 import {SolanaBtcStoredHeader, SolanaBtcStoredHeaderType} from "./headers/SolanaBtcStoredHeader";
 import {SolanaBtcHeader} from "./headers/SolanaBtcHeader";

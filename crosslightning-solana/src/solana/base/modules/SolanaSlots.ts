@@ -1,5 +1,5 @@
 import {SolanaModule} from "../SolanaModule";
-import {Commitment, ParsedAccountsModeBlockResponse, PublicKey} from "@solana/web3.js";
+import {Commitment} from "@solana/web3.js";
 
 
 export class SolanaSlots extends SolanaModule {
