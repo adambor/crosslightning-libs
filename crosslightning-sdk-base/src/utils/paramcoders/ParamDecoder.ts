@@ -139,7 +139,7 @@ export class ParamDecoder implements IParamReader {
                 continue;
             }
 
-            if(val==null && type>=100) {
+            if(val==null && (type as FieldTypeEnum)>=100) {
                 resultSchema[fieldName] = null;
                 continue;
             }

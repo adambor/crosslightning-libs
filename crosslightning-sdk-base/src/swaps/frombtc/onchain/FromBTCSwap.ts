@@ -132,7 +132,7 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
             }
         }, abortSignal, checkIntervalSeconds);
 
-        if(abortSignal==null && abortSignal.aborted) throw new Error("Aborted");
+        if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
 
         this.txId = result.tx.txid;
         this.vout = result.vout;

@@ -64,7 +64,7 @@ export function verifyField<T extends FieldTypeEnum | RequestSchema | ((val: any
         return result;
     }
 
-    if(val==null && type>=100) {
+    if(val==null && (type as FieldTypeEnum)>=100) {
         return null;
     }
 
@@ -107,7 +107,7 @@ export function verifySchema<T extends RequestSchema>(req: any, schema: T): Requ
             continue;
         }
 
-        if(val==null && type>=100) {
+        if(val==null && (type as FieldTypeEnum)>=100) {
             resultSchema[fieldName] = null;
             continue;
         }
