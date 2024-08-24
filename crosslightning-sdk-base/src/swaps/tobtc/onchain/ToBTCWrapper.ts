@@ -35,21 +35,21 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T> {
      * @param additionalParams      Additional parameters sent to the LP when creating the swap
      * @param abortSignal           Abort signal for aborting the process
      */
-    create(
+    async create(
         address: string,
         amountData: AmountData,
         lps: Intermediary[],
         options: ToBTCOptions,
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
-    ): {
+    ): Promise<{
         quote: Promise<ToBTCSwap<T>>,
         intermediary: Intermediary
-    }[] {
+    }[]> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const resultPromises = this.contract.payOnchain(
+        const resultPromises = await this.contract.payOnchain(
             address,
             amountData,
             lps,

@@ -1,11 +1,6 @@
 import {ISwapPrice} from "../swaps/ISwapPrice";
 import * as BN from "bn.js";
-import {Response} from "cross-fetch";
 import {TokenAddress} from "crosslightning-base";
-import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
-import {CoinAddresses} from "./PricesTypes";
-import {HttpResponseError} from "../errors/HttpResponseError";
-import {BinancePriceProvider} from "./BinancePriceProvider";
 import {IPriceProvider} from "./IPriceProvider";
 
 const CACHE_DURATION = 10000;

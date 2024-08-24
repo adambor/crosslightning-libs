@@ -8,6 +8,7 @@ import * as BN from "bn.js";
 import {SwapTypeEnum} from "../swaps/SwapTypeEnum";
 import {InitializeIxType, InitializePayInIxType, onceAsync} from "../swaps/Utils";
 import {tryWithRetries} from "../../utils/RetryUtils";
+import {Buffer} from "buffer";
 
 export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
 

@@ -431,7 +431,7 @@ export class Swapper<
             exactIn
         };
         return this.createSwap<ToBTCSwap<T>>(
-            (candidates: Intermediary[], abortSignal) => Promise.resolve(this.tobtc.create(
+            (candidates: Intermediary[], abortSignal) => this.tobtc.create(
                 address,
                 amountData,
                 candidates,
@@ -440,7 +440,7 @@ export class Swapper<
                     confirmations
                 },
                 abortSignal
-            )),
+            ),
             amountData,
             SwapType.TO_BTC
         );
@@ -537,13 +537,13 @@ export class Swapper<
         };
 
         return this.createSwap<FromBTCSwap<T>>(
-            (candidates: Intermediary[], abortSignal: AbortSignal) => Promise.resolve(this.frombtc.create(
+            (candidates: Intermediary[], abortSignal: AbortSignal) => this.frombtc.create(
                 amountData,
                 candidates,
                 null,
                 additionalParams,
                 abortSignal
-            )),
+            ),
             amountData,
             SwapType.FROM_BTC
         );
@@ -566,7 +566,7 @@ export class Swapper<
         };
 
         return this.createSwap<FromBTCLNSwap<T>>(
-            (candidates: Intermediary[], abortSignal: AbortSignal) => Promise.resolve(this.frombtcln.create(
+            (candidates: Intermediary[], abortSignal: AbortSignal) => this.frombtcln.create(
                 amountData,
                 candidates,
                 {
@@ -574,7 +574,7 @@ export class Swapper<
                 },
                 additionalParams,
                 abortSignal
-            )),
+            ),
             amountData,
             SwapType.FROM_BTCLN
         );

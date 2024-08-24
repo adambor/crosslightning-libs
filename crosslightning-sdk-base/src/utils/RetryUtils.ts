@@ -1,5 +1,3 @@
-import fetch from "cross-fetch";
-import {NetworkError} from "../errors/NetworkError";
 
 export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
     maxRetries?: number, delay?: number, exponential?: boolean

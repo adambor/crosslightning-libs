@@ -1,6 +1,6 @@
 import {FieldTypeEnum, parseBN, RequestSchema, RequestSchemaResult, verifySchema} from "./SchemaVerifier";
 import {IParamReader} from "./IParamReader";
-
+import {Buffer} from "buffer";
 
 export class ParamDecoder implements IParamReader {
 

@@ -1,13 +1,12 @@
 import {IFromBTCSwap} from "../IFromBTCSwap";
 import {SwapType} from "../../SwapType";
-import * as bitcoin from "bitcoinjs-lib";
-import {createHash, randomBytes} from "crypto-browserify";
 import {ChainUtils} from "../../../btc/ChainUtils";
 import {FromBTCWrapper} from "./FromBTCWrapper";
 import * as BN from "bn.js";
 import {SwapCommitStatus, SwapData} from "crosslightning-base";
 import {SignatureVerificationError} from "crosslightning-base";
 import {PriceInfoType} from "../../ISwap";
+import {Buffer} from "buffer";
 
 export enum FromBTCSwapState {
     FAILED = -2,
@@ -25,16 +24,16 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
     txId: string;
     vout: number;
 
-    readonly secret: string;
-
     //State: PR_CREATED
     readonly address: string;
     readonly amount: BN;
+    readonly txoHash: string;
 
     constructor(
         wrapper: FromBTCWrapper<T>,
         address: string,
         amount: BN,
+        txoHash: string,
         url: string,
         data: T,
         swapFee: BN,
@@ -51,6 +50,7 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
         wrapper: FromBTCWrapper<T>,
         addressOrObject: string | any,
         amount?: BN,
+        txoHash?: string,
         url?: string,
         data?: T,
         swapFee?: BN,
@@ -67,8 +67,7 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
 
             this.address = addressOrObject;
             this.amount = amount;
-
-            this.secret = randomBytes(32).toString("hex");
+            this.txoHash = txoHash;
         } else {
             super(wrapper, addressOrObject);
             this.state = addressOrObject.state;
@@ -78,7 +77,7 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
 
             this.txId = addressOrObject.txId;
             this.vout = addressOrObject.vout;
-            this.secret = addressOrObject.secret;
+            this.txoHash = addressOrObject.txoHash;
         }
     }
 
@@ -104,7 +103,7 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
         partiallySerialized.amount = this.amount.toString(10);
         partiallySerialized.txId = this.txId;
         partiallySerialized.vout = this.vout;
-        partiallySerialized.secret = this.secret;
+        partiallySerialized.txoHash = this.txoHash;
 
         return partiallySerialized;
     }
@@ -471,12 +470,7 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
     }
 
     getTxoHash(): Buffer {
-        const parsedOutputScript = bitcoin.address.toOutputScript(this.address, this.wrapper.contract.options.bitcoinNetwork);
-
-        return createHash("sha256").update(Buffer.concat([
-            Buffer.from(this.amount.toArray("le", 8)),
-            parsedOutputScript
-        ])).digest();
+        return Buffer.from(this.txoHash, "hex");
     }
 
     getAddress(): string {

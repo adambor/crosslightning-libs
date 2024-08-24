@@ -18,6 +18,7 @@ import {InitializeIxType, InitializePayInIxType, onceAsync} from "../swaps/Utils
 import {SwapProgram} from "../swaps/programTypes";
 import {SwapTypeEnum} from "../swaps/SwapTypeEnum";
 import {tryWithRetries} from "../../utils/RetryUtils";
+import {Buffer} from "buffer";
 
 const BLOCKHEIGHT_FILENAME = "/blockheight.txt";
 const LOG_FETCH_INTERVAL = 5*1000;

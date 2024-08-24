@@ -4,6 +4,7 @@ import {SwapData, ChainSwapType, TokenAddress} from "crosslightning-base";
 import {SwapProgram} from "./programTypes";
 import {IdlAccounts, IdlTypes} from "@coral-xyz/anchor";
 import {SwapTypeEnum} from "./SwapTypeEnum";
+import {Buffer} from "buffer";
 
 const EXPIRY_BLOCKHEIGHT_THRESHOLD = new BN("1000000000");
 

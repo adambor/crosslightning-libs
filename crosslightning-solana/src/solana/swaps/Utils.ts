@@ -3,6 +3,7 @@ import {IdlField} from "@coral-xyz/anchor/dist/cjs/idl";
 import {Message, PublicKey, Transaction} from "@solana/web3.js";
 import * as programIdl from "./programIdl.json";
 import {SwapProgram} from "./programTypes";
+import {Buffer} from "buffer";
 
 type DecodedFieldOrNull<D, Defined> = D extends IdlField ? DecodeType<D["type"], Defined> : unknown;
 
@@ -151,3 +152,15 @@ export function onceAsync<T>(executor: () => Promise<T>): () => Promise<T> {
 }
 
 export default Utils;
+
+export async function sha256Buffer(buff: Buffer | string): Promise<Buffer> {
+    if(typeof(buff)==="string") buff = Buffer.from(buff);
+    const result = await crypto.subtle.digest("sha-256", buff);
+    return Buffer.from(result, 0, result.byteLength);
+}
+
+export async function randomBytesBuffer(length: number): Promise<Buffer> {
+    const array = new Uint8Array(length);
+    crypto.getRandomValues(array);
+    return Buffer.from(array);
+}

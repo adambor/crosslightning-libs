@@ -127,7 +127,7 @@ export interface SwapContract<T extends SwapData, TX, PreFetchData, PreFetchVeri
     setUsAsClaimer(swapData: T);
     setUsAsOfferer(swapData: T);
 
-    getHashForOnchain(outputScript: Buffer, amount: BN, nonce: BN): Buffer;
+    getHashForOnchain(outputScript: Buffer, amount: BN, nonce: BN): Promise<Buffer>;
 
     getNativeCurrencyAddress(): TokenAddress;
 

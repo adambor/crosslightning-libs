@@ -1,5 +1,4 @@
 import {Intermediary, ServicesType} from "./Intermediary";
-import {randomBytes} from "crypto-browserify";
 import {SwapType} from "../swaps/SwapType";
 import * as BN from "bn.js";
 import {SwapData, TokenAddress} from "crosslightning-base";
@@ -7,6 +6,8 @@ import {SwapContract} from "crosslightning-base/dist";
 import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 import {AbortError} from "../errors/AbortError";
 import {EventEmitter} from "events";
+import {randomBytesBuffer} from "../utils/Utils";
+import {Buffer} from "buffer";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -146,7 +147,7 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
 
     async getNodeInfo(url: string, abortSignal?: AbortSignal) : Promise<{address: string, info: InfoHandlerResponseEnvelope}> {
 
-        const nonce = randomBytes(32).toString("hex");
+        const nonce = (await randomBytesBuffer(32)).toString("hex");
 
         const response: Response = await fetchWithTimeout(url+"/info", {
             method: "POST",

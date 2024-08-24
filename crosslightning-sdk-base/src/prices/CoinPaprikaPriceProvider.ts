@@ -1,7 +1,6 @@
 import {IPriceProvider} from "./IPriceProvider";
 import {CoinAddresses} from "./PricesTypes";
 import * as BN from "bn.js";
-import {Response} from "cross-fetch";
 import {fetchWithTimeout} from "../utils/RetryUtils";
 import {TokenAddress} from "crosslightning-base";
 

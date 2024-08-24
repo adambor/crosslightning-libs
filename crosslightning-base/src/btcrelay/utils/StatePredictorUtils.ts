@@ -1,3 +1,4 @@
+import {Buffer} from "buffer";
 
 export class StatePredictorUtils {
 

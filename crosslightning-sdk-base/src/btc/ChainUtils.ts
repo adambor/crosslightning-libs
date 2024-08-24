@@ -1,8 +1,8 @@
-import {Response} from "cross-fetch";
 import * as bitcoin from "bitcoinjs-lib";
-import {createHash} from "crypto-browserify";
 import * as BN from "bn.js";
 import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
+import {sha256Buffer} from "../utils/Utils";
+import {Buffer} from "buffer";
 
 let url = "https://mempool.space/testnet/api/";
 
@@ -379,10 +379,10 @@ export class ChainUtils {
         for(let tx of txs) {
             for(let i=0;i<tx.vout.length;i++) {
                 const vout = tx.vout[i];
-                const hash = createHash("sha256").update(Buffer.concat([
+                const hash = await sha256Buffer(Buffer.concat([
                     Buffer.from(new BN(vout.value).toArray("le", 8)),
                     Buffer.from(vout.scriptpubkey, "hex")
-                ])).digest();
+                ]));
                 if(txoHash.equals(hash)) {
                     if(found==null) {
                         found = {

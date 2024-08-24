@@ -1,7 +1,7 @@
 import {ParamEncoder} from "../ParamEncoder";
 import {RequestSchema, RequestSchemaResultPromise, verifyField} from "../SchemaVerifier";
 import {ParamDecoder} from "../ParamDecoder";
-import * as stream from "node:stream";
+import {Buffer} from "buffer";
 
 export type RequestBody = {
     [key: string]: Promise<any> | any

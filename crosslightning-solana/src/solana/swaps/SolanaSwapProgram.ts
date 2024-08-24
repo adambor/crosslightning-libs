@@ -16,7 +16,6 @@ import {
     TransactionExpiredBlockheightExceededError,
     TransactionInstruction
 } from "@solana/web3.js";
-import {createHash, randomBytes} from "crypto";
 import {sign} from "tweetnacl";
 import {SolanaBtcRelay} from "../btcrelay/SolanaBtcRelay";
 import * as programIdl from "./programIdl.json";
@@ -24,7 +23,7 @@ import {IStorageManager, SwapContract, ChainSwapType, TokenAddress, Intermediary
     SwapCommitStatus, SignatureVerificationError, CannotInitializeATAError, SwapDataVerificationError} from "crosslightning-base";
 import {SolanaBtcStoredHeader} from "../btcrelay/headers/SolanaBtcStoredHeader";
 import {RelaySynchronizer, StorageObject} from "crosslightning-base/dist";
-import Utils from "./Utils";
+import Utils, {randomBytesBuffer, sha256Buffer} from "./Utils";
 import * as bs58 from "bs58";
 import {tryWithRetries} from "../../utils/RetryUtils";
 import {
@@ -41,6 +40,7 @@ import {
 import {SolanaFeeEstimator} from "../../utils/SolanaFeeEstimator";
 import {SwapProgram} from "./programTypes";
 import {SwapTypeEnum} from "./SwapTypeEnum";
+import {Buffer} from "buffer";
 
 const STATE_SEED = "state";
 const VAULT_SEED = "vault";
@@ -275,13 +275,13 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         this.program.programId
     )[0];
 
-    readonly SwapTxDataAlt: (reversedTxId: Buffer, signer: Signer) => Signer = (reversedTxId: Buffer, signer: Signer) => {
-        const buff = createHash("sha256").update(Buffer.concat([signer.secretKey, reversedTxId])).digest();
+    readonly SwapTxDataAlt: (reversedTxId: Buffer, signer: Signer) => Promise<Signer> = async (reversedTxId: Buffer, signer: Signer) => {
+        const buff = await sha256Buffer(Buffer.concat([signer.secretKey, reversedTxId]));
         return Keypair.fromSeed(buff);
     };
 
-    readonly SwapTxDataAltBuffer: (reversedTxId: Buffer, secret: Buffer) => Signer = (reversedTxId: Buffer, secret: Buffer) => {
-        const buff = createHash("sha256").update(Buffer.concat([secret, reversedTxId])).digest();
+    readonly SwapTxDataAltBuffer: (reversedTxId: Buffer, secret: Buffer) => Promise<Signer> = async (reversedTxId: Buffer, secret: Buffer) => {
+        const buff = await sha256Buffer(Buffer.concat([secret, reversedTxId]));
         return Keypair.fromSeed(buff);
     };
 
@@ -338,12 +338,12 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         };
     }
 
-    getHashForOnchain(outputScript: Buffer, amount: BN, nonce: BN): Buffer {
-        return createHash("sha256").update(Buffer.concat([
+    getHashForOnchain(outputScript: Buffer, amount: BN, nonce: BN): Promise<Buffer> {
+        return sha256Buffer(Buffer.concat([
             Buffer.from(nonce.toArray("le", 8)),
             Buffer.from(amount.toArray("le", 8)),
             outputScript
-        ])).digest();
+        ]));
     }
 
     private saveDataAccount(publicKey: PublicKey): Promise<void> {
@@ -960,7 +960,7 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         return false;
     }
 
-    private getRefundMessage(swapData: SolanaSwapData, prefix: string, timeout: string): Buffer {
+    private getRefundMessage(swapData: SolanaSwapData, prefix: string, timeout: string): Promise<Buffer> {
 
         const messageBuffers = [
             null,
@@ -978,28 +978,26 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         messageBuffers[4] = Buffer.from(swapData.paymentHash, "hex");
         messageBuffers[5].writeBigUInt64LE(BigInt(timeout));
 
-        const messageBuffer = createHash("sha256").update(Buffer.concat(messageBuffers)).digest();
-
-        return messageBuffer;
+        return sha256Buffer(Buffer.concat(messageBuffers));
 
     }
 
-    getRefundSignature(swapData: SolanaSwapData, authorizationTimeout: number): Promise<{ prefix: string; timeout: string; signature: string }> {
+    async getRefundSignature(swapData: SolanaSwapData, authorizationTimeout: number): Promise<{ prefix: string; timeout: string; signature: string }> {
         if(this.signer.signer==null) throw new Error("Unsupported");
         const authPrefix = "refund";
         const authTimeout = Math.floor(Date.now()/1000)+authorizationTimeout;
 
-        const messageBuffer = this.getRefundMessage(swapData, authPrefix, authTimeout.toString(10));
+        const messageBuffer = await this.getRefundMessage(swapData, authPrefix, authTimeout.toString(10));
         const signature = sign.detached(messageBuffer, this.signer.signer.secretKey);
 
-        return Promise.resolve({
+        return {
             prefix: authPrefix,
             timeout: authTimeout.toString(10),
             signature: Buffer.from(signature).toString("hex")
-        });
+        };
     }
 
-    isValidRefundAuthorization(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string): Promise<Buffer> {
+    async isValidRefundAuthorization(swapData: SolanaSwapData, timeout: string, prefix: string, signature: string): Promise<Buffer> {
 
         if(prefix!=="refund") {
             throw new SignatureVerificationError("Invalid prefix");
@@ -1017,25 +1015,25 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
         const signatureBuffer = Buffer.from(signature, "hex");
         const messageBuffer = this.getRefundMessage(swapData, prefix, timeout);
 
-        if(!sign.detached.verify(messageBuffer, signatureBuffer, swapData.claimer.toBuffer())) {
+        if(!sign.detached.verify(await messageBuffer, signatureBuffer, swapData.claimer.toBuffer())) {
             throw new SignatureVerificationError("Invalid signature!");
         }
 
-        return Promise.resolve(messageBuffer);
+        return messageBuffer;
 
     }
 
-    getDataSignature(data: Buffer): Promise<string> {
+    async getDataSignature(data: Buffer): Promise<string> {
         if(this.signer.signer==null) throw new Error("Unsupported");
-        const buff = createHash("sha256").update(data).digest();
+        const buff = await sha256Buffer(data);
         const signature = sign.detached(buff, this.signer.signer.secretKey);
 
-        return Promise.resolve(Buffer.from(signature).toString("hex"));
+        return Buffer.from(signature).toString("hex");
     }
 
-    isValidDataSignature(data: Buffer, signature: string, publicKey: string): Promise<boolean> {
-        const hash = createHash("sha256").update(data).digest();
-        return Promise.resolve(sign.detached.verify(hash, Buffer.from(signature, "hex"), new PublicKey(publicKey).toBuffer()));
+    async isValidDataSignature(data: Buffer, signature: string, publicKey: string): Promise<boolean> {
+        const hash = await sha256Buffer(data);
+        return sign.detached.verify(hash, Buffer.from(signature, "hex"), new PublicKey(publicKey).toBuffer());
     }
 
     isClaimable(data: SolanaSwapData): Promise<boolean> {
@@ -1584,10 +1582,10 @@ export class SolanaSwapProgram implements SwapContract<SolanaSwapData, SolTx, So
 
         let txDataKey: Signer;
         if(this.signer.signer!=null) {
-            txDataKey = this.SwapTxDataAlt(merkleProof.reversedTxId, this.signer.signer);
+            txDataKey = await this.SwapTxDataAlt(merkleProof.reversedTxId, this.signer.signer);
         } else {
-            const secret = randomBytes(32);
-            txDataKey = this.SwapTxDataAltBuffer(merkleProof.reversedTxId, secret);
+            const secret = await randomBytesBuffer(32);
+            txDataKey = await this.SwapTxDataAltBuffer(merkleProof.reversedTxId, secret);
         }
 
         if(storageAccHolder!=null) storageAccHolder.storageAcc = txDataKey.publicKey;

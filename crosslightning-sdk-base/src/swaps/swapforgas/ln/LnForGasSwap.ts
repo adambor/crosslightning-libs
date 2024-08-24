@@ -8,8 +8,8 @@ import {PriceInfoType} from "../../ISwap";
 import {LNURLWithdraw, LNURLWithdrawParamsWithUrl, PaymentAuthError} from "../../ClientSwapContract";
 import {LnForGasWrapper} from "./LnForGasWrapper";
 import * as EventEmitter from "events";
-import {Response} from "cross-fetch";
 import {AbortError, IntermediaryError, RequestError} from "../../..";
+import {Buffer} from "buffer";
 
 const timeoutPromise = (timeoutSeconds) => {
     return new Promise(resolve => {

@@ -20,6 +20,9 @@ import {tryWithRetries} from "../../../utils/RetryUtils";
 import * as EventEmitter from "events";
 import {Intermediary} from "../../../intermediaries/Intermediary";
 import {ToBTCOptions} from "../../tobtc/onchain/ToBTCWrapper";
+import * as bitcoin from "bitcoinjs-lib";
+import {sha256Buffer} from "../../../utils/Utils";
+import {Buffer} from "buffer";
 
 export type FromBTCOptions = {
     feeSafetyFactor?: BN,
@@ -53,20 +56,20 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
      * @param additionalParams      Additional parameters sent to the LP when creating the swap
      * @param abortSignal           Abort signal for aborting the process
      */
-    create(
+    async create(
         amountData: AmountData,
         lps: Intermediary[],
         options?: FromBTCOptions,
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
-    ): {
+    ): Promise<{
         quote: Promise<FromBTCSwap<T>>,
         intermediary: Intermediary
-    }[] {
+    }[]> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const resultPromises = this.contract.receiveOnchain(
+        const resultPromises = await this.contract.receiveOnchain(
             amountData,
             lps,
             options,
@@ -76,20 +79,30 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
 
         return resultPromises.map(data => {
             return {
-                quote: data.response.then(response => new FromBTCSwap(
-                    this,
-                    response.address,
-                    response.amount,
-                    data.intermediary.url+"/frombtc",
-                    response.data,
-                    response.fees.swapFee,
-                    response.authorization.prefix,
-                    response.authorization.timeout,
-                    response.authorization.signature,
-                    response.authorization.feeRate,
-                    response.authorization.expiry,
-                    response.pricingInfo
-                )),
+                quote: data.response.then(async (response) => {
+                    const parsedOutputScript = bitcoin.address.toOutputScript(response.address, this.contract.options.bitcoinNetwork);
+
+                    const txoHash = await sha256Buffer(Buffer.concat([
+                        Buffer.from(response.amount.toArray("le", 8)),
+                        parsedOutputScript
+                    ]))
+
+                    return new FromBTCSwap(
+                        this,
+                        response.address,
+                        response.amount,
+                        txoHash.toString("hex"),
+                        data.intermediary.url+"/frombtc",
+                        response.data,
+                        response.fees.swapFee,
+                        response.authorization.prefix,
+                        response.authorization.timeout,
+                        response.authorization.signature,
+                        response.authorization.feeRate,
+                        response.authorization.expiry,
+                        response.pricingInfo
+                    )
+                }),
                 intermediary: data.intermediary
             }
         });

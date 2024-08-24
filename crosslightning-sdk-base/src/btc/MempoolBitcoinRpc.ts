@@ -1,7 +1,7 @@
 import {BitcoinRpc, BtcBlockWithTxs, BtcSyncInfo, BtcTx} from "crosslightning-base";
 import {MempoolBitcoinBlock} from "./MempoolBitcoinBlock";
 import {ChainUtils} from "./ChainUtils";
-
+import {Buffer} from "buffer";
 
 export class MempoolBitcoinRpc implements BitcoinRpc<MempoolBitcoinBlock> {
 

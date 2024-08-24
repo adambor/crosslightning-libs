@@ -5,6 +5,7 @@ import {SolanaBtcHeader} from "./headers/SolanaBtcHeader";
 import * as programIdl from "./program/programIdl.json";
 import {BitcoinRpc, BtcBlock, BtcRelay, StatePredictorUtils} from "crosslightning-base";
 import {SolanaFeeEstimator, SolanaSwapProgram} from "../..";
+import {Buffer} from "buffer";
 
 const LOG_FETCH_LIMIT = 500;
 

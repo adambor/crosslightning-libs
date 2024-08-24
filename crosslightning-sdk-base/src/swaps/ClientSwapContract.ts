@@ -1,7 +1,5 @@
 import * as BN from "bn.js";
 import * as bitcoin from "bitcoinjs-lib";
-import {Response} from "cross-fetch";
-import {createHash, randomBytes} from "crypto-browserify";
 import * as bolt11 from "bolt11";
 import {decode, PaymentRequestObject, TagsObject} from "bolt11";
 import {BitcoinTransaction, ChainUtils} from "../btc/ChainUtils";
@@ -36,6 +34,8 @@ import {SwapType} from "./SwapType";
 import {FromBTCOptions} from "./frombtc/onchain/FromBTCWrapper";
 import {FromBTCLNOptions} from "./frombtc/ln/FromBTCLNWrapper";
 import {ToBTCLNOptions} from "./tobtc/ln/ToBTCLNWrapper";
+import {randomBytesBuffer, sha256Buffer} from "../utils/Utils";
+import {Buffer} from "buffer";
 
 export class PaymentAuthError extends Error {
 
@@ -585,22 +585,22 @@ export class ClientSwapContract<T extends SwapData> {
         return null;
     }
 
-    payOnchain(
+    async payOnchain(
         address: string,
         amountData: AmountData,
         lps: Intermediary[],
         options: ToBTCOptions,
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
-    ): {
+    ): Promise<{
         response: Promise<ToBTCResponse<T>>,
         intermediary: Intermediary
-    }[] {
+    }[]> {
         const firstPart = new BN(Math.floor((Date.now()/1000)) - 700000000);
 
         const nonceBuffer = Buffer.concat([
             Buffer.from(firstPart.toArray("be", 5)),
-            randomBytes(3)
+            await randomBytesBuffer(3)
         ]);
 
         const nonce = new BN(nonceBuffer, "be");
@@ -618,7 +618,7 @@ export class ClientSwapContract<T extends SwapData> {
         if(!amountData.exactIn) {
             amount = amountData.amount;
 
-            hash = this.swapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
+            hash = (await this.swapContract.getHashForOnchain(outputScript, amount, nonce)).toString("hex");
 
             console.log("Generated hash: ", hash);
         }
@@ -685,7 +685,7 @@ export class ClientSwapContract<T extends SwapData> {
                         }
                         amount = parsedData.amount;
 
-                        hash = this.swapContract.getHashForOnchain(outputScript, amount, nonce).toString("hex");
+                        hash = (await this.swapContract.getHashForOnchain(outputScript, amount, nonce)).toString("hex");
 
                         console.log("Generated hash: ", hash);
                     }
@@ -842,7 +842,7 @@ export class ClientSwapContract<T extends SwapData> {
 
         const parsedPR = bolt11.decode(invoice);
 
-        const descHash = createHash("sha256").update(payRequest.metadata).digest().toString("hex");
+        const descHash = (await sha256Buffer(payRequest.metadata)).toString("hex");
 
         if(parsedPR.tagsObject.purpose_commit_hash!==descHash) {
             throw new RequestError("Invalid invoice received!", response.status);
@@ -1398,16 +1398,18 @@ export class ClientSwapContract<T extends SwapData> {
 
                 const paymentHashBuffer = Buffer.from(data.getHash(), "hex");
 
-                const foundVout = (btcTx as BitcoinTransaction).vout.find(e =>
-                    this.swapContract.getHashForOnchain(Buffer.from(e.scriptpubkey, "hex"), new BN(e.value), data.getEscrowNonce()).equals(paymentHashBuffer));
+                const utxoPaymentHashes = await Promise.all((btcTx as BitcoinTransaction).vout.map(
+                    e => this.swapContract.getHashForOnchain(Buffer.from(e.scriptpubkey, "hex"), new BN(e.value), data.getEscrowNonce())
+                ));
+                const foundPaymentHash = utxoPaymentHashes.find(hash => hash.equals(paymentHashBuffer));
 
-                if(foundVout==null) {
+                if(foundPaymentHash==null) {
                     throw new IntermediaryError("Invalid btc txId returned");
                 }
             } else if(secret!=null) {
 
                 const secretBuffer = Buffer.from(secret, "hex");
-                const hash = createHash("sha256").update(secretBuffer).digest();
+                const hash = await sha256Buffer(secretBuffer);
 
                 const paymentHashBuffer = Buffer.from(data.getHash(), "hex");
 
@@ -1469,22 +1471,22 @@ export class ClientSwapContract<T extends SwapData> {
         throw new AbortError();
     }
 
-    receiveOnchain(
+    async receiveOnchain(
         amountData: AmountData,
         lps: Intermediary[],
         options?: FromBTCOptions,
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
-    ): {
+    ): Promise<{
         response: Promise<FromBTCResponse<T>>,
         intermediary: Intermediary
-    }[] {
+    }[]> {
         if(options==null) options = {};
 
         const _abortController = new AbortController();
         if(abortSignal!=null) abortSignal.onabort = () => _abortController.abort(abortSignal.reason);
 
-        const sequence: BN = new BN(randomBytes(8));
+        const sequence: BN = new BN(await randomBytesBuffer(8));
 
         //Prefetch price
         const pricePrefetchPromise: Promise<BN> = amountData.token==null || this.swapPrice.preFetchPrice==null ? null : this.swapPrice.preFetchPrice(amountData.token, _abortController.signal).catch(e => {
@@ -1655,7 +1657,7 @@ export class ClientSwapContract<T extends SwapData> {
 
                     const lockingScript = bitcoin.address.toOutputScript(parsedData.btcAddress, this.options.bitcoinNetwork);
 
-                    const desiredHash = this.swapContract.getHashForOnchain(lockingScript, amount, new BN(0));
+                    const desiredHash = await this.swapContract.getHashForOnchain(lockingScript, amount, new BN(0));
 
                     const suppliedHash = Buffer.from(data.getHash(),"hex");
 
@@ -1852,7 +1854,7 @@ export class ClientSwapContract<T extends SwapData> {
             throw error;
         }
 
-        return this.receiveLightning(amountData, lps, null, preFetches, additionalParams, abortSignal).map(data => {
+        return (await this.receiveLightning(amountData, lps, null, preFetches, additionalParams, abortSignal)).map(data => {
             return {
                 response: data.response.then(val => {
                     const resp = val as FromBTCLNResponse<T> & {withdrawRequest: LNURLWithdrawParamsWithUrl};
@@ -1865,7 +1867,7 @@ export class ClientSwapContract<T extends SwapData> {
 
     }
 
-    receiveLightning(
+    async receiveLightning(
         amountData: AmountData,
         lps: Intermediary[],
         options?: FromBTCLNOptions,
@@ -1875,10 +1877,10 @@ export class ClientSwapContract<T extends SwapData> {
         },
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
-    ): {
+    ): Promise<{
         response: Promise<FromBTCLNResponse<T>>,
         intermediary: Intermediary
-    }[] {
+    }[]> {
         if(options==null) options = {};
         if(preFetches==null) preFetches = {};
         if(options.descriptionHash!=null) {
@@ -1887,9 +1889,8 @@ export class ClientSwapContract<T extends SwapData> {
             }
         }
 
-        const secret = randomBytes(32);
-
-        const paymentHash = createHash("sha256").update(secret).digest();
+        const secret = await randomBytesBuffer(32);
+        const paymentHash = await sha256Buffer(secret);
 
         const _abortController = new AbortController();
         if(abortSignal!=null) abortSignal.onabort = () => _abortController.abort(abortSignal.reason);

@@ -17,7 +17,6 @@ import {
 import {fetchWithTimeout, tryWithRetries} from "../../../utils/RetryUtils";
 import * as EventEmitter from "events";
 import {LnForGasSwap, LnForGasSwapState} from "./LnForGasSwap";
-import {Response} from "cross-fetch";
 import {RequestError} from "../../..";
 
 export class LnForGasWrapper<T extends SwapData> {

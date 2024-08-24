@@ -49,20 +49,20 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
      * @param additionalParams      Additional parameters sent to the LP when creating the swap
      * @param abortSignal           Abort signal for aborting the process
      */
-    create(
+    async create(
         amountData: AmountData,
         lps: Intermediary[],
         options: FromBTCLNOptions,
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
-    ): {
+    ): Promise<{
         quote: Promise<FromBTCLNSwap<T>>,
         intermediary: Intermediary
-    }[] {
+    }[]> {
 
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const resultPromises = this.contract.receiveLightning(
+        const resultPromises = await this.contract.receiveLightning(
             amountData,
             lps,
             options,
