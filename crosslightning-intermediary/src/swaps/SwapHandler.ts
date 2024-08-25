@@ -112,13 +112,13 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
     protected async processEvent(eventData: SwapEvent<T>[]): Promise<boolean> {
         for(let event of eventData) {
             if(event instanceof InitializeEvent) {
-                this.swapLogger.debug(event, "SC: InitializeEvent: swap type: "+event.swapType);
+                // this.swapLogger.debug(event, "SC: InitializeEvent: swap type: "+event.swapType);
                 await this.processInitializeEvent(event);
             } else if(event instanceof ClaimEvent) {
-                this.swapLogger.debug(event, "SC: ClaimEvent: swap secret: "+event.secret);
+                // this.swapLogger.debug(event, "SC: ClaimEvent: swap secret: "+event.secret);
                 await this.processClaimEvent(event);
             } else if(event instanceof RefundEvent) {
-                this.swapLogger.debug(event, "SC: RefundEvent");
+                // this.swapLogger.debug(event, "SC: RefundEvent");
                 await this.processRefundEvent(event);
             }
         }
