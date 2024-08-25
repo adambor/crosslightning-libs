@@ -161,7 +161,7 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
 
         let fetched = null;
         while(fetched==null || fetched.length===this.logFetchLimit) {
-            if(signatures==null) {
+            if(signatures.length===0) {
                 fetched = await this.provider.connection.getSignaturesForAddress(this.solanaSwapProgram.program.programId, {
                     until: lastProcessedSignature.signature,
                     limit: this.logFetchLimit

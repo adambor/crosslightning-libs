@@ -200,7 +200,9 @@ export class SwapInit extends SolanaSwapModule {
             await this.InitPayIn(swapData, new BN(timeout), feeRate) :
             await this.InitNotPayIn(swapData, new BN(timeout), feeRate);
 
-        return (await action.tx(feeRate)).tx;
+        const tx = (await action.tx(feeRate)).tx;
+        // this.logger.debug("getTxToSign(): generated transaction: ", tx);
+        return tx;
     }
 
     /**
@@ -313,6 +315,7 @@ export class SwapInit extends SolanaSwapModule {
 
         const authTimeout = Math.floor(Date.now()/1000)+authorizationTimeout;
         const txToSign = await this.getTxToSign(swapData, authTimeout.toString(10), feeRate);
+        txToSign.feePayer = swapData.isPayIn() ? swapData.offerer : swapData.claimer;
         txToSign.recentBlockhash = latestBlock.blockhash;
         txToSign.sign(this.provider.signer);
 
@@ -367,6 +370,7 @@ export class SwapInit extends SolanaSwapModule {
         if(slotsLeft<0) throw new SignatureVerificationError("Authorization expired!");
 
         const txToSign = await this.getTxToSign(swapData, timeout, feeRate);
+        txToSign.feePayer = swapData.isPayIn() ? swapData.offerer : swapData.claimer;
         txToSign.recentBlockhash = blockhash;
         txToSign.addSignature(swapData.isPayIn() ? swapData.claimer : swapData.offerer, Buffer.from(signatureString, "hex"));
 

@@ -188,6 +188,11 @@ export class SolanaDataAccount extends SolanaSwapModule {
             } catch (e) {}
         }
 
+        if(closePublicKeys.length===0) {
+            this.logger.debug("sweepDataAccounts(): no old data accounts found, no need to close any!");
+            return;
+        }
+
         this.logger.debug("sweepDataAccounts(): closing old data accounts: ", closePublicKeys);
 
         let txns: SolanaTx[] = [];
