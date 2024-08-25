@@ -1,7 +1,6 @@
 import {StorageObject} from "crosslightning-base";
 import * as fs from "fs/promises";
 import {IIntermediaryStorage, StorageQueryParam} from "../storage/IIntermediaryStorage";
-import has = Reflect.has;
 import * as BN from "bn.js";
 
 export class IntermediaryStorageManager<T extends StorageObject> implements IIntermediaryStorage<T> {

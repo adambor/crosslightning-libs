@@ -35,7 +35,6 @@ export type SwapHandlerInfoType = {
 export type SwapBaseConfig = {
     authorizationTimeout: number,
     bitcoinBlocktime: BN,
-    gracePeriod: BN,
     baseFee: BN,
     feePPM: BN,
     max: BN,

@@ -28,7 +28,8 @@ import {FromBtcBaseConfig, FromBtcBaseSwapHandler} from "../FromBtcBaseSwapHandl
 
 export type FromBtcLnConfig = FromBtcBaseConfig & {
     invoiceTimeoutSeconds?: number,
-    minCltv: BN
+    minCltv: BN,
+    gracePeriod: BN
 }
 
 export type FromBtcLnRequestType = {

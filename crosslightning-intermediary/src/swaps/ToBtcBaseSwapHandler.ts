@@ -6,7 +6,9 @@ import {ServerParamEncoder} from "../utils/paramcoders/server/ServerParamEncoder
 import {IParamReader} from "../utils/paramcoders/IParamReader";
 import {FieldTypeEnum} from "../utils/paramcoders/SchemaVerifier";
 
-export type ToBtcBaseConfig = SwapBaseConfig;
+export type ToBtcBaseConfig = SwapBaseConfig & {
+    gracePeriod: BN
+};
 
 export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T extends SwapData, S> extends SwapHandler<V, T, S> {
 
