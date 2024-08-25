@@ -12,7 +12,7 @@ import {BitcoinRpc, BtcBlock, BtcRelay, StatePredictorUtils} from "crosslightnin
 import {SolanaFees} from "../..";
 import {MethodsBuilder} from "@coral-xyz/anchor/dist/cjs/program/namespace/methods";
 import {SolanaProgramBase} from "../program/SolanaProgramBase";
-import BN from "bn.js";
+import * as BN from "bn.js";
 import {SolanaAction} from "../base/SolanaAction";
 
 const BASE_FEE_SOL_PER_BLOCKHEADER = new BN(5000);
@@ -105,7 +105,7 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
     BtcRelayMainState = this.pda("state");
     BtcRelayHeader = this.pda("header", (hash: Buffer) => [hash]);
     BtcRelayFork = this.pda("fork",
-        (forkId: number, pubkey: PublicKey) => [new BN(forkId).toBuffer("le", 8), pubkey.toBuffer()]
+        (forkId: number, pubkey: PublicKey) => [new BN(forkId).toArrayLike(Buffer, "le", 8), pubkey.toBuffer()]
     );
 
     bitcoinRpc: BitcoinRpc<B>;
@@ -309,7 +309,7 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
                         commitHash: commitHash
                     };
             }
-        });
+        }, null, 10);
         if(data!=null) this.logger.debug("retrieveLatestKnownBlockLog(): block found," +
             " commit hash: "+data.commitHash+" blockhash: "+data.resultBitcoinHeader.getHash()+
             " height: "+data.resultStoredHeader.blockheight);

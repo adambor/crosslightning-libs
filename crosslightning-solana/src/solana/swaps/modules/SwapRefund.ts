@@ -115,11 +115,11 @@ export class SwapRefund extends SolanaSwapModule {
     private getRefundMessage(swapData: SolanaSwapData, prefix: string, timeout: string): Buffer {
         const messageBuffers = [
             Buffer.from(prefix, "ascii"),
-            swapData.amount.toBuffer("le", 8),
-            swapData.expiry.toBuffer("le", 8),
-            swapData.sequence.toBuffer("le", 8),
+            swapData.amount.toArrayLike(Buffer, "le", 8),
+            swapData.expiry.toArrayLike(Buffer, "le", 8),
+            swapData.sequence.toArrayLike(Buffer, "le", 8),
             Buffer.from(swapData.paymentHash, "hex"),
-            new BN(timeout).toBuffer("le", 8)
+            new BN(timeout).toArrayLike(Buffer, "le", 8)
         ];
 
         return createHash("sha256").update(Buffer.concat(messageBuffers)).digest();

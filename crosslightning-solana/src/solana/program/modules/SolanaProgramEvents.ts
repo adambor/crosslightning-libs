@@ -65,11 +65,13 @@ export class SolanaProgramEvents<IDL extends Idl> extends SolanaEvents {
      * @param processor called for every event, should return a value if the correct event was found, or null
      *  if the search should continue
      * @param abortSignal
+     * @param logBatchSize how many signatures should be fetched in one getSignaturesForAddress call
      */
     public findInEvents<T>(
         topicKey: PublicKey,
         processor: (event: ProgramEvent<IDL>) => Promise<T>,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        logBatchSize?: number
     ): Promise<T> {
         return this.findInSignatures<T>(topicKey, async (signatures: ConfirmedSignatureInfo[]) => {
             for(let data of signatures) {
@@ -79,7 +81,7 @@ export class SolanaProgramEvents<IDL extends Idl> extends SolanaEvents {
                     if(result!=null) return result;
                 }
             }
-        }, abortSignal);
+        }, abortSignal, logBatchSize);
     }
 
     /**

@@ -1,5 +1,6 @@
 import {SolanaModule} from "../SolanaModule";
 import {ConfirmedSignatureInfo, PublicKey} from "@solana/web3.js";
+import {log} from "node:util";
 
 export class SolanaEvents extends SolanaModule {
 
@@ -10,18 +11,19 @@ export class SolanaEvents extends SolanaModule {
      *  the signatures before this signature
      *
      * @param topicKey
+     * @param logFetchLimit
      * @param lastProcessedSignature
      * @private
      */
-    private getSignatures(topicKey: PublicKey, lastProcessedSignature?: string): Promise<ConfirmedSignatureInfo[]> {
+    private getSignatures(topicKey: PublicKey, logFetchLimit: number, lastProcessedSignature?: string): Promise<ConfirmedSignatureInfo[]> {
         if(lastProcessedSignature==null) {
             return this.provider.connection.getSignaturesForAddress(topicKey, {
-                limit: this.LOG_FETCH_LIMIT,
+                limit: logFetchLimit,
             }, "confirmed");
         } else {
             return this.provider.connection.getSignaturesForAddress(topicKey, {
                 before: lastProcessedSignature,
-                limit: this.LOG_FETCH_LIMIT
+                limit: logFetchLimit
             }, "confirmed");
         }
     }
@@ -33,18 +35,22 @@ export class SolanaEvents extends SolanaModule {
      * @param processor called for every batch of returned signatures, should return a value if the correct signature
      *  was found, or null if the search should continue
      * @param abortSignal
+     * @param logFetchLimit
      */
     public async findInSignatures<T>(
         topicKey: PublicKey,
         processor: (signatures: ConfirmedSignatureInfo[]) => Promise<T>,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        logFetchLimit?: number
     ): Promise<T> {
+        if(logFetchLimit==null || logFetchLimit>this.LOG_FETCH_LIMIT) logFetchLimit = this.LOG_FETCH_LIMIT;
         let signatures: ConfirmedSignatureInfo[] = null;
         while(signatures==null || signatures.length>0) {
-            signatures = await this.getSignatures(topicKey, signatures!=null ? signatures[signatures.length-1].signature : null);
+            signatures = await this.getSignatures(topicKey, logFetchLimit, signatures!=null ? signatures[signatures.length-1].signature : null);
             if(abortSignal!=null) abortSignal.throwIfAborted();
             const result: T = await processor(signatures);
-            if(result!=null) result;
+            if(result!=null) return result;
+            if(signatures.length<logFetchLimit) break;
         }
         return null;
     }

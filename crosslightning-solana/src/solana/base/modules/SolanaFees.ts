@@ -301,6 +301,7 @@ export class SolanaFees {
                 if(this.blockFeeCache===obj) this.blockFeeCache=null;
                 throw e;
             });
+            this.blockFeeCache = obj;
         }
 
         return this.blockFeeCache.feeRate;

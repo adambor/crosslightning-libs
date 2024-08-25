@@ -34,7 +34,7 @@ export class SolanaTransactions extends SolanaModule {
         if(this.cbkSendTransaction!=null) result = await this.cbkSendTransaction(data, options);
         if(result==null) result = await this.root.Fees.submitTx(data, options);
         if(result==null) result = await this.provider.connection.sendRawTransaction(data, options);
-        this.logger.debug("sendRawTransaction(): tx sent, signature: "+result);
+        // this.logger.debug("sendRawTransaction(): tx sent, signature: "+result);
         return result;
     }
 
@@ -67,7 +67,7 @@ export class SolanaTransactions extends SolanaModule {
                 );
                 if(status==null || status==="not_found") return;
                 if(status==="success") {
-                    this.logger.info("txConfirmFromWebsocket(): transaction confirmed from HTTP polling, signature: "+signature);
+                    this.logger.info("txConfirmationAndResendWatchdog(): transaction confirmed from HTTP polling, signature: "+signature);
                     resolve(signature);
                 }
                 if(status==="reverted") reject(new Error("Transaction reverted!"));
@@ -109,7 +109,7 @@ export class SolanaTransactions extends SolanaModule {
             this.logger.info("txConfirmFromWebsocket(): transaction confirmed from WS, signature: "+signature);
         } catch (err) {
             if(abortSignal!=null && abortSignal.aborted) throw err;
-            this.logger.debug("txConfirmFromWebsocket(): transaction rejected from WS, running ultimate check, signature: "+signature);
+            this.logger.debug("txConfirmFromWebsocket(): transaction rejected from WS, running ultimate check, expiry blockheight: "+solanaTx.tx.lastValidBlockHeight+" signature: "+signature+" error: "+err);
             const status = await tryWithRetries(
                 () => this.getTxIdStatus(signature, finality)
             );
@@ -152,7 +152,7 @@ export class SolanaTransactions extends SolanaModule {
             throw e;
         }
 
-        this.logger.info("confirmTransaction(): transaction confirmed, signature: "+txSignature);
+        // this.logger.info("confirmTransaction(): transaction confirmed, signature: "+txSignature);
 
         abortController.abort();
     }
@@ -175,7 +175,7 @@ export class SolanaTransactions extends SolanaModule {
                         this.retryPolicy
                     );
                     this.logger.debug("prepareTransactions(): fetched latest block data for transactions," +
-                        " blockhash: "+latestBlockData.blockhash);
+                        " blockhash: "+latestBlockData.blockhash+" expiry blockheight: "+latestBlockData.lastValidBlockHeight);
                 }
                 tx.tx.recentBlockhash = latestBlockData.blockhash;
                 tx.tx.lastValidBlockHeight = latestBlockData.lastValidBlockHeight;
@@ -228,7 +228,11 @@ export class SolanaTransactions extends SolanaModule {
     public async sendAndConfirm(txs: SolanaTx[], waitForConfirmation?: boolean, abortSignal?: AbortSignal, parallel?: boolean, onBeforePublish?: (txId: string, rawTx: string) => Promise<void>): Promise<string[]> {
         await this.prepareTransactions(txs)
         const signedTxs = await this.provider.wallet.signAllTransactions(txs.map(e => e.tx));
-        signedTxs.forEach((tx, index) => txs[index].tx = tx);
+        signedTxs.forEach((tx, index) => {
+            const solTx = txs[index];
+            tx.lastValidBlockHeight = solTx.tx.lastValidBlockHeight;
+            solTx.tx = tx
+        });
 
         const options = {
             skipPreflight: true

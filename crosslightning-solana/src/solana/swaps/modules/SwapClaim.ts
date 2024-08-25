@@ -245,7 +245,7 @@ export class SwapClaim extends SolanaSwapModule {
 
         const shouldUnwrap = this.shouldUnwrap(swapData);
         if(shouldInitAta) {
-            const initAction = this.root.Tokens.InitAta(swapData.offerer, swapData.token, swapData.offererAta);
+            const initAction = this.root.Tokens.InitAta(swapData.claimer, swapData.token, swapData.claimerAta);
             if(initAction==null) throw new SwapDataVerificationError("Invalid claimer token account address");
             action.add(initAction);
         }
@@ -301,7 +301,7 @@ export class SwapClaim extends SolanaSwapModule {
 
         const shouldUnwrap = this.shouldUnwrap(swapData);
         if(shouldInitAta) {
-            const initAction = this.root.Tokens.InitAta(swapData.offerer, swapData.token, swapData.offererAta);
+            const initAction = this.root.Tokens.InitAta(swapData.claimer, swapData.token, swapData.claimerAta);
             if(initAction==null) throw new SwapDataVerificationError("Invalid claimer token account address");
             await initAction.addToTxs(txs, feeRate);
         }
