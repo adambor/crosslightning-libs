@@ -201,7 +201,6 @@ export class SwapInit extends SolanaSwapModule {
             await this.InitNotPayIn(swapData, new BN(timeout), feeRate);
 
         const tx = (await action.tx(feeRate)).tx;
-        // this.logger.debug("getTxToSign(): generated transaction: ", tx);
         return tx;
     }
 
@@ -318,6 +317,7 @@ export class SwapInit extends SolanaSwapModule {
         txToSign.feePayer = swapData.isPayIn() ? swapData.offerer : swapData.claimer;
         txToSign.recentBlockhash = latestBlock.blockhash;
         txToSign.sign(this.provider.signer);
+        this.logger.debug("signSwapInitialization(): Signed tx: ",txToSign);
 
         const sig = txToSign.signatures.find(e => e.publicKey.equals(this.provider.signer.publicKey));
 
@@ -373,6 +373,7 @@ export class SwapInit extends SolanaSwapModule {
         txToSign.feePayer = swapData.isPayIn() ? swapData.offerer : swapData.claimer;
         txToSign.recentBlockhash = blockhash;
         txToSign.addSignature(swapData.isPayIn() ? swapData.claimer : swapData.offerer, Buffer.from(signatureString, "hex"));
+        this.logger.debug("isSignatureValid(): Signed tx: ",txToSign);
 
         const valid = txToSign.verifySignatures(false);
 
