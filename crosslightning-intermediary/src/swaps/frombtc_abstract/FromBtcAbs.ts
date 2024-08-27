@@ -94,15 +94,6 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
     }
 
     /**
-     * Returns TXO hash of the swap (hash without using payment nonce)
-     *
-     * @param swap
-     */
-    private getChainTxoHash(swap: FromBtcSwapAbs<T>): Buffer {
-        return this.getTxoHash(swap.address, swap.amount, this.config.bitcoinNetwork);
-    }
-
-    /**
      * Processes past swap
      *
      * @param swap
@@ -460,6 +451,7 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
                 totalSecurityDeposit,
                 totalClaimerBounty
             );
+            data.setTxoHash(this.getTxoHash(receiveAddress, amountBD, this.config.bitcoinNetwork).toString("hex"));
             abortController.signal.throwIfAborted();
             metadata.times.swapCreated = Date.now();
 
@@ -468,7 +460,6 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
             metadata.times.swapSigned = Date.now();
 
             const createdSwap: FromBtcSwapAbs<T> = new FromBtcSwapAbs<T>(receiveAddress, amountBD, swapFee);
-            data.setTxoHash(this.getChainTxoHash(createdSwap).toString("hex"));
             createdSwap.data = data;
             createdSwap.metadata = metadata;
             createdSwap.authorizationExpiry = new BN(sigData.timeout);
