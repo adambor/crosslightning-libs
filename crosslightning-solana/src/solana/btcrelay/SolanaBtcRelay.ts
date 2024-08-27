@@ -9,11 +9,12 @@ import {SolanaBtcStoredHeader, SolanaBtcStoredHeaderType} from "./headers/Solana
 import {SolanaBtcHeader} from "./headers/SolanaBtcHeader";
 import * as programIdl from "./program/programIdl.json";
 import {BitcoinRpc, BtcBlock, BtcRelay, StatePredictorUtils} from "crosslightning-base";
-import {SolanaFees} from "../..";
+import {SolanaFees, SolanaTx} from "../..";
 import {MethodsBuilder} from "@coral-xyz/anchor/dist/cjs/program/namespace/methods";
 import {SolanaProgramBase} from "../program/SolanaProgramBase";
 import * as BN from "bn.js";
 import {SolanaAction} from "../base/SolanaAction";
+import {fork} from "node:child_process";
 
 const BASE_FEE_SOL_PER_BLOCKHEADER = new BN(5000);
 
@@ -100,6 +101,22 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
             null,
             true
         );
+    }
+
+    public async CloseForkAccount(forkId: number): Promise<SolanaAction> {
+        return new SolanaAction(this,
+            await this.program.methods
+                .closeForkAccount(
+                    new BN(forkId)
+                )
+                .accounts({
+                    signer: this.provider.publicKey,
+                    forkState: this.BtcRelayFork(forkId, this.provider.publicKey),
+                    systemProgram: SystemProgram.programId,
+                })
+                .instruction(),
+            20000
+        )
     }
 
     BtcRelayMainState = this.pda("state");
@@ -457,44 +474,36 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
         const mainState: any = await this.program.account.mainState.fetch(this.BtcRelayMainState);
         let forkId: number = mainState.forkCounter.toNumber();
 
-        let tx = new Transaction();
+        const txs: SolanaTx[] = [];
+        let action = new SolanaAction(this);
 
         let lastCheckedId = lastSweepId;
         for(
             let i = lastSweepId==null ? 0 : lastSweepId+1;
             i<=forkId; i++
         ) {
+            lastCheckedId = i;
+
             const accountAddr = this.BtcRelayFork(i, this.provider.publicKey);
             let forkState: any = await this.program.account.forkState.fetchNullable(accountAddr);
-
             if(forkState==null) continue;
 
-            tx.add(await this.program.methods
-                .closeForkAccount(
-                    new BN(i)
-                )
-                .accounts({
-                    signer: this.provider.publicKey,
-                    forkState: accountAddr,
-                    systemProgram: SystemProgram.programId,
-                })
-                .instruction()
-            );
-
             this.logger.info("sweepForkData(): sweeping forkId: "+i);
+            action.add(await this.CloseForkAccount(i));
 
-            if(tx.instructions.length>=MAX_CLOSE_IX_PER_TX) {
-                const signature = await this.provider.sendAndConfirm(tx);
-                this.logger.info("sweepForkData(): forks swept, signature"+signature);
-                tx = new Transaction();
+            if(action.ixsLength()>=MAX_CLOSE_IX_PER_TX) {
+                await action.addToTxs(txs);
+                action = new SolanaAction(this);
             }
-
-            lastCheckedId = i;
         }
 
-        if(tx.instructions.length>0) {
-            const signature = await this.provider.sendAndConfirm(tx);
-            this.logger.info("sweepForkData(): forks swept, signature"+signature);
+        if(action.ixsLength()>=MAX_CLOSE_IX_PER_TX) {
+            await action.addToTxs(txs);
+        }
+
+        if(txs.length>0) {
+            const signatures = await this.Transactions.sendAndConfirm(txs, true);
+            this.logger.info("sweepForkData(): forks swept, signatures: "+signatures.join());
         }
 
         return lastCheckedId;

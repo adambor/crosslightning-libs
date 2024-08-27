@@ -98,4 +98,8 @@ export class SolanaAction {
         txs.push(await this.tx(feeRate, block));
     }
 
+    public ixsLength(): number {
+        return this.instructions.length;
+    }
+
 }
