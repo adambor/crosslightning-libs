@@ -1,5 +1,5 @@
 import {Intermediary, ServicesType} from "./Intermediary";
-import {randomBytes} from "crypto-browserify";
+import randomBytes from "randombytes";
 import {SwapType} from "../swaps/SwapType";
 import * as BN from "bn.js";
 import {SwapData, TokenAddress} from "crosslightning-base";
@@ -7,6 +7,7 @@ import {SwapContract} from "crosslightning-base/dist";
 import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 import {AbortError} from "../errors/AbortError";
 import {EventEmitter} from "events";
+import {Buffer} from "buffer";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",

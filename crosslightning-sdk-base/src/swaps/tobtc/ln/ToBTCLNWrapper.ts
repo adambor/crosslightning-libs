@@ -6,7 +6,7 @@ import {AmountData, ClientSwapContract, LNURLPay, LNURLPayParamsWithUrl} from ".
 import * as BN from "bn.js";
 import {UserError} from "../../../errors/UserError";
 import {ChainEvents, SwapData, TokenAddress} from "crosslightning-base";
-import * as EventEmitter from "events";
+import {EventEmitter} from "events";
 import {Intermediary} from "../../../intermediaries/Intermediary";
 import {ToBTCOptions} from "../onchain/ToBTCWrapper";
 import * as dns from "node:dns";

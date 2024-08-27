@@ -17,9 +17,9 @@ import {
     TokenAddress
 } from "crosslightning-base";
 import {tryWithRetries} from "../../../utils/RetryUtils";
-import * as EventEmitter from "events";
+import {EventEmitter} from "events";
 import {Intermediary} from "../../../intermediaries/Intermediary";
-import {FromBTCOptions} from "../onchain/FromBTCWrapper";
+import {Buffer} from "buffer";
 
 export type FromBTCLNOptions = {
     descriptionHash?: Buffer

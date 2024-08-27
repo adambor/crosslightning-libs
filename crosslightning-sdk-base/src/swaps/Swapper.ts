@@ -20,7 +20,7 @@ import {FromBTCLNSwap} from "./frombtc/ln/FromBTCLNSwap";
 import {FromBTCSwap} from "./frombtc/onchain/FromBTCSwap";
 import {ToBTCLNSwap} from "./tobtc/ln/ToBTCLNSwap";
 import {ToBTCSwap} from "./tobtc/onchain/ToBTCSwap";
-import {ChainUtils} from "../btc/ChainUtils";
+import {MempoolApi} from "../btc/MempoolApi";
 import {MempoolBitcoinRpc} from "../btc/MempoolBitcoinRpc";
 import {BtcRelay} from "crosslightning-base/dist";
 import {MempoolBtcRelaySynchronizer} from "../btc/synchronizer/MempoolBtcRelaySynchronizer";
@@ -28,7 +28,8 @@ import {OutOfBoundsError} from "../errors/OutOfBoundsError";
 import {IndexedDBWrapperStorage, Intermediary, LocalStorageManager} from "..";
 import {LnForGasWrapper} from "./swapforgas/ln/LnForGasWrapper";
 import {LnForGasSwap} from "./swapforgas/ln/LnForGasSwap";
-import * as EventEmitter from "events";
+import {EventEmitter} from "events";
+import {Buffer} from "buffer";
 
 export type SwapperOptions<T extends SwapData> = {
     intermediaryUrl?: string | string[],
@@ -98,11 +99,11 @@ export class Swapper<
         switch (options.bitcoinNetwork) {
             case BitcoinNetwork.MAINNET:
                 this.bitcoinNetwork = bitcoin.networks.bitcoin;
-                ChainUtils.setMempoolUrl("https://mempool.space/api/", options.getRequestTimeout);
+                MempoolApi.setMempoolUrl("https://mempool.space/api/", options.getRequestTimeout);
                 break;
             case BitcoinNetwork.TESTNET:
                 this.bitcoinNetwork = bitcoin.networks.testnet;
-                ChainUtils.setMempoolUrl("https://mempool.space/testnet/api/", options.getRequestTimeout);
+                MempoolApi.setMempoolUrl("https://mempool.space/testnet/api/", options.getRequestTimeout);
                 break;
             case BitcoinNetwork.REGTEST:
                 this.bitcoinNetwork = bitcoin.networks.regtest;

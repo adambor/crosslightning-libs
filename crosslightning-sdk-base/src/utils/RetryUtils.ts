@@ -1,5 +1,3 @@
-import fetch from "cross-fetch";
-import {NetworkError} from "../errors/NetworkError";
 
 export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
     maxRetries?: number, delay?: number, exponential?: boolean
@@ -84,4 +82,10 @@ export function timeoutSignal(timeout: number, abortSignal?: AbortSignal) {
         });
     }
     return abortController.signal;
+}
+
+export function timeoutPromise(timeoutSeconds: number) {
+    return new Promise(resolve => {
+        setTimeout(resolve, timeoutSeconds*1000)
+    });
 }

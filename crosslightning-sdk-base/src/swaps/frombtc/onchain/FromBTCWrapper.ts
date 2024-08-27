@@ -1,7 +1,7 @@
 import {IFromBTCWrapper} from "../IFromBTCWrapper";
 import {IWrapperStorage} from "../../../storage/IWrapperStorage";
 import {FromBTCSwap, FromBTCSwapState} from "./FromBTCSwap";
-import {ChainUtils} from "../../../btc/ChainUtils";
+import {MempoolApi} from "../../../btc/MempoolApi";
 import {AmountData, ClientSwapContract} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {
@@ -17,9 +17,8 @@ import {
     TokenAddress
 } from "crosslightning-base";
 import {tryWithRetries} from "../../../utils/RetryUtils";
-import * as EventEmitter from "events";
+import {EventEmitter} from "events";
 import {Intermediary} from "../../../intermediaries/Intermediary";
-import {ToBTCOptions} from "../../tobtc/onchain/ToBTCWrapper";
 
 export type FromBTCOptions = {
     feeSafetyFactor?: BN,
@@ -193,9 +192,9 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
                 if(status===SwapCommitStatus.COMMITED) {
                     swap.state = FromBTCSwapState.CLAIM_COMMITED;
                     //Check if payment already arrived
-                    const tx = await ChainUtils.checkAddressTxos(swap.address, swap.getTxoHash());
+                    const tx = await MempoolApi.checkAddressTxos(swap.address, swap.getTxoHash());
                     if(tx!=null && tx.tx.status.confirmed) {
-                        const tipHeight = await ChainUtils.getTipBlockHeight();
+                        const tipHeight = await MempoolApi.getTipBlockHeight();
                         const confirmations = tipHeight-tx.tx.status.block_height+1;
                         if(confirmations>=swap.data.getConfirmations()) {
                             swap.txId = tx.tx.txid;
@@ -247,9 +246,9 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
                 }
                 if(commitStatus===SwapCommitStatus.COMMITED) {
                     //Check if payment already arrived
-                    const tx = await ChainUtils.checkAddressTxos(swap.address, swap.getTxoHash());
+                    const tx = await MempoolApi.checkAddressTxos(swap.address, swap.getTxoHash());
                     if(tx!=null && tx.tx.status.confirmed) {
-                        const tipHeight = await ChainUtils.getTipBlockHeight();
+                        const tipHeight = await MempoolApi.getTipBlockHeight();
                         const confirmations = tipHeight-tx.tx.status.block_height+1;
                         if(confirmations>=swap.data.getConfirmations()) {
                             swap.txId = tx.tx.txid;

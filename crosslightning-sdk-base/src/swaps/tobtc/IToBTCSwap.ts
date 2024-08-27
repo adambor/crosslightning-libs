@@ -2,11 +2,11 @@
 import {IToBTCWrapper} from "./IToBTCWrapper";
 import {ISwap, PriceInfoType} from "../ISwap";
 import * as BN from "bn.js";
-import * as EventEmitter from "events";
+import {EventEmitter} from "events";
 import {SwapType} from "../SwapType";
 import {SignatureVerificationError, SwapCommitStatus, SwapData} from "crosslightning-base";
 import {TokenAddress} from "crosslightning-base";
-import {tryWithRetries} from "../../utils/RetryUtils";
+import {Buffer} from "buffer";
 
 export abstract class IToBTCSwap<T extends SwapData> extends ISwap {
 

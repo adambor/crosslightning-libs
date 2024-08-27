@@ -1,7 +1,7 @@
 import {IFromBTCSwap} from "./IFromBTCSwap";
 import {IWrapperStorage} from "../../storage/IWrapperStorage";
 import {ClientSwapContract} from "../ClientSwapContract";
-import * as EventEmitter from "events";
+import {EventEmitter} from "events";
 import {SwapData, ChainEvents} from "crosslightning-base";
 
 export abstract class IFromBTCWrapper<T extends SwapData> {

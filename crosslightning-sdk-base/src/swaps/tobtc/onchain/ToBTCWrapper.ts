@@ -2,9 +2,8 @@ import {ToBTCSwap} from "./ToBTCSwap";
 import {IToBTCWrapper} from "../IToBTCWrapper";
 import {IWrapperStorage} from "../../../storage/IWrapperStorage";
 import {AmountData, ClientSwapContract} from "../../ClientSwapContract";
-import * as BN from "bn.js";
 import {ChainEvents, SwapData, TokenAddress} from "crosslightning-base";
-import * as EventEmitter from "events";
+import {EventEmitter} from "events";
 import { Intermediary } from "../../../intermediaries/Intermediary";
 
 export type ToBTCOptions = {

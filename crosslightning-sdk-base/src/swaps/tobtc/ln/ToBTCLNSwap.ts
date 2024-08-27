@@ -6,6 +6,7 @@ import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
 import {decipherAES, LNURLPaySuccessAction} from "js-lnurl/lib";
 import {PriceInfoType} from "../../ISwap";
+import {Buffer} from "buffer";
 
 export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
 

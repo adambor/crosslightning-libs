@@ -1,13 +1,15 @@
 import {IFromBTCSwap} from "../IFromBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as bitcoin from "bitcoinjs-lib";
-import {createHash, randomBytes} from "crypto-browserify";
-import {ChainUtils} from "../../../btc/ChainUtils";
+import randomBytes from "randombytes";
+import createHash from "create-hash";
+import {MempoolApi} from "../../../btc/MempoolApi";
 import {FromBTCWrapper} from "./FromBTCWrapper";
 import * as BN from "bn.js";
 import {SwapCommitStatus, SwapData} from "crosslightning-base";
 import {SignatureVerificationError} from "crosslightning-base";
 import {PriceInfoType} from "../../ISwap";
+import {Buffer} from "buffer";
 
 export enum FromBTCSwapState {
     FAILED = -2,
@@ -126,7 +128,7 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
             throw new Error("Must be in PR_CREATED state!");
         }
 
-        const result = await ChainUtils.waitForAddressTxo(this.address, this.getTxoHash(), this.data.getConfirmations(), (confirmations: number, txId: string, vout: number, txEtaMs: number) => {
+        const result = await MempoolApi.waitForAddressTxo(this.address, this.getTxoHash(), this.data.getConfirmations(), (confirmations: number, txId: string, vout: number, txEtaMs: number) => {
             if(updateCallback!=null) {
                 updateCallback(txId, confirmations, this.data.getConfirmations(), txEtaMs);
             }
@@ -150,13 +152,13 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
      */
     async getBitcoinPayment(): Promise<{txId: string, confirmations: number, targetConfirmations: number} | null> {
 
-        const result = await ChainUtils.checkAddressTxos(this.address, this.getTxoHash());
+        const result = await MempoolApi.checkAddressTxos(this.address, this.getTxoHash());
 
         if(result==null) return null;
 
         let confirmations = 0;
         if(result.tx.status.confirmed) {
-            const tipHeight = await ChainUtils.getTipBlockHeight();
+            const tipHeight = await MempoolApi.getTipBlockHeight();
             confirmations = tipHeight-result.tx.status.block_height+1;
         }
 
@@ -348,8 +350,8 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
             throw new Error("Must be in BTC_TX_CONFIRMED state!");
         }
 
-        const txData = await ChainUtils.getTransaction(this.txId);
-        const rawTx = await ChainUtils.getRawTransaction(this.txId);
+        const txData = await MempoolApi.getTransaction(this.txId);
+        const rawTx = await MempoolApi.getRawTransaction(this.txId);
 
         const txResult = await this.wrapper.contract.swapContract.claimWithTxData(this.data, txData.status.block_height, {
             blockhash: txData.status.block_hash,
@@ -382,8 +384,8 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
             throw new Error("Must be in BTC_TX_CONFIRMED state!");
         }
 
-        const txData = await ChainUtils.getTransaction(this.txId);
-        const rawTx = await ChainUtils.getRawTransaction(this.txId);
+        const txData = await MempoolApi.getTransaction(this.txId);
+        const rawTx = await MempoolApi.getRawTransaction(this.txId);
 
         return await this.wrapper.contract.swapContract.txsClaimWithTxData(this.data, txData.status.block_height, {
             blockhash: txData.status.block_hash,

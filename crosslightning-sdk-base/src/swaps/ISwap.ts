@@ -1,8 +1,7 @@
 import {SwapType} from "./SwapType";
 import {EventEmitter} from "events";
 import * as BN from "bn.js";
-import {ClientSwapContract} from "./ClientSwapContract";
-import {SwapData} from "crosslightning-base";
+import {Buffer} from "buffer";
 
 export type PriceInfoType = {
     isValid: boolean,

@@ -8,7 +8,7 @@ import {tryWithRetries} from "../../../utils/RetryUtils";
 import {SignatureVerificationError} from "crosslightning-base";
 import {PriceInfoType} from "../../ISwap";
 import {LNURLWithdraw, LNURLWithdrawParamsWithUrl} from "../../ClientSwapContract";
-import {FromBTCSwapState} from "../../..";
+import {Buffer} from "buffer";
 
 export enum FromBTCLNSwapState {
     EXPIRED = -2,

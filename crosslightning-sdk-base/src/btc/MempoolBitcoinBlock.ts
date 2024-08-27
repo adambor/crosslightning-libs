@@ -1,4 +1,5 @@
 import {BtcBlock} from "crosslightning-base";
+import {Buffer} from "buffer";
 
 export type MempoolBitcoinBlockType = {
     id: string,

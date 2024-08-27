@@ -1,15 +1,13 @@
 import * as bolt11 from "bolt11";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
-import {StorageObject, SwapCommitStatus, SwapData} from "crosslightning-base";
+import {StorageObject, SwapData} from "crosslightning-base";
 import {fetchWithTimeout, tryWithRetries} from "../../../utils/RetryUtils";
-import {SignatureVerificationError} from "crosslightning-base";
-import {PriceInfoType} from "../../ISwap";
-import {LNURLWithdraw, LNURLWithdrawParamsWithUrl, PaymentAuthError} from "../../ClientSwapContract";
+import {PaymentAuthError} from "../../ClientSwapContract";
 import {LnForGasWrapper} from "./LnForGasWrapper";
-import * as EventEmitter from "events";
-import {Response} from "cross-fetch";
-import {AbortError, IntermediaryError, RequestError} from "../../..";
+import {EventEmitter} from "events";
+import {AbortError, RequestError} from "../../..";
+import {Buffer} from "buffer";
 
 const timeoutPromise = (timeoutSeconds) => {
     return new Promise(resolve => {

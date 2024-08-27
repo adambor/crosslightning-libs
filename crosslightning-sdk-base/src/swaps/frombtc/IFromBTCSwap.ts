@@ -2,9 +2,10 @@
 import {IFromBTCWrapper} from "./IFromBTCWrapper";
 import {ISwap, PriceInfoType} from "../ISwap";
 import * as BN from "bn.js";
-import * as EventEmitter from "events";
+import {EventEmitter} from "events";
 import {SwapType} from "../SwapType";
 import {SwapData, TokenAddress} from "crosslightning-base";
+import {Buffer} from "buffer";
 
 
 export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {

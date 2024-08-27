@@ -1,7 +1,7 @@
 import {BtcRelay, BtcStoredHeader, RelaySynchronizer} from "crosslightning-base/dist";
 import {MempoolBitcoinBlock} from "../MempoolBitcoinBlock";
 import {MempoolBitcoinRpc} from "../MempoolBitcoinRpc";
-import {ChainUtils} from "../ChainUtils";
+import {timeoutPromise} from "../../utils/RetryUtils";
 
 
 export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> implements RelaySynchronizer<B, TX, MempoolBitcoinBlock > {
@@ -23,7 +23,6 @@ export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> imp
         latestBlockHeader: MempoolBitcoinBlock,
         startForkId: number
     }> {
-
         const tipData = await this.btcRelay.getTipData();
 
         let cacheData: {
@@ -38,31 +37,29 @@ export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> imp
             computedCommitedHeaders: null
         };
 
-        let startForkId = null;
-
         const {resultStoredHeader, resultBitcoinHeader} = await this.btcRelay.retrieveLatestKnownBlockLog();
         cacheData.lastStoredHeader = resultStoredHeader;
-        if(resultStoredHeader.getBlockheight()<tipData.blockheight) {
-            cacheData.forkId = -1; //Indicate that we will be submitting blocks to fork
-        }
+        if(resultStoredHeader.getBlockheight()<tipData.blockheight) cacheData.forkId = -1; //Indicate that we will be submitting blocks to fork
+
         let spvTipBlockHeader = resultBitcoinHeader;
         const btcRelayTipBlockHash = spvTipBlockHeader.getHash();
 
         console.log("Retrieved stored header with commitment: ", cacheData.lastStoredHeader);
-
         console.log("SPV tip header: ", spvTipBlockHeader);
 
         let spvTipBlockHeight = spvTipBlockHeader.height;
 
         const txsList: TX[] = [];
         const blockHeaderMap: {[blockheight: number]: MempoolBitcoinBlock} = {
-            [spvTipBlockHeader.height]: spvTipBlockHeader
+            [resultBitcoinHeader.getHeight()]: resultBitcoinHeader
         };
-        const computedHeaderMap: {[blockheight: number]: B} = {};
+        const computedHeaderMap: {[blockheight: number]: B} = {
+            [resultStoredHeader.getBlockheight()]: resultStoredHeader
+        };
+        let startForkId = null;
 
         let forkFee: string;
         let mainFee: string;
-
         const saveHeaders = async (headerCache: MempoolBitcoinBlock[]) => {
             console.log("Header cache: ", headerCache);
             if(cacheData.forkId===-1) {
@@ -86,8 +83,7 @@ export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> imp
         let headerCache: MempoolBitcoinBlock[] = [];
 
         while(retrievedHeaders==null || retrievedHeaders.length>0) {
-
-            retrievedHeaders = (await ChainUtils.getPast15Blocks(spvTipBlockHeight+15)).map(e => new MempoolBitcoinBlock(e));
+            retrievedHeaders = await this.bitcoinRpc.getPast15Blocks(spvTipBlockHeight+15);
 
             for(let i=retrievedHeaders.length-1;i>=0;i--) {
                 const header = retrievedHeaders[i];
@@ -100,21 +96,17 @@ export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> imp
                     headerCache.length>=this.btcRelay.maxForkHeadersPerTx) {
 
                     await saveHeaders(headerCache);
-
                     headerCache = [];
                 }
             }
 
             if(retrievedHeaders.length>0) {
                 spvTipBlockHeight = retrievedHeaders[0].height;
-
-                await new Promise((resolve) => setTimeout(resolve, 1000));
+                await timeoutPromise(1);
             }
         }
 
-        if(headerCache.length>0) {
-            await saveHeaders(headerCache);
-        }
+        if(headerCache.length>0) await saveHeaders(headerCache);
 
         return {
             txs: txsList,
@@ -127,7 +119,6 @@ export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> imp
             latestBlockHeader: spvTipBlockHeader,
             startForkId
         };
-
     }
 
 }

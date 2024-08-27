@@ -4,6 +4,7 @@ import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
 import {PriceInfoType} from "../../ISwap";
+import {Buffer} from "buffer";
 
 export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
 

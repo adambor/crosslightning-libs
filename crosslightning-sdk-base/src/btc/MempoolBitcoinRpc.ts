@@ -1,20 +1,31 @@
 import {BitcoinRpc, BtcBlockWithTxs, BtcSyncInfo, BtcTx} from "crosslightning-base";
 import {MempoolBitcoinBlock} from "./MempoolBitcoinBlock";
-import {ChainUtils} from "./ChainUtils";
-
+import {MempoolApi} from "./MempoolApi";
+import {Buffer} from "buffer";
 
 export class MempoolBitcoinRpc implements BitcoinRpc<MempoolBitcoinBlock> {
 
+    api: MempoolApi;
+
+    constructor(mempoolApi: MempoolApi) {
+        this.api = mempoolApi;
+    }
+
     getTipHeight(): Promise<number> {
-        return ChainUtils.getTipBlockHeight();
+        return this.api.getTipBlockHeight();
     }
 
     async getBlockHeader(blockhash: string): Promise<MempoolBitcoinBlock> {
-        return new MempoolBitcoinBlock(await ChainUtils.getBlock(blockhash));
+        return new MempoolBitcoinBlock(await this.api.getBlockHeader(blockhash));
     }
 
-    async getMerkleProof(txId: string, blockhash: string): Promise<{ reversedTxId: Buffer; pos: number; merkle: Buffer[]; blockheight: number }> {
-        const proof = await ChainUtils.getTransactionProof(txId);
+    async getMerkleProof(txId: string, blockhash: string): Promise<{
+        reversedTxId: Buffer;
+        pos: number;
+        merkle: Buffer[];
+        blockheight: number
+    }> {
+        const proof = await this.api.getTransactionProof(txId);
         return {
             reversedTxId: Buffer.from(txId, "hex").reverse(),
             pos: proof.pos,
@@ -24,12 +35,12 @@ export class MempoolBitcoinRpc implements BitcoinRpc<MempoolBitcoinBlock> {
     }
 
     async getTransaction(txId: string): Promise<BtcTx> {
-        const tx = await ChainUtils.getTransaction(txId);
-        const rawTx = await ChainUtils.getRawTransaction(txId);
+        const tx = await this.api.getTransaction(txId);
+        const rawTx = await this.api.getRawTransaction(txId);
 
-        let confirmations: number;
+        let confirmations: number = 0;
         if(tx.status!=null && tx.status.confirmed) {
-            const blockheight = await ChainUtils.getTipBlockHeight();
+            const blockheight = await this.api.getTipBlockHeight();
             confirmations = blockheight-tx.status.block_height+1;
         }
 
@@ -64,27 +75,30 @@ export class MempoolBitcoinRpc implements BitcoinRpc<MempoolBitcoinBlock> {
     }
 
     async isInMainChain(blockhash: string): Promise<boolean> {
-        const blockStatus = await ChainUtils.getBlockStatus(blockhash);
+        const blockStatus = await this.api.getBlockStatus(blockhash);
         return blockStatus.in_best_chain;
     }
 
     getBlockhash(height: number): Promise<string> {
-        return ChainUtils.getBlockHash(height);
+        return this.api.getBlockHash(height);
     }
 
     getBlockWithTransactions(blockhash: string): Promise<BtcBlockWithTxs> {
         throw new Error("Unsupported.");
     }
 
-    getSyncInfo(): Promise<BtcSyncInfo> {
-        return ChainUtils.getTipBlockHeight().then(tipHeight => {
-            return {
-                verificationProgress: 1,
-                blocks: tipHeight,
-                headers: tipHeight,
-                ibd: false
-            };
-        });
+    async getSyncInfo(): Promise<BtcSyncInfo> {
+        const tipHeight = await this.api.getTipBlockHeight();
+        return {
+            verificationProgress: 1,
+            blocks: tipHeight,
+            headers: tipHeight,
+            ibd: false
+        };
+    }
+
+    async getPast15Blocks(height: number): Promise<MempoolBitcoinBlock[]> {
+        return (await this.api.getPast15BlockHeaders(height)).map(blockHeader => new MempoolBitcoinBlock(blockHeader));
     }
 
 }

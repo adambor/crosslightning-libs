@@ -2,7 +2,7 @@ import {IToBTCSwap, ToBTCSwapState} from "./IToBTCSwap";
 import {IWrapperStorage} from "../../storage/IWrapperStorage";
 import {ClientSwapContract} from "../ClientSwapContract";
 import * as BN from "bn.js";
-import * as EventEmitter from "events";
+import {EventEmitter} from "events";
 import {SwapCommitStatus, SwapData, TokenAddress, ChainEvents, RefundEvent, ClaimEvent,
     InitializeEvent, SwapEvent, SignatureVerificationError} from "crosslightning-base";
 import {FromBTCLNSwapState, FromBTCSwap, FromBTCSwapState} from "../..";

@@ -1,23 +1,13 @@
 import {PaymentAuthError} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {
-    ChainEvents,
-    ChainSwapType,
-    ClaimEvent,
-    InitializeEvent,
     IStorageManager,
-    RefundEvent,
-    SignatureVerificationError,
-    SwapCommitStatus,
     SwapContract,
     SwapData,
-    SwapEvent,
-    TokenAddress
 } from "crosslightning-base";
 import {fetchWithTimeout, tryWithRetries} from "../../../utils/RetryUtils";
-import * as EventEmitter from "events";
+import {EventEmitter} from "events";
 import {LnForGasSwap, LnForGasSwapState} from "./LnForGasSwap";
-import {Response} from "cross-fetch";
 import {RequestError} from "../../..";
 
 export class LnForGasWrapper<T extends SwapData> {

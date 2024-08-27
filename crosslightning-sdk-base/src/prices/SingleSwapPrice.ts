@@ -1,6 +1,5 @@
 import {ISwapPrice} from "../swaps/ISwapPrice";
 import * as BN from "bn.js";
-import {Response} from "cross-fetch";
 import {TokenAddress} from "crosslightning-base";
 import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 import {CoinAddresses} from "./PricesTypes";

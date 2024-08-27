@@ -3,7 +3,7 @@ import * as tinySecpk256Interface from "@bitcoinerlab/secp256k1";
 bitcoin.initEccLib(tinySecpk256Interface);
 
 export * from "./btc/synchronizer/MempoolBtcRelaySynchronizer";
-export * from "./btc/ChainUtils";
+export * from "./btc/MempoolApi";
 export * from "./btc/MempoolBitcoinRpc";
 export * from "./btc/MempoolBitcoinBlock";
 

@@ -1,10 +1,10 @@
 import * as BN from "bn.js";
 import * as bitcoin from "bitcoinjs-lib";
-import {Response} from "cross-fetch";
-import {createHash, randomBytes} from "crypto-browserify";
+import randomBytes from "randombytes";
+import createHash from "create-hash";
 import * as bolt11 from "bolt11";
 import {decode, PaymentRequestObject, TagsObject} from "bolt11";
-import {BitcoinTransaction, ChainUtils} from "../btc/ChainUtils";
+import {BitcoinTransaction, MempoolApi} from "../btc/MempoolApi";
 import {UserError} from "../errors/UserError";
 import {IntermediaryError} from "../errors/IntermediaryError";
 import {ISwapPrice} from "./ISwapPrice";
@@ -36,6 +36,7 @@ import {SwapType} from "./SwapType";
 import {FromBTCOptions} from "./frombtc/onchain/FromBTCWrapper";
 import {FromBTCLNOptions} from "./frombtc/ln/FromBTCLNWrapper";
 import {ToBTCLNOptions} from "./tobtc/ln/ToBTCLNWrapper";
+import {Buffer} from "buffer";
 
 export class PaymentAuthError extends Error {
 
@@ -1390,7 +1391,7 @@ export class ClientSwapContract<T extends SwapData> {
             }
 
             if(txId!=null) {
-                const btcTx = await tryWithRetries(() => ChainUtils.getTransaction(txId));
+                const btcTx = await tryWithRetries(() => MempoolApi.getTransaction(txId));
                 if(btcTx==null) {
                     console.log("BTC tx not found yet!");
                     return null;
@@ -1945,7 +1946,7 @@ export class ClientSwapContract<T extends SwapData> {
                         lnPublicKey: FieldTypeEnum.StringOptional
                     }, (responseBody) => {
                         nodeChannelCapacityPromise = responseBody.lnPublicKey
-                            .then(lpPubkey => ChainUtils.getLNNodeInfo(lpPubkey))
+                            .then(lpPubkey => MempoolApi.getLNNodeInfo(lpPubkey))
                             .then(data => data==null ? null : {pubkey: data.public_key, capacity: new BN(data.capacity), channels: data.active_channel_count})
                             .catch(e => {
                                 console.error("LN node pubkey pre-fetch error: ",e);
@@ -1990,7 +1991,7 @@ export class ClientSwapContract<T extends SwapData> {
                     if(nodeChannelCapacity===undefined) {
                         //Re-fetch
                         nodeChannelCapacity = await tryWithRetries(
-                            () => ChainUtils.getLNNodeInfo(decodedPR.payeeNodeKey).then(data => data==null ? null : {pubkey: data.public_key, capacity: new BN(data.capacity), channels: data.active_channel_count}),
+                            () => MempoolApi.getLNNodeInfo(decodedPR.payeeNodeKey).then(data => data==null ? null : {pubkey: data.public_key, capacity: new BN(data.capacity), channels: data.active_channel_count}),
                             null,
                             null,
                             abortController.signal
