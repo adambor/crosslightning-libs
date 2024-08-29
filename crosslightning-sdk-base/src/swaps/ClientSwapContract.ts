@@ -7,7 +7,7 @@ import {decode, PaymentRequestObject, TagsObject} from "bolt11";
 import {BitcoinTransaction, MempoolApi} from "../btc/MempoolApi";
 import {UserError} from "../errors/UserError";
 import {IntermediaryError} from "../errors/IntermediaryError";
-import {ISwapPrice} from "./ISwapPrice";
+import {ISwapPrice} from "../prices/abstract/ISwapPrice";
 import {
     ChainSwapType, IntermediaryReputationType,
     SignatureVerificationError,

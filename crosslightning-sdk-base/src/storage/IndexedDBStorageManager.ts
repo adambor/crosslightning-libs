@@ -1,16 +1,16 @@
-import {IWrapperStorage} from "./IWrapperStorage";
-import {ISwap} from "../swaps/ISwap";
+import {IStorageManager, StorageObject} from "crosslightning-base";
 
-export class IndexedDBWrapperStorage implements IWrapperStorage{
+export class IndexedDBWrapperStorage<T extends StorageObject> implements IStorageManager<T> {
 
     storageKey: string;
     db: IDBDatabase;
+    data: { [p: string]: T } = {};
 
     constructor(storageKey: string) {
         this.storageKey = storageKey;
     }
 
-    executeTransaction<T>(cbk: (tx: IDBObjectStore) => IDBRequest<T>, readonly: boolean): Promise<T> {
+    private executeTransaction<T>(cbk: (tx: IDBObjectStore) => IDBRequest<T>, readonly: boolean): Promise<T> {
         return new Promise<T>((resolve, reject) => {
             const tx = this.db.transaction("swaps", readonly ? "readonly" : "readwrite", {durability: "strict"});
             const req = cbk(tx.objectStore("swaps"));
@@ -19,7 +19,7 @@ export class IndexedDBWrapperStorage implements IWrapperStorage{
         });
     }
 
-    executeTransactionArr<T>(cbk: (tx: IDBObjectStore) => IDBRequest<T>[], readonly: boolean): Promise<T[]> {
+    private executeTransactionArr<T>(cbk: (tx: IDBObjectStore) => IDBRequest<T>[], readonly: boolean): Promise<T[]> {
         const tx = this.db.transaction("swaps", readonly ? "readonly" : "readwrite", {durability: "strict"});
         const reqs = cbk(tx.objectStore("swaps"));
         return Promise.all(reqs.map(req => new Promise<T>((resolve, reject) => {
@@ -28,9 +28,7 @@ export class IndexedDBWrapperStorage implements IWrapperStorage{
         })));
     }
 
-    async tryMigrate(): Promise<boolean> {
-        await this.loadIfNeeded();
-
+    private async tryMigrate(): Promise<boolean> {
         const txt = window.localStorage.getItem(this.storageKey);
         if(txt==null) return false;
 
@@ -51,8 +49,7 @@ export class IndexedDBWrapperStorage implements IWrapperStorage{
         return true;
     }
 
-
-    async loadIfNeeded(): Promise<void> {
+    async init(): Promise<void> {
         if(this.db==null) {
             this.db = await new Promise<IDBDatabase>((resolve, reject) => {
                 const request = window.indexedDB.open(this.storageKey, 1);
@@ -66,49 +63,42 @@ export class IndexedDBWrapperStorage implements IWrapperStorage{
         }
     }
 
-    async removeSwapData(swap: ISwap): Promise<boolean> {
-        await this.loadIfNeeded();
-
-        const id = swap.getPaymentHash().toString("hex");
-
-        return await this.executeTransaction<undefined>(store => store.delete(id), false)
-            .then(() => true)
-            .catch(() => false);
-    }
-
-    async saveSwapData(swap: ISwap): Promise<void> {
-        await this.loadIfNeeded();
-
-        const id = swap.getPaymentHash().toString("hex");
-        await this.executeTransaction<IDBValidKey>(store => store.put({
-            id,
-            data: swap.serialize()
-        }), false);
-    }
-
-    async saveSwapDataArr(swapData: ISwap[]): Promise<void> {
-        await this.loadIfNeeded();
-
-        await this.executeTransactionArr<IDBValidKey>(store => swapData.map(swap => {
-            const id = swap.getPaymentHash().toString("hex");
-            return store.put({id, data: swap.serialize()});
-        }), false);
-    }
-
-    async loadSwapData<T extends ISwap>(wrapper: any, type: new(wrapper: any, data: any) => T): Promise<{
-        [paymentHash: string]: T
-    }> {
-        await this.loadIfNeeded();
+    async loadData(type: { new(data: any): T }): Promise<T[]> {
         await this.tryMigrate();
 
         const result = await this.executeTransaction<{id: string, data: any}[]>(store => store.getAll(), true);
 
-        const returnObj = {};
+        const returnObj = [];
         result.forEach(data => {
-            returnObj[data.id] = new type(wrapper, data.data);
+            const deserialized = new type(data.data);
+            this.data[data.id] = deserialized;
+            returnObj.push(deserialized);
         });
 
         return returnObj;
+    }
+
+    async removeData(hash: string): Promise<void> {
+        await this.executeTransaction<undefined>(store => store.delete(hash), false)
+            .catch(() => null);
+        if(this.data[hash]!=null) delete this.data[hash];
+    }
+
+    async saveData(hash: string, object: T): Promise<void> {
+        await this.executeTransaction<IDBValidKey>(store => store.put({
+            id: hash,
+            data: object.serialize()
+        }), false);
+        this.data[hash] = object;
+    }
+
+    async saveDataArr(arr: {id: string, object: T}[]): Promise<void> {
+        await this.executeTransactionArr<IDBValidKey>(store => arr.map(data => {
+            return store.put({id: data.id, data: data.object.serialize()});
+        }), false);
+        arr.forEach(data => {
+            this.data[data.id] = data.object;
+        })
     }
 
 }

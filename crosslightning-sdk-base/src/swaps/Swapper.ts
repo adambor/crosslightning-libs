@@ -1,5 +1,5 @@
 import {BitcoinNetwork} from "../btc/BitcoinNetwork";
-import {ISwapPrice} from "./ISwapPrice";
+import {ISwapPrice} from "../prices/abstract/ISwapPrice";
 import {IWrapperStorage} from "../storage/IWrapperStorage";
 import {ChainEvents, IStorageManager, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
 import {ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";

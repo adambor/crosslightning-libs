@@ -17,10 +17,10 @@ export * from "./errors/NetworkError";
 export * from "./intermediaries/Intermediary";
 export * from "./intermediaries/IntermediaryDiscovery";
 
-export * from "./prices/BinancePriceProvider";
-export * from "./prices/OKXPriceProvider";
+export * from "./prices/providers/BinancePriceProvider";
+export * from "./prices/providers/OKXPriceProvider";
 export * from "./prices/PricesTypes";
-export * from "./prices/IPriceProvider";
+export * from "./prices/abstract/IPriceProvider";
 export * from "./prices/RedundantSwapPrice";
 
 export * from "./storage/IWrapperStorage";
@@ -29,7 +29,7 @@ export * from "./storage/LocalWrapperStorage";
 export * from "./storage/IndexedDBWrapperStorage";
 
 export * from "./swaps/ClientSwapContract";
-export * from "./swaps/ISwapPrice";
+export * from "./prices/abstract/ISwapPrice";
 export * from "./swaps/ISwap";
 export * from "./swaps/SwapType";
 

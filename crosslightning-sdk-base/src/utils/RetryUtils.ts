@@ -69,7 +69,27 @@ export function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit & {
             throw e;
         }
     });
-};
+}
+
+export async function getWithTimeout<T>(url: string, timeout?: number, abortSignal?: AbortSignal): Promise<T> {
+    const response: Response = await fetchWithTimeout(url, {
+        method: "GET",
+        timeout: this.httpRequestTimeout,
+        signal: abortSignal
+    });
+
+    if(response.status!==200) {
+        let resp: string;
+        try {
+            resp = await response.text();
+        } catch (e) {
+            throw new Error(response.statusText);
+        }
+        throw new Error(resp);
+    }
+
+    return await response.json();
+}
 
 export function timeoutSignal(timeout: number, abortSignal?: AbortSignal) {
     if(timeout==null) return abortSignal;
