@@ -28,7 +28,7 @@ export abstract class IFromBTCSwap<T extends SwapData, S extends number> extends
      */
     protected tryCalculateSwapFee() {
         if(this.swapFeeBtc==null) {
-            this.swapFeeBtc = this.swapFee.mul(this.getOutAmountWithoutFee()).div(this.getInAmount());
+            this.swapFeeBtc = this.swapFee.mul(this.getInAmount()).div(this.getOutAmountWithoutFee());
         }
     }
 

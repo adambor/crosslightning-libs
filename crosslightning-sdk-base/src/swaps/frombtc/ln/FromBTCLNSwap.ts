@@ -64,6 +64,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCLN
             this.lnurlCallback = initOrObject.lnurlCallback;
             this.prPosted = initOrObject.prPosted;
         }
+        this.tryCalculateSwapFee();
     }
 
     /**
