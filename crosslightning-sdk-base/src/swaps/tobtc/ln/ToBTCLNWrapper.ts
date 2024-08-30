@@ -1,15 +1,11 @@
 import * as bolt11 from "bolt11";
 import {ToBTCLNSwap} from "./ToBTCLNSwap";
 import {IToBTCWrapper} from "../IToBTCWrapper";
-import {IWrapperStorage} from "../../../storage/IWrapperStorage";
-import {AmountData, ClientSwapContract, LNURLPay, LNURLPayParamsWithUrl} from "../../ClientSwapContract";
+import {AmountData, LNURLPay} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {UserError} from "../../../errors/UserError";
-import {ChainEvents, SwapData, TokenAddress} from "crosslightning-base";
-import {EventEmitter} from "events";
+import {SwapData, TokenAddress} from "crosslightning-base";
 import {Intermediary} from "../../../intermediaries/Intermediary";
-import {ToBTCOptions} from "../onchain/ToBTCWrapper";
-import * as dns from "node:dns";
 
 export type ToBTCLNOptions = {
     expirySeconds: number,
@@ -19,25 +15,12 @@ export type ToBTCLNOptions = {
     expiryTimestamp?: BN,
 }
 
-export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
+export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCLNSwap<T>> {
 
-    /**
-     * @param storage                   Storage interface for the current environment
-     * @param contract                  Underlying contract handling the swaps
-     * @param chainEvents               On-chain event emitter
-     * @param swapDataDeserializer      Deserializer for SwapData
-     * @param events                    Instance to use for emitting events
-     */
-    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T, events?: EventEmitter) {
-        super(storage, contract, chainEvents, swapDataDeserializer, events);
-    }
+    protected readonly swapDeserializer = ToBTCLNSwap;
 
     private calculateFeeForAmount(amount: BN, overrideBaseFee?: BN, overrideFeePPM?: BN) : BN {
         return new BN(overrideBaseFee || this.contract.options.lightningBaseFee).add(amount.mul(new BN(overrideFeePPM || this.contract.options.lightningFeePPM)).div(new BN(1000000)));
-    }
-
-    init(): Promise<void> {
-        return super.initWithConstructor(ToBTCLNSwap);
     }
 
     /**
@@ -67,7 +50,6 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
         quote: Promise<ToBTCLNSwap<T>>,
         intermediary: Intermediary
     }[] {
-
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
         const parsedPR = bolt11.decode(bolt11PayRequest);
@@ -112,11 +94,6 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
                 ))
             }
         });
-
-        //Swaps are saved when commit is called
-        // await swap.save();
-        // this.swapData[result.data.getHash()] = swap;
-
     }
 
 
@@ -146,7 +123,6 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
         quote: Promise<ToBTCLNSwap<T>>,
         intermediary: Intermediary
     }[]> {
-
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
         let fee: Promise<BN>;
@@ -201,11 +177,6 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T> {
                 intermediary: data.intermediary
             }
         });
-
-        //Swaps are saved when commit is called
-        // await swap.save();
-        // this.swapData[result.data.getHash()] = swap;
-
     }
 
 }

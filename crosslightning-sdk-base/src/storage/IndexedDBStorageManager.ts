@@ -1,5 +1,10 @@
 import {IStorageManager, StorageObject} from "crosslightning-base";
 
+/**
+ * StorageManager using browser's IndexedDB storage, also migrates the data from prior LocalStorage API, if that was
+ *  used before for a given "storageKey"
+ */
+//TODO: Implement removeDataArr
 export class IndexedDBWrapperStorage<T extends StorageObject> implements IStorageManager<T> {
 
     storageKey: string;
@@ -28,6 +33,11 @@ export class IndexedDBWrapperStorage<T extends StorageObject> implements IStorag
         })));
     }
 
+    /**
+     * Tries to migrate old LocalStorage API stored objects (if they exist) to the IndexedDB
+     *
+     * @private
+     */
     private async tryMigrate(): Promise<boolean> {
         const txt = window.localStorage.getItem(this.storageKey);
         if(txt==null) return false;

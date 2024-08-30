@@ -1,146 +1,109 @@
 import {ToBTCWrapper} from "./ToBTCWrapper";
-import {IToBTCSwap, ToBTCSwapState} from "../IToBTCSwap";
+import {isIToBTCSwapInit, IToBTCSwap, IToBTCSwapInit} from "../IToBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
-import {PriceInfoType} from "../../ISwap";
-import {Buffer} from "buffer";
+import {Token} from "../../ISwap";
+
+
+export type ToBTCSwapInit<T extends SwapData> = IToBTCSwapInit<T> & {
+    address: string;
+    amount: BN;
+    confirmationTarget: number;
+    satsPerVByte: number;
+};
+
+export function isToBTCSwapInit<T extends SwapData>(obj: any): obj is ToBTCSwapInit<T> {
+    return typeof(obj.address)==="string" &&
+        BN.isBN(obj.amount) &&
+        typeof(obj.confirmationTarget)==="number" &&
+        typeof(obj.satsPerVByte)==="number" &&
+        isIToBTCSwapInit<T>(obj);
+}
 
 export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
+    protected readonly TYPE = SwapType.TO_BTC;
+    private readonly address: string;
+    private readonly amount: BN;
+    private readonly confirmationTarget: number;
+    private readonly satsPerVByte: number;
 
-    //State: PR_CREATED
-    readonly address: string;
-    readonly amount: BN;
-    readonly confirmationTarget: number;
+    private txId?: string;
 
-    readonly swapFee: BN;
-
-    txId: string;
-
+    constructor(wrapper: ToBTCWrapper<T>, serializedObject: any);
+    constructor(wrapper: ToBTCWrapper<T>, init: ToBTCSwapInit<T>);
     constructor(
         wrapper: ToBTCWrapper<T>,
-        address: string,
-        amount: BN,
-        confirmationTarget: number,
-        networkFee: BN,
-        swapFee: BN,
-        totalFee: BN,
-        data: T,
-        prefix: string,
-        timeout: string,
-        signature: string,
-        feeRate: any,
-        url: string,
-        expiry: number,
-        pricing: PriceInfoType
-    );
-    constructor(wrapper: ToBTCWrapper<T>, obj: any);
-
-    constructor(
-        wrapper: ToBTCWrapper<T>,
-        addressOrObject: string | any,
-        amount?: BN,
-        confirmationTarget?: number,
-        networkFee?: BN,
-        swapFee?: BN,
-        totalFee?: BN,
-        data?: T,
-        prefix?: string,
-        timeout?: string,
-        signature?: string,
-        feeRate?: any,
-        url?: string,
-        expiry?: number,
-        pricing?: PriceInfoType
+        initOrObject: ToBTCSwapInit<T> | any
     ) {
-        if(typeof(addressOrObject)==="string") {
-            super(wrapper, data, networkFee, swapFee, prefix, timeout, signature, feeRate, url, expiry, pricing);
-
-            this.address = addressOrObject;
-            this.amount = amount;
-            this.confirmationTarget = confirmationTarget;
-        } else {
-            super(wrapper, addressOrObject);
-
-            this.address = addressOrObject.address;
-            this.amount = new BN(addressOrObject.amount);
-            this.confirmationTarget = addressOrObject.confirmationTarget;
-            this.txId = addressOrObject.txId;
+        super(wrapper, initOrObject);
+        if(!isToBTCSwapInit<T>(initOrObject)) {
+            this.address = initOrObject.address;
+            this.amount = new BN(initOrObject.amount);
+            this.confirmationTarget = initOrObject.confirmationTarget;
+            this.satsPerVByte = initOrObject.satsPerVByte;
+            this.txId = initOrObject.txId;
         }
+        this.tryCalculateSwapFee();
     }
 
-    /**
-     * Returns amount that will be sent on Solana
-     */
-    getInAmount(): BN {
-        return this.data.getAmount();
+    _setPaymentResult(result: { secret?: string; txId?: string }): void {
+        this.txId = result.txId;
     }
 
-    /**
-     * Returns amount that will be sent to recipient on Bitcoin LN
-     */
+
+    //////////////////////////////
+    //// Amounts & fees
+
     getOutAmount(): BN {
         return this.amount
     }
 
-    serialize(): any {
-        const partialySerialized = super.serialize();
+    getOutToken(): Token {
+        return {
+            chain: "BTC",
+            lightning: false
+        };
+    }
 
-        partialySerialized.address = this.address;
-        partialySerialized.amount = this.amount.toString(10);
-        partialySerialized.confirmationTarget = this.confirmationTarget;
-        partialySerialized.txId = this.txId;
 
-        return partialySerialized;
+    //////////////////////////////
+    //// Getters & utils
+
+    /**
+     * Returns fee rate of the bitcoin transaction in sats/vB
+     */
+    getBitcoinFeeRate(): number {
+        return this.satsPerVByte;
     }
 
     /**
-     * A blocking promise resolving when swap was concluded by the intermediary
-     * rejecting in case of failure
-     *
-     * @param abortSignal           Abort signal
-     * @param checkIntervalSeconds  How often to poll the intermediary for answer
-     *
-     * @returns {Promise<boolean>}  Was the payment successful? If not we can refund.
+     * Returns the bitcoin address where the BTC will be sent to
      */
-    async waitForPayment(abortSignal?: AbortSignal, checkIntervalSeconds?: number): Promise<boolean> {
-        const result = await this.wrapper.contract.waitForRefundAuthorization(this.data, this.url, abortSignal, checkIntervalSeconds);
-
-        if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
-
-        if(!result.is_paid) {
-            this.state = ToBTCSwapState.REFUNDABLE;
-
-            await this.save();
-
-            this.emitEvent();
-            return false;
-        } else {
-            this.txId = result.txId;
-            await this.save();
-
-            return true;
-        }
-    }
-
-    getTxId(): string {
-        return this.txId;
-    }
-
-    getPaymentHash(): Buffer {
-        return Buffer.from(this.data.getHash(), "hex");
-    }
-
-    getAddress(): string {
+    getBitcoinAddress(): string {
         return this.address;
     }
 
-    getType(): SwapType {
-        return SwapType.TO_BTC;
+    /**
+     * Returns the transaction ID of the transaction sending the BTC
+     */
+    getBitcoinTxId(): string | null {
+        return this.txId;
     }
 
-    getState(): ToBTCSwapState {
-        return this.state;
+
+    //////////////////////////////
+    //// Storage
+
+    serialize(): any {
+        return {
+            ...super.serialize(),
+            address: this.address,
+            amount: this.amount.toString(10),
+            confirmationTarget: this.confirmationTarget,
+            satsPerVByte: this.satsPerVByte,
+            txId: this.txId
+        };
     }
 
 }

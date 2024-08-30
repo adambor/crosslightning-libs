@@ -1,7 +1,8 @@
 import {ISwap} from "./ISwap";
 import {IStorageManager} from "crosslightning-base";
+import {ISwapWrapper} from "./ISwapWrapper";
 
-export class SwapWrapperStorage<T extends ISwap> {
+export class SwapWrapperStorage<T extends ISwap<any>> {
 
     storage: IStorageManager<T>;
 
@@ -18,6 +19,18 @@ export class SwapWrapperStorage<T extends ISwap> {
         if(this.storage.data[id]==null) return false;
         await this.storage.removeData(id);
         return true;
+    }
+
+    async removeSwapDataArr(arr: T[]): Promise<void> {
+        if((this.storage as any).removeDataArr!=null) {
+            await (this.storage as any).removeDataArr(arr.map(swap => swap.getPaymentHash().toString("hex")));
+            return;
+        }
+
+        for(let swapData of arr) {
+            const id = swapData.getPaymentHash().toString("hex");
+            await this.storage.removeData(id);
+        }
     }
 
     saveSwapData(swapData: T): Promise<void> {
@@ -39,7 +52,7 @@ export class SwapWrapperStorage<T extends ISwap> {
         }
     }
 
-    async loadSwapData(wrapper: any, type: new(wrapper: any, data: any) => T): Promise<{
+    async loadSwapData(wrapper: ISwapWrapper<any, T>, type: new(wrapper: ISwapWrapper<any, T>, data: any) => T): Promise<{
         [paymentHash: string]: T
     }> {
         const res = await this.storage.loadData(type.bind(null, wrapper));

@@ -1,9 +1,7 @@
 import {ToBTCSwap} from "./ToBTCSwap";
 import {IToBTCWrapper} from "../IToBTCWrapper";
-import {IWrapperStorage} from "../../../storage/IWrapperStorage";
-import {AmountData, ClientSwapContract} from "../../ClientSwapContract";
-import {ChainEvents, SwapData, TokenAddress} from "crosslightning-base";
-import {EventEmitter} from "events";
+import {AmountData} from "../../ClientSwapContract";
+import {SwapData} from "crosslightning-base";
 import { Intermediary } from "../../../intermediaries/Intermediary";
 
 export type ToBTCOptions = {
@@ -11,18 +9,8 @@ export type ToBTCOptions = {
     confirmations: number
 }
 
-export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T> {
-
-    /**
-     * @param storage                   Storage interface for the current environment
-     * @param contract                  Underlying contract handling the swaps
-     * @param chainEvents               On-chain event emitter
-     * @param swapDataDeserializer      Deserializer for SwapData
-     * @param events                    Instance to use for emitting events
-     */
-    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T, events?: EventEmitter) {
-        super(storage, contract, chainEvents, swapDataDeserializer, events);
-    }
+export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap<T>> {
+    protected readonly swapDeserializer = ToBTCSwap;
 
     /**
      * Returns quotes fetched from LPs, paying to an 'address' - a bitcoin address
@@ -45,7 +33,6 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T> {
         quote: Promise<ToBTCSwap<T>>,
         intermediary: Intermediary
     }[] {
-
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
         const resultPromises = this.contract.payOnchain(
@@ -79,19 +66,6 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T> {
                 intermediary: data.intermediary
             };
         });
-
-        //Swaps are saved when commit is called
-        // await swap.save();
-        // this.swapData[result.data.getHash()] = swap;
-
-    }
-
-    /**
-     * Initializes the wrapper, be sure to call this before taking any other actions.
-     * Checks if any swaps are already refundable
-     */
-    async init() {
-        return super.initWithConstructor(ToBTCSwap);
     }
 
 }

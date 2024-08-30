@@ -280,7 +280,7 @@ export class MempoolApi {
      *
      * @param pubkey
      */
-    getLNNodeInfo(pubkey: string): Promise<LNNodeInfo> {
+    getLNNodeInfo(pubkey: string): Promise<LNNodeInfo | null> {
         return this.request<LNNodeInfo>("v1/lightning/nodes/"+pubkey, "obj").catch((e: Error) => {
             if(e.message==="This node does not exist, or our node is not seeing it yet") return null;
             throw e;
@@ -292,7 +292,7 @@ export class MempoolApi {
      *
      * @param txId
      */
-    getTransaction(txId: string): Promise<BitcoinTransaction> {
+    getTransaction(txId: string): Promise<BitcoinTransaction | null> {
         return this.request<BitcoinTransaction>("tx/"+txId, "obj").catch((e: Error) => {
             if(e.message==="Transaction not found") return null;
             throw e;

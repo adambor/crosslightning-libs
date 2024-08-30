@@ -1,6 +1,9 @@
 import {StorageObject, IStorageManager} from "crosslightning-base";
 import * as fs from "fs/promises";
 
+/**
+ * StorageManager using local filesystem to persists data, creates a new file for every save object
+ */
 export class FileSystemStorageManager<T extends StorageObject> implements IStorageManager<T> {
 
     private readonly directory: string;

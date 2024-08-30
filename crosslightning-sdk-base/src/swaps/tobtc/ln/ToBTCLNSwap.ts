@@ -1,109 +1,100 @@
 import * as bolt11 from "bolt11";
 import {ToBTCLNWrapper} from "./ToBTCLNWrapper";
-import {IToBTCSwap} from "../IToBTCSwap";
+import {isIToBTCSwapInit, IToBTCSwap, IToBTCSwapInit} from "../IToBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
 import {decipherAES, LNURLPaySuccessAction} from "js-lnurl/lib";
-import {PriceInfoType} from "../../ISwap";
 import {Buffer} from "buffer";
+import {Token} from "../../ISwap";
+
+function isLNURLPaySuccessAction(obj: any): obj is LNURLPaySuccessAction {
+    return obj != null &&
+        typeof obj === 'object' &&
+        typeof obj.tag === 'string' &&
+        (obj.description == null || typeof obj.description === 'string') &&
+        (obj.url == null || typeof obj.url === 'string') &&
+        (obj.message == null || typeof obj.message === 'string') &&
+        (obj.ciphertext == null || typeof obj.ciphertext === 'string') &&
+        (obj.iv == null || typeof obj.iv === 'string');
+}
+
+export type ToBTCLNSwapInit<T extends SwapData> = IToBTCSwapInit<T> & {
+    confidence: number;
+    pr: string;
+    lnurl?: string;
+    successAction?: LNURLPaySuccessAction;
+};
+
+export function isToBTCLNSwapInit<T extends SwapData>(obj: any): obj is ToBTCLNSwapInit<T> {
+    return typeof(obj.confidence)==="number" &&
+        typeof(obj.pr)==="string" &&
+        (obj.lnurl==null || typeof(obj.lnurl)==="string") &&
+        (obj.successAction==null || isLNURLPaySuccessAction(obj.successAction)) &&
+        isIToBTCSwapInit<T>(obj);
+}
 
 export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
+    protected readonly TYPE = SwapType.TO_BTCLN;
 
-    readonly confidence: number;
+    private readonly confidence: number;
+    private readonly pr: string;
+    private readonly lnurl?: string;
+    private readonly successAction?: LNURLPaySuccessAction;
 
-    //State: PR_CREATED
-    readonly pr: string;
-    readonly routingFeeSats: BN;
+    private secret?: string;
 
-    readonly lnurl: string;
-    readonly successAction: LNURLPaySuccessAction;
-
-    constructor(
-        wrapper: ToBTCLNWrapper<T>,
-        pr: string,
-        data: T,
-        networkFee: BN,
-        swapFee: BN,
-        prefix: string,
-        timeout: string,
-        signature: string,
-        feeRate: any,
-        url: string,
-        confidence: string,
-        routingFeeSats: BN,
-        expiry: number,
-        pricing: PriceInfoType,
-        lnurl?: string,
-        successAction?: LNURLPaySuccessAction
-    );
+    constructor(wrapper: ToBTCLNWrapper<T>, init: ToBTCLNSwapInit<T>);
     constructor(wrapper: ToBTCLNWrapper<T>, obj: any);
 
-    constructor(
-        wrapper: ToBTCLNWrapper<T>,
-        prOrObject: string | any,
-        data?: T,
-        networkFee?: BN,
-        swapFee?: BN,
-        prefix?: string,
-        timeout?: string,
-        signature?: string,
-        feeRate?: any,
-        url?: string,
-        confidence?: string,
-        routingFeeSats?: BN,
-        expiry?: number,
-        pricing?: PriceInfoType,
-        lnurl?: string,
-        successAction?: LNURLPaySuccessAction
-    ) {
-        if(typeof(prOrObject)==="string") {
-            super(wrapper, data, networkFee, swapFee, prefix, timeout, signature, feeRate, url, expiry, pricing);
-            this.confidence = parseFloat(confidence);
-            this.pr = prOrObject;
-            this.routingFeeSats = routingFeeSats;
-            this.lnurl = lnurl;
-            this.successAction = successAction;
-        } else {
-            super(wrapper, prOrObject);
-            this.confidence = prOrObject.confidence;
-            this.pr = prOrObject.pr;
-            this.routingFeeSats = prOrObject.routingFeeSats==null ? null : new BN(prOrObject.routingFeeSats);
-            this.lnurl = prOrObject.lnurl;
-            this.successAction = prOrObject.successAction;
+    constructor(wrapper: ToBTCLNWrapper<T>, initOrObj: ToBTCLNSwapInit<T> | any) {
+        super(wrapper, initOrObj);
+        if(!isToBTCLNSwapInit(initOrObj)) {
+            this.confidence = initOrObj.confidence;
+            this.pr = initOrObj.pr;
+            this.lnurl = initOrObj.lnurl;
+            this.successAction = initOrObj.successAction;
+            this.secret = initOrObj.secret;
         }
+        this.tryCalculateSwapFee();
     }
 
-    /**
-     * Returns amount that will be sent on Solana
-     */
-    getInAmount(): BN {
-        return this.data.getAmount();
+    _setPaymentResult(result: { secret?: string; txId?: string }): void {
+        this.secret = result.secret;
     }
 
-    /**
-     * Returns amount that will be sent to recipient on Bitcoin LN
-     */
+
+    //////////////////////////////
+    //// Amounts & fees
+
     getOutAmount(): BN {
         const parsedPR = bolt11.decode(this.pr);
         return new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
     }
 
-    serialize(): any {
-        const partialSerialized = super.serialize();
-        partialSerialized.pr = this.pr;
-        partialSerialized.confidence = this.confidence;
-        partialSerialized.routingFeeSats = this.routingFeeSats==null ? null : this.routingFeeSats.toString(10);
-        partialSerialized.lnurl = this.lnurl;
-        partialSerialized.successAction = this.successAction;
-        return partialSerialized;
+    getOutToken(): Token {
+        return {
+            chain: "BTC",
+            lightning: true
+        };
+    }
+
+
+    //////////////////////////////
+    //// Getters & utils
+
+    /**
+     * Returns the lightning BOLT11 invoice where the BTC will be sent to
+     */
+    getLightningInvoice(): string {
+        return this.pr;
     }
 
     /**
-     * Returns routing fee in satoshis
+     * Returns payment secret (pre-image) as a proof of payment
      */
-    getRoutingFee(): BN {
-        return this.routingFeeSats;
+    getSecret(): string | null {
+        return this.secret;
     }
 
     /**
@@ -119,13 +110,9 @@ export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
         return Buffer.from(parsed.tagsObject.payment_hash, "hex");
     }
 
-    getAddress(): string {
-        return this.pr;
-    }
 
-    getType(): SwapType {
-        return SwapType.TO_BTCLN;
-    }
+    //////////////////////////////
+    //// LNURL-pay
 
     /**
      * Is this an LNURL-pay swap?
@@ -142,7 +129,7 @@ export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
     }
 
     /**
-     * Whether this payment contains a success message
+     * Checks whether this LNURL payment contains a success message
      */
     hasSuccessAction(): boolean {
         return this.successAction!=null;
@@ -177,6 +164,19 @@ export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
                 text: deciphered
             };
         }
+    }
+
+
+    //////////////////////////////
+    //// Storage
+
+    serialize(): any {
+        return {
+            ...super.serialize(),
+            pr: this.pr,
+            confidence: this.confidence,
+            secret: this.secret
+        };
     }
 
 }

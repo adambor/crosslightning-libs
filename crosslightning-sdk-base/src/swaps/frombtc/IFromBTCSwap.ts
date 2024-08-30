@@ -1,150 +1,191 @@
 
 import {IFromBTCWrapper} from "./IFromBTCWrapper";
-import {ISwap, PriceInfoType} from "../ISwap";
+import {Fee, ISwap, ISwapInit, PriceInfoType, Token} from "../ISwap";
 import * as BN from "bn.js";
 import {EventEmitter} from "events";
-import {SwapType} from "../SwapType";
-import {SwapData, TokenAddress} from "crosslightning-base";
-import {Buffer} from "buffer";
+import {SignatureVerificationError, SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
+import {tryWithRetries} from "../../utils/RetryUtils";
 
 
-export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
+export abstract class IFromBTCSwap<T extends SwapData, S extends number> extends ISwap<T, S> {
 
-    readonly url: string;
-    expiry: number;
+    protected abstract readonly COMMIT_STATE: S;
+    protected abstract readonly CLAIM_STATE: S;
+    protected abstract readonly FAIL_STATE: S;
 
-    //State: PR_PAID
-    data: T;
-    swapFee: BN;
-    prefix: string;
-    timeout: string;
-    signature: string;
-    feeRate: any;
-
-    protected readonly wrapper: IFromBTCWrapper<T>;
-
-    commitTxId: string;
-    claimTxId: string;
-
-    /**
-     * Swap's event emitter
-     *
-     * @event IFromBTCSwap<T>#swapState
-     * @type {IFromBTCSwap<T>}
-     */
-    readonly events: EventEmitter;
-
+    protected constructor(wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S>>, init: ISwapInit<T>);
+    protected constructor(wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S>>, obj: any);
     protected constructor(
-        wrapper: IFromBTCWrapper<T>,
-        urlOrObject?: string | any,
-        data?: T,
-        swapFee?: BN,
-        prefix?: string,
-        timeout?: string,
-        signature?: string,
-        feeRate?: any,
-        expiry?: number,
-        pricing?: PriceInfoType
+        wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S>>,
+        initOrObj: ISwapInit<T> | any
     ) {
-        if(typeof(urlOrObject)==="string") {
-            super(pricing);
-            this.url = urlOrObject;
+        super(wrapper, initOrObj);
+    }
 
-            this.data = data;
-            this.swapFee = swapFee;
-            this.prefix = prefix;
-            this.timeout = timeout;
-            this.signature = signature;
-            this.feeRate = feeRate;
-            this.expiry = expiry;
-        } else {
-            super(urlOrObject);
-            this.url = urlOrObject.url;
-
-            this.data = urlOrObject.data !=null ? new wrapper.swapDataDeserializer(urlOrObject.data) : null;
-            this.swapFee = urlOrObject.swapFee==null ? null : new BN(urlOrObject.swapFee);
-            this.prefix = urlOrObject.prefix;
-            this.timeout = urlOrObject.timeout;
-            this.signature = urlOrObject.signature;
-            this.feeRate = urlOrObject.feeRate;
-            this.commitTxId = urlOrObject.commitTxId;
-            this.claimTxId = urlOrObject.claimTxId;
-            this.expiry = urlOrObject.expiry;
+    /**
+     * In case swapFee in BTC is not supplied it recalculates it based on swap price
+     * @protected
+     */
+    protected tryCalculateSwapFee() {
+        if(this.swapFeeBtc==null) {
+            this.swapFeeBtc = this.swapFee.mul(this.getOutAmountWithoutFee()).div(this.getInAmount());
         }
-        this.wrapper = wrapper;
-        this.events = new EventEmitter();
+    }
+
+    abstract getTxoHash?(): Buffer;
+
+
+    //////////////////////////////
+    //// Pricing
+
+    async refetchPriceData(): Promise<PriceInfoType> {
+        if(this.pricingInfo==null) return null;
+        const priceData = await this.wrapper.contract.swapPrice.isValidAmountReceive(this.getInAmount(), this.pricingInfo.satsBaseFee, this.pricingInfo.feePPM, this.data.getAmount(), this.data.getToken());
+        this.pricingInfo = priceData;
+        return priceData;
+    }
+
+
+    //////////////////////////////
+    //// Getters & utils
+
+    getOutToken(): Token {
+        return {
+            chain: "SC",
+            address: this.data.getToken()
+        };
+    }
+
+    async isQuoteValid(): Promise<boolean> {
+        try {
+            await tryWithRetries(
+                () => this.wrapper.contract.swapContract.isValidInitAuthorization(
+                    this.data, this.timeout, this.prefix, this.signature, this.feeRate
+                ),
+                null,
+                e => e instanceof SignatureVerificationError
+            );
+            return true;
+        } catch (e) {
+            if(e instanceof SignatureVerificationError) {
+                return false;
+            }
+        }
     }
 
     /**
-     * Returns amount that will be received on Solana
+     * Returns a string that can be displayed as QR code representation of the address (with bitcoin: or lightning: prefix)
      */
-    abstract getOutAmount(): BN;
+    abstract getQrData(): string;
 
-    /**
-     * Returns amount that will be sent on Bitcoin on-chain
-     */
-    abstract getInAmount(): BN;
+    abstract isClaimable(): boolean;
 
-    /**
-     * Returns calculated fee for the swap
-     */
-    getFee(): BN {
-        return this.swapFee;
-    }
-
-    getOutAmountWithoutFee(): BN {
-        return this.getOutAmount().add(this.getFee());
-    }
-
-    /**
-     * A blocking promise resolving when payment was received by the intermediary and client can continue
-     * rejecting in case of failure
-     *
-     * @param abortSignal           Abort signal
-     * @param checkIntervalSeconds  How often to poll the intermediary for answer
-     * @param updateCallback        Callback called when txId is found, and also called with subsequent confirmations
-     */
-    abstract waitForPayment(abortSignal?: AbortSignal, checkIntervalSeconds?: number, updateCallback?: (txId: string, confirmations: number, targetConfirmations: number) => void): Promise<void>;
-
-    /**
-     * Returns if the swap can be committed
-     */
     abstract canCommit(): boolean;
 
+
+    //////////////////////////////
+    //// Amounts & fees
+
+    protected getOutAmountWithoutFee(): BN {
+        return this.getOutAmount().add(this.swapFee);
+    }
+
+    getOutAmount(): BN {
+        return this.data.getAmount();
+    }
+
+    getInAmountWithoutFee(): BN {
+        return this.getInAmount().sub(this.swapFeeBtc);
+    }
+
+    getSwapFee(): Fee {
+        return {
+            amountInSrcToken: this.swapFeeBtc,
+            amountInDstToken: this.swapFee
+        };
+    }
+
+    getClaimFee(): Promise<BN> {
+        return this.wrapper.contract.swapContract.getClaimFee(this.data);
+    }
+
+    getSecurityDeposit(): BN {
+        return this.data.getSecurityDeposit();
+    }
+
+    getTotalDeposit():BN {
+        return this.data.getTotalDeposit();
+    }
+
+
+    //////////////////////////////
+    //// Commit
+
     /**
-     * Commits the swap on-chain, locking the tokens from the intermediary in an HTLC
-     * Important: Make sure this transaction is confirmed and only after it is call claim()
+     * Commits the swap on-chain, locking the tokens from the intermediary in an PTLC
+     * Important: Make sure this transaction is confirmed and only after it is display the address to user
      *
+     * @param skipChecks                    Signer to use to send the commit transaction
      * @param noWaitForConfirmation     Do not wait for transaction confirmation (careful! be sure that transaction confirms before calling claim())
      * @param abortSignal               Abort signal
      */
-    abstract commit(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
+    async commit(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
+        const result = await this.wrapper.contract.swapContract.sendAndConfirm(
+            await this.txsCommit(skipChecks), !noWaitForConfirmation, abortSignal
+        );
+
+        this.commitTxId = result[0];
+        await this._saveAndEmit(this.COMMIT_STATE);
+        return result[0];
+    }
 
     /**
-     * Commits the swap on-chain, locking the tokens from the intermediary in an HTLC
-     * Important: Make sure this transaction is confirmed and only after it is call claim()
+     * Commits the swap on-chain, locking the tokens from the intermediary in an PTLC
+     * Important: Make sure this transaction is confirmed and only after it is display the address to user
      */
-    abstract txsCommit(): Promise<any[]>;
+    async txsCommit(skipChecks?: boolean): Promise<any[]> {
+        if(!this.canCommit()) throw new Error("Must be in CREATED state!");
 
-    /**
-     * Returns a promise that resolves when swap is committed
-     *
-     * @param abortSignal   AbortSignal
-     */
-    abstract waitTillCommited(abortSignal?: AbortSignal): Promise<void>;
+        await this._save();
 
-    /**
-     * Returns if the swap can be claimed
-     */
-    abstract canClaim(): boolean;
+        return await this.wrapper.contract.swapContract.txsInit(
+            this.data, this.timeout, this.prefix, this.signature,
+            this.getTxoHash==null ? null : this.getTxoHash(), skipChecks, this.feeRate
+        ).catch(e => Promise.reject(e instanceof SignatureVerificationError ? new Error("Request timed out") : e));
+    }
+
+    async waitTillCommited(abortSignal?: AbortSignal): Promise<void> {
+        if(this.state===this.COMMIT_STATE) return Promise.resolve();
+
+        const abortController = new AbortController();
+        if(abortSignal!=null) abortSignal.addEventListener("abort", () => abortController.abort(abortSignal.reason));
+        await Promise.race([
+            this.watchdogWaitTillCommited(abortController.signal),
+            this.waitTillState(this.COMMIT_STATE, "gte", abortController.signal)
+        ]);
+
+        if(this.state<this.COMMIT_STATE) await this._saveAndEmit(this.COMMIT_STATE);
+    }
+
+
+    //////////////////////////////
+    //// Claim
 
     /**
      * Claims and finishes the swap once it was successfully committed on-chain with commit()
      *
-     * @param noWaitForConfirmation     Do not wait for transaction confirmation (careful! be sure that transaction confirms before calling claim())
+     * @param noWaitForConfirmation     Do not wait for transaction confirmation
      * @param abortSignal               Abort signal
      */
-    abstract claim(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
+    async claim(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        const result = await this.wrapper.contract.swapContract.sendAndConfirm(
+            await this.txsClaim(), !noWaitForConfirmation, abortSignal
+        );
+
+        this.claimTxId = result[0];
+        await this._saveAndEmit(this.CLAIM_STATE);
+        return result[0];
+    }
 
     /**
      * Claims and finishes the swap once it was successfully committed on-chain with commit()
@@ -152,58 +193,31 @@ export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
     abstract txsClaim(): Promise<any[]>;
 
     /**
-     * Returns a promise that resolves when swap is claimed
+     * Returns a promise that resolves when swap is committed
      *
      * @param abortSignal   AbortSignal
      */
-    abstract waitTillClaimed(abortSignal?: AbortSignal): Promise<void>;
+    async waitTillClaimed(abortSignal?: AbortSignal): Promise<void> {
+        if(this.state===this.CLAIM_STATE) return Promise.resolve();
 
-    // /**
-    //  * Signs both, commit and claim transaction at once using signAllTransactions methods, wait for commit to confirm TX and then sends claim TX
-    //  * If swap is already commited, it just signs and executes the claim transaction
-    //  *
-    //  * @param signer            Signer to use to send the claim transaction
-    //  * @param abortSignal       Abort signal
-    //  */
-    // commitAndClaim(signer: AnchorProvider, abortSignal?: AbortSignal): Promise<TransactionSignature[]>;
+        const abortController = new AbortController();
+        if(abortSignal!=null) abortSignal.addEventListener("abort", () => abortController.abort(abortSignal.reason));
+        const res = await Promise.race([
+            this.watchdogWaitTillResult(abortController.signal),
+            this.waitTillState(this.CLAIM_STATE, "eq", abortController.signal)
+        ]);
 
-    /**
-     * @fires BTCtoSolWrapper#swapState
-     * @fires BTCtoSolSwap#swapState
-     */
-    abstract emitEvent(): void;
-
-    /**
-     * Get payment hash
-     */
-    abstract getPaymentHash(): Buffer;
-
-    /**
-     * Returns a string that can be displayed as QR code representation of the address (with bitcoin: or lightning: prefix)
-     */
-    abstract getQrData(): string;
-
-    /**
-     * Returns a bitcoin address/lightning network invoice of the swap.
-     */
-    abstract getAddress(): string;
-
-    getWrapper(): IFromBTCWrapper<T> {
-        return this.wrapper;
+        if(res===SwapCommitStatus.PAID) {
+            if(this.state<this.CLAIM_STATE) await this._saveAndEmit(this.CLAIM_STATE);
+        }
+        if(res===SwapCommitStatus.NOT_COMMITED || res===SwapCommitStatus.EXPIRED) {
+            if(this.state>this.FAIL_STATE) await this._saveAndEmit(this.FAIL_STATE);
+        }
     }
 
-    abstract getType(): SwapType;
 
-    save(): Promise<void> {
-        return this.wrapper.storage.saveSwapData(this);
-    }
-
-    /**
-     * Returns the address of the output token
-     */
-    getToken(): TokenAddress {
-        return this.data.getToken();
-    }
+    //////////////////////////////
+    //// Storage
 
     serialize(): any{
         const obj = super.serialize();
@@ -223,39 +237,5 @@ export abstract class IFromBTCSwap<T extends SwapData> extends ISwap {
             expiry: this.expiry
         };
     }
-
-    getCommitFee(): Promise<BN> {
-        return this.getWrapper().contract.swapContract.getCommitFee(this.data);
-    }
-
-    getClaimFee(): Promise<BN> {
-        return this.getWrapper().contract.swapContract.getClaimFee(this.data);
-    }
-
-    getSecurityDeposit(): BN {
-        return this.data.getSecurityDeposit();
-    }
-
-    getTotalDeposit():BN {
-        return this.data.getTotalDeposit();
-    }
-
-    getExpiry(): number {
-        return this.expiry;
-    }
-
-    async refetchPriceData(): Promise<PriceInfoType> {
-
-        if(this.pricingInfo==null) return null;
-
-        const priceData = await this.wrapper.contract.swapPrice.isValidAmountReceive(this.getInAmount(), this.pricingInfo.satsBaseFee, this.pricingInfo.feePPM, this.data.getAmount(), this.data.getToken());
-
-        this.pricingInfo = priceData;
-
-        return priceData;
-
-    }
-
-    abstract isClaimable(): boolean;
 
 }

@@ -1,5 +1,9 @@
 import {IStorageManager, StorageObject} from "crosslightning-base";
 
+/**
+ * StorageManager using browser's local storage API
+ */
+//TODO: Implement removeDataArr
 export class LocalStorageManager<T extends StorageObject> implements IStorageManager<T> {
 
     storageKey: string;

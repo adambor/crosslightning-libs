@@ -665,4 +665,11 @@ export class Swapper<
         );
     }
 
+    /**
+     * Returns the token balance of the wallet
+     */
+    getBalance(token: TokenAddress): Promise<BN> {
+        return this.swapContract.getBalance(token, false);
+    }
+
 }

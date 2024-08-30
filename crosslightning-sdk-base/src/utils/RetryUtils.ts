@@ -1,3 +1,4 @@
+import {AbortError} from "../errors/AbortError";
 
 export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
     maxRetries?: number, delay?: number, exponential?: boolean
@@ -104,8 +105,19 @@ export function timeoutSignal(timeout: number, abortSignal?: AbortSignal) {
     return abortController.signal;
 }
 
-export function timeoutPromise(timeoutSeconds: number) {
-    return new Promise(resolve => {
-        setTimeout(resolve, timeoutSeconds*1000)
+export function timeoutPromise(timeoutSeconds: number, abortSignal?: AbortSignal) {
+    return new Promise((resolve, reject) => {
+        if(abortSignal!=null && abortSignal.aborted) {
+            reject(abortSignal.reason || new AbortError());
+            return;
+        }
+        let timeoutHandle = setTimeout(resolve, timeoutSeconds*1000);
+        if(abortSignal!=null) {
+            abortSignal.addEventListener("abort", () => {
+                if(timeoutHandle!=null) clearTimeout(timeoutHandle);
+                timeoutHandle = null;
+                reject(abortSignal.reason || new AbortError());
+            });
+        }
     });
 }

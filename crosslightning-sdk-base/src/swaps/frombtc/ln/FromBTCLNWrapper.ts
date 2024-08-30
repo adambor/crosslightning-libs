@@ -25,7 +25,7 @@ export type FromBTCLNOptions = {
     descriptionHash?: Buffer
 };
 
-export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
+export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromBTCLNSwap<T>> {
 
     listener: (events: SwapEvent<T>[]) => Promise<boolean>;
 
@@ -264,13 +264,13 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
                 if(swapChanged) {
                     if(eventQueue==null) {
                         let promise: Promise<any>;
-                        if(swap.state===FromBTCLNSwapState.EXPIRED) {
+                        if(swap.state===FromBTCLNSwapState.QUOTE_EXPIRED) {
                             promise = this.storage.removeSwapData(swap)
                         } else {
-                            promise = swap.save();
+                            promise = swap._save();
                         }
                         promise.then(() => {
-                            swap.emitEvent();
+                            swap._emitEvent();
                         });
                     }
                 }
@@ -302,7 +302,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
         const processSwap: (swap: FromBTCLNSwap<T>) => Promise<boolean> = async (swap: FromBTCLNSwap<T>) => {
             if(swap.state===FromBTCLNSwapState.PR_CREATED) {
                 if(swap.getTimeoutTime()<Date.now()) {
-                    swap.state = FromBTCLNSwapState.EXPIRED;
+                    swap.state = FromBTCLNSwapState.QUOTE_EXPIRED;
                     return true;
                 }
 
@@ -323,7 +323,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
                 } catch (e) {
                     console.error(e);
                     if(e instanceof PaymentAuthError) {
-                        swap.state = FromBTCLNSwapState.EXPIRED;
+                        swap.state = FromBTCLNSwapState.QUOTE_EXPIRED;
                         return true;
                     }
                 }
@@ -339,7 +339,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
                         return true;
                     }
                     if(status===SwapCommitStatus.EXPIRED) {
-                        swap.state = FromBTCLNSwapState.EXPIRED;
+                        swap.state = FromBTCLNSwapState.QUOTE_EXPIRED;
                         return true;
                     }
                     if(status===SwapCommitStatus.COMMITED) {
@@ -359,7 +359,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
                 } catch (e) {
                     console.error(e);
                     if(e instanceof SignatureVerificationError) {
-                        swap.state = FromBTCLNSwapState.EXPIRED;
+                        swap.state = FromBTCLNSwapState.QUOTE_EXPIRED;
                         return true;
                     }
                 }
@@ -391,7 +391,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
             const swap: FromBTCLNSwap<T> = this.swapData[paymentHash] as FromBTCLNSwap<T>;
 
             promises.push(processSwap(swap).then(changed => {
-                if(swap.state===FromBTCLNSwapState.EXPIRED) {
+                if(swap.state===FromBTCLNSwapState.QUOTE_EXPIRED) {
                     this.storage.removeSwapData(swap);
                 } else {
                     if(changed) changedSwaps[paymentHash] = true;
