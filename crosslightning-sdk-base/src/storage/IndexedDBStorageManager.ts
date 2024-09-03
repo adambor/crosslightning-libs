@@ -4,7 +4,6 @@ import {IStorageManager, StorageObject} from "crosslightning-base";
  * StorageManager using browser's IndexedDB storage, also migrates the data from prior LocalStorage API, if that was
  *  used before for a given "storageKey"
  */
-//TODO: Implement removeDataArr
 export class IndexedDBStorageManager<T extends StorageObject> implements IStorageManager<T> {
 
     storageKey: string;
@@ -92,6 +91,15 @@ export class IndexedDBStorageManager<T extends StorageObject> implements IStorag
         await this.executeTransaction<undefined>(store => store.delete(hash), false)
             .catch(() => null);
         if(this.data[hash]!=null) delete this.data[hash];
+    }
+
+    async removeDataArr(arr: string[]): Promise<void> {
+        await this.executeTransactionArr<IDBValidKey>(store => arr.map(id => {
+            return store.delete(id);
+        }), false);
+        arr.forEach(id => {
+            if(this.data[id]!=null) delete this.data[id];
+        })
     }
 
     async saveData(hash: string, object: T): Promise<void> {

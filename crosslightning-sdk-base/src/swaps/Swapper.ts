@@ -5,10 +5,9 @@ import {ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";
 import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
 import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
 import {FromBTCWrapper} from "./frombtc/onchain/FromBTCWrapper";
-import {AmountData} from "./ClientSwapContract";
 import {IntermediaryDiscovery, SwapBounds} from "../intermediaries/IntermediaryDiscovery";
-import * as bitcoin from "bitcoinjs-lib";
-import * as bolt11 from "bolt11";
+import {networks, Network, address} from "bitcoinjs-lib";
+import {decode as bolt11Decode} from "bolt11";
 import * as BN from "bn.js";
 import {IFromBTCSwap} from "./frombtc/IFromBTCSwap";
 import {IToBTCSwap} from "./tobtc/IToBTCSwap";
@@ -33,6 +32,7 @@ import {MempoolBitcoinBlock} from "../btc/mempool/MempoolBitcoinBlock";
 import {LocalStorageManager} from "../storage/LocalStorageManager";
 import {Intermediary} from "../intermediaries/Intermediary";
 import {LNURL, LNURLPay, LNURLWithdraw} from "../utils/LNURL";
+import {AmountData} from "./ISwapWrapper";
 
 export type SwapperOptions<T extends SwapData> = {
     intermediaryUrl?: string | string[],
@@ -83,7 +83,7 @@ export class Swapper<
     readonly options: SwapperOptions<T>;
 
     readonly bitcoinRpc: MempoolBitcoinRpc;
-    readonly bitcoinNetwork: bitcoin.Network;
+    readonly bitcoinNetwork: Network;
     readonly btcRelay: BtcRelay<any, T, MempoolBitcoinBlock>;
     readonly synchronizer: RelaySynchronizer<any, T, MempoolBitcoinBlock>
 
@@ -103,11 +103,11 @@ export class Swapper<
 
         switch (options.bitcoinNetwork) {
             case BitcoinNetwork.MAINNET:
-                this.bitcoinNetwork = bitcoin.networks.bitcoin;
+                this.bitcoinNetwork = networks.bitcoin;
                 this.mempoolApi = new MempoolApi("https://mempool.space/api/", options.getRequestTimeout);
                 break;
             case BitcoinNetwork.TESTNET:
-                this.bitcoinNetwork = bitcoin.networks.testnet;
+                this.bitcoinNetwork = networks.testnet;
                 this.mempoolApi = new MempoolApi("https://mempool.space/testnet/api/", options.getRequestTimeout);
                 break;
             default:
@@ -193,11 +193,11 @@ export class Swapper<
     /**
      * Returns true if string is a valid bitcoin address
      *
-     * @param address
+     * @param addr
      */
-    isValidBitcoinAddress(address: string): boolean {
+    isValidBitcoinAddress(addr: string): boolean {
         try {
-            bitcoin.address.toOutputScript(address, this.bitcoinNetwork);
+            address.toOutputScript(addr, this.bitcoinNetwork);
             return true;
         } catch (e) {
             return false;
@@ -211,7 +211,7 @@ export class Swapper<
      */
     isValidLightningInvoice(lnpr: string): boolean {
         try {
-            const parsed = bolt11.decode(lnpr);
+            const parsed = bolt11Decode(lnpr);
             if(parsed.millisatoshis!=null) return true;
         } catch (e) {}
         return false;
@@ -241,7 +241,7 @@ export class Swapper<
      * @param lnpr
      */
     static getLightningInvoiceValue(lnpr: string): BN {
-        const parsed = bolt11.decode(lnpr);
+        const parsed = bolt11Decode(lnpr);
         if(parsed.millisatoshis!=null) return new BN(parsed.millisatoshis).add(new BN(999)).div(new BN(1000));
         return null;
     }
@@ -499,7 +499,7 @@ export class Swapper<
      * @param additionalParams      Additional parameters sent to the LP when creating the swap
      */
     async createToBTCLNSwap(tokenAddress: TokenAddressType, paymentRequest: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN, additionalParams?: Record<string, any>): Promise<ToBTCLNSwap<T>> {
-        const parsedPR = bolt11.decode(paymentRequest);
+        const parsedPR = bolt11Decode(paymentRequest);
         const amountData = {
             amount: new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000)),
             token: tokenAddress,

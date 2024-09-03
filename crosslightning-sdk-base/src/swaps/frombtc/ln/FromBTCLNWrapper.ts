@@ -1,6 +1,5 @@
 import {FromBTCLNSwap, FromBTCLNSwapState} from "./FromBTCLNSwap";
 import {IFromBTCWrapper} from "../IFromBTCWrapper";
-import {AmountData} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {decode as bolt11Decode, PaymentRequestObject, TagsObject} from "bolt11";
 import {
@@ -27,7 +26,7 @@ import {RequestError} from "../../../errors/RequestError";
 import {LightningNetworkApi, LNNodeLiquidity} from "../../../btc/LightningNetworkApi";
 import {ISwapPrice} from "../../../prices/abstract/ISwapPrice";
 import {EventEmitter} from "events";
-import {ISwapWrapperOptions} from "../../ISwapWrapper";
+import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
 import {LNURL, LNURLWithdrawParamsWithUrl} from "../../../utils/LNURL";
 
 export type FromBTCLNOptions = {

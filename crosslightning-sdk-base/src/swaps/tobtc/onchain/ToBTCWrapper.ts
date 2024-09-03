@@ -1,6 +1,5 @@
 import {ToBTCSwap} from "./ToBTCSwap";
 import {IToBTCWrapper} from "../IToBTCWrapper";
-import {AmountData} from "../../ClientSwapContract";
 import {
     ChainEvents,
     ChainSwapType,
@@ -13,8 +12,8 @@ import { Intermediary } from "../../../intermediaries/Intermediary";
 import {ISwapPrice, PriceInfoType} from "../../../prices/abstract/ISwapPrice";
 import {EventEmitter} from "events";
 import {BitcoinRpc} from "crosslightning-base/dist";
-import {ISwapWrapperOptions} from "../../ISwapWrapper";
-import * as bitcoin from "bitcoinjs-lib";
+import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
+import {Network, networks, address} from "bitcoinjs-lib";
 import * as BN from "bn.js";
 import {Buffer} from "buffer";
 import randomBytes from "randombytes";
@@ -34,7 +33,7 @@ export type ToBTCOptions = {
 export type ToBTCWrapperOptions = ISwapWrapperOptions & {
     safetyFactor?: number,
     maxConfirmations?: number,
-    bitcoinNetwork?: bitcoin.networks.Network,
+    bitcoinNetwork?: Network,
 
     bitcoinBlocktime?: number,
 
@@ -68,7 +67,7 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap
         events?: EventEmitter<{swapState: [ToBTCSwap<T>]}>
     ) {
         if(options==null) options = {};
-        options.bitcoinNetwork = options.bitcoinNetwork || bitcoin.networks.testnet;
+        options.bitcoinNetwork = options.bitcoinNetwork || networks.testnet;
         options.safetyFactor = options.safetyFactor || 2;
         options.maxConfirmations = options.maxConfirmations || 6;
         options.bitcoinBlocktime = options.bitcoinBlocktime|| (60*10);
@@ -89,9 +88,9 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap
         return new BN(nonceBuffer, "be");
     }
 
-    private btcAddressToOutputScript(address: string): Buffer {
+    private btcAddressToOutputScript(addr: string): Buffer {
         try {
-            return bitcoin.address.toOutputScript(address, this.options.bitcoinNetwork);
+            return address.toOutputScript(addr, this.options.bitcoinNetwork);
         } catch (e) {
             throw new UserError("Invalid address specified");
         }

@@ -1,6 +1,5 @@
 import {IFromBTCWrapper} from "../IFromBTCWrapper";
 import {FromBTCSwap, FromBTCSwapState} from "./FromBTCSwap";
-import {AmountData} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {
     ChainEvents, ChainSwapType,
@@ -16,11 +15,10 @@ import {EventEmitter} from "events";
 import {Intermediary} from "../../../intermediaries/Intermediary";
 import {BitcoinRpcWithTxoListener} from "../../../btc/BitcoinRpcWithTxoListener";
 import {ISwapPrice} from "../../../prices/abstract/ISwapPrice";
-import {networks} from "bitcoinjs-lib";
-import {ISwapWrapperOptions} from "../../ISwapWrapper";
+import {networks, address} from "bitcoinjs-lib";
+import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
 import {Buffer} from "buffer";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
-import * as bitcoin from "bitcoinjs-lib";
 import {SwapType} from "../../SwapType";
 import {extendAbortController} from "../../../utils/Utils";
 import {BtcRelay} from "crosslightning-base/dist";
@@ -279,7 +277,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
             throw new IntermediaryError("Send window too low");
         }
 
-        const lockingScript = bitcoin.address.toOutputScript(resp.btcAddress, this.options.bitcoinNetwork);
+        const lockingScript = address.toOutputScript(resp.btcAddress, this.options.bitcoinNetwork);
         const desiredHash = this.contract.getHashForOnchain(lockingScript, resp.amount, new BN(0));
         const suppliedHash = Buffer.from(data.getHash(),"hex");
         if(!desiredHash.equals(suppliedHash)) {

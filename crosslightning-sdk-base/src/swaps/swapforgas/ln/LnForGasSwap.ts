@@ -1,4 +1,4 @@
-import * as bolt11 from "bolt11";
+import {decode as bolt11Decode} from "bolt11";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {StorageObject, SwapData} from "crosslightning-base";
@@ -88,7 +88,7 @@ export class LnForGasSwap<T extends SwapData> implements StorageObject {
      * Returns amount that will be sent on Bitcoin LN
      */
     getInAmount(): BN {
-        const parsed = bolt11.decode(this.pr);
+        const parsed = bolt11Decode(this.pr);
         return new BN(parsed.millisatoshis).add(new BN(999)).div(new BN(1000));
     }
 
@@ -111,7 +111,7 @@ export class LnForGasSwap<T extends SwapData> implements StorageObject {
         scTxId?: string
     }> {
 
-        const decodedPR = bolt11.decode(this.pr);
+        const decodedPR = bolt11Decode(this.pr);
         const paymentHash = decodedPR.tagsObject.payment_hash;
 
         const response: Response = await tryWithRetries(() => fetchWithTimeout(this.url+"/getInvoiceStatus?paymentHash="+encodeURIComponent(paymentHash), {
@@ -211,7 +211,7 @@ export class LnForGasSwap<T extends SwapData> implements StorageObject {
     }
 
     getPaymentHash(): Buffer {
-        const decodedPR = bolt11.decode(this.pr);
+        const decodedPR = bolt11Decode(this.pr);
         return Buffer.from(decodedPR.tagsObject.payment_hash, "hex");
     }
 
@@ -229,7 +229,7 @@ export class LnForGasSwap<T extends SwapData> implements StorageObject {
 
     getTimeoutTime(): number {
         if(this.pr==null) return null;
-        const decoded = bolt11.decode(this.pr);
+        const decoded = bolt11Decode(this.pr);
         return (decoded.timeExpireDate*1000);
     }
 

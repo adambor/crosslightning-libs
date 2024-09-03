@@ -1,4 +1,4 @@
-import * as bolt11 from "bolt11";
+import {decode as bolt11Decode} from "bolt11";
 import {ToBTCLNWrapper} from "./ToBTCLNWrapper";
 import {isIToBTCSwapInit, IToBTCSwap, IToBTCSwapInit} from "../IToBTCSwap";
 import {SwapType} from "../../SwapType";
@@ -81,7 +81,7 @@ export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
     //// Amounts & fees
 
     getOutAmount(): BN {
-        const parsedPR = bolt11.decode(this.pr);
+        const parsedPR = bolt11Decode(this.pr);
         return new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
     }
 
@@ -119,7 +119,7 @@ export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
     }
 
     getPaymentHash(): Buffer {
-        const parsed = bolt11.decode(this.pr);
+        const parsed = bolt11Decode(this.pr);
         return Buffer.from(parsed.tagsObject.payment_hash, "hex");
     }
 

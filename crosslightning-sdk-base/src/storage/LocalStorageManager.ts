@@ -3,7 +3,6 @@ import {IStorageManager, StorageObject} from "crosslightning-base";
 /**
  * StorageManager using browser's local storage API
  */
-//TODO: Implement removeDataArr
 export class LocalStorageManager<T extends StorageObject> implements IStorageManager<T> {
 
     storageKey: string;
@@ -53,6 +52,16 @@ export class LocalStorageManager<T extends StorageObject> implements IStorageMan
             return this.save();
         }
         return Promise.resolve();
+    }
+
+    removeDataArr(hashArr: string[]): Promise<void> {
+        hashArr.forEach(hash => {
+            if(this.rawData[hash]!=null) {
+                if(this.data[hash]!=null) delete this.data[hash];
+                delete this.rawData[hash];
+            }
+        });
+        return this.save();
     }
 
     loadData(type: new (data: any) => T): Promise<T[]> {

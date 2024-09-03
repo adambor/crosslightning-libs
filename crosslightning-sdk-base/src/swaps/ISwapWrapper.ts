@@ -1,12 +1,15 @@
-import {AmountData} from "./ClientSwapContract";
 import {
     ChainEvents,
     ClaimEvent,
-    InitializeEvent, IntermediaryReputationType,
+    InitializeEvent,
+    IntermediaryReputationType,
     IStorageManager,
-    RefundEvent, SignatureVerificationError, SwapContract,
+    RefundEvent,
+    SignatureVerificationError,
+    SwapContract,
     SwapData,
-    SwapEvent, TokenAddress
+    SwapEvent,
+    TokenAddress
 } from "crosslightning-base";
 import {EventEmitter} from "events";
 import {ISwap} from "./ISwap";
@@ -17,6 +20,12 @@ import {Intermediary} from "../intermediaries/Intermediary";
 import {tryWithRetries} from "../utils/RetryUtils";
 import {IntermediaryError} from "../errors/IntermediaryError";
 import {SwapHandlerInfoType} from "../intermediaries/IntermediaryDiscovery";
+
+export type AmountData = {
+    amount: BN,
+    token: TokenAddress,
+    exactIn?: boolean
+}
 
 export type ISwapWrapperOptions = {
     getRequestTimeout?: number,

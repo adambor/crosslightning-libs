@@ -1,7 +1,6 @@
 import {decode as bolt11Decode, PaymentRequestObject, TagsObject} from "bolt11";
 import {ToBTCLNSwap} from "./ToBTCLNSwap";
 import {IToBTCWrapper} from "../IToBTCWrapper";
-import {AmountData} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {UserError} from "../../../errors/UserError";
 import {
@@ -13,7 +12,7 @@ import {
     TokenAddress
 } from "crosslightning-base";
 import {Intermediary} from "../../../intermediaries/Intermediary";
-import {ISwapWrapperOptions} from "../../ISwapWrapper";
+import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
 import {ISwapPrice} from "../../../prices/abstract/ISwapPrice";
 import {EventEmitter} from "events";
 import {tryWithRetries} from "../../../utils/RetryUtils";

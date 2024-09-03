@@ -1,6 +1,6 @@
 import {IFromBTCSwap} from "../IFromBTCSwap";
 import {SwapType} from "../../SwapType";
-import * as bitcoin from "bitcoinjs-lib";
+import {address} from "bitcoinjs-lib";
 import createHash from "create-hash";
 import {FromBTCWrapper} from "./FromBTCWrapper";
 import * as BN from "bn.js";
@@ -69,7 +69,7 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCSwap
     }
 
     getTxoHash(): Buffer {
-        const parsedOutputScript = bitcoin.address.toOutputScript(this.address, this.wrapper.options.bitcoinNetwork);
+        const parsedOutputScript = address.toOutputScript(this.address, this.wrapper.options.bitcoinNetwork);
 
         return createHash("sha256").update(Buffer.concat([
             Buffer.from(this.amount.toArray("le", 8)),

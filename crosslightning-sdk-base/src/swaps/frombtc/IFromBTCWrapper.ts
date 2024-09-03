@@ -1,7 +1,6 @@
 import {IFromBTCSwap} from "./IFromBTCSwap";
 import {SwapData, TokenAddress} from "crosslightning-base";
-import {ISwapWrapper, ISwapWrapperOptions} from "../ISwapWrapper";
-import {AmountData} from "../ClientSwapContract";
+import {AmountData, ISwapWrapper, ISwapWrapperOptions} from "../ISwapWrapper";
 import {tryWithRetries} from "../../utils/RetryUtils";
 import * as BN from "bn.js";
 import randomBytes from "randombytes";

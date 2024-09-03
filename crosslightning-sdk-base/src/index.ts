@@ -1,6 +1,6 @@
-import * as bitcoin from "bitcoinjs-lib";
+import {initEccLib} from "bitcoinjs-lib";
 import * as tinySecpk256Interface from "@bitcoinerlab/secp256k1";
-bitcoin.initEccLib(tinySecpk256Interface);
+initEccLib(tinySecpk256Interface);
 
 export * from "./btc/mempool/synchronizer/MempoolBtcRelaySynchronizer";
 export * from "./btc/mempool/MempoolApi";
@@ -54,3 +54,4 @@ export * from "./swaps/swapforgas/ln/LnForGasWrapper";
 
 export * from "./swaps/Swapper";
 export * from "./btc/BitcoinNetwork";
+export {AmountData} from "./swaps/ISwapWrapper";
