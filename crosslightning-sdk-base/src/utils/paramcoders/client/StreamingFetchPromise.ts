@@ -2,6 +2,7 @@ import {ParamEncoder} from "../ParamEncoder";
 import {RequestSchema, RequestSchemaResultPromise, verifyField} from "../SchemaVerifier";
 import {ParamDecoder} from "../ParamDecoder";
 import {Buffer} from "buffer";
+import {RequestError} from "../../../errors/RequestError";
 
 export type RequestBody = {
     [key: string]: Promise<any> | any
@@ -43,16 +44,18 @@ async function readResponse(reader: ReadableStreamDefaultReader, inputStream: Pa
         inputStream.onData(Buffer.from(readResp.value));
     }
 }
-export function streamingFetchWithTimeoutPromise<T extends RequestSchema>(url: string, body: RequestBody, schema: T, timeout?: number, signal?: AbortSignal, streamRequest?: boolean): Promise<{
-    response: Response,
-    responseBody?: RequestSchemaResultPromise<T>
-}> {
+export function streamingFetchWithTimeoutPromise<T extends RequestSchema>(
+    url: string,
+    body: RequestBody,
+    schema: T,
+    timeout?: number,
+    signal?: AbortSignal,
+    streamRequest?: boolean
+): Promise<RequestSchemaResultPromise<T>> {
     if(timeout==null) return streamingFetchPromise<T>(url, body, schema, signal, streamRequest);
 
-    let timedOut = false;
     const abortController = new AbortController();
     const timeoutHandle = setTimeout(() => {
-        timedOut = true;
         abortController.abort(new Error("Network request timed out"))
     }, timeout);
     let originalSignal: AbortSignal;
@@ -69,10 +72,13 @@ export function streamingFetchWithTimeoutPromise<T extends RequestSchema>(url: s
     return streamingFetchPromise<T>(url, body, schema, signal, streamRequest);
 }
 
-export async function streamingFetchPromise<T extends RequestSchema>(url: string, body: RequestBody, schema: T, signal?: AbortSignal, streamRequest?: boolean): Promise<{
-    response: Response,
-    responseBody?: RequestSchemaResultPromise<T>
-}> {
+export async function streamingFetchPromise<T extends RequestSchema>(
+    url: string,
+    body: RequestBody,
+    schema: T,
+    signal?: AbortSignal,
+    streamRequest?: boolean
+): Promise<RequestSchemaResultPromise<T>> {
     if(streamRequest==null) streamRequest = supportsRequestStreams;
 
     const init: RequestInit = {
@@ -175,9 +181,13 @@ export async function streamingFetchPromise<T extends RequestSchema>(url: string
     });
 
     if(resp.status!==200) {
-        return {
-            response: resp
-        };
+        let respTxt: string;
+        try {
+            respTxt = await resp.text();
+        } catch (e) {
+            throw new RequestError(resp.statusText, resp.status);
+        }
+        throw new RequestError(respTxt, resp.status);
     }
 
     const responseBody: any = {};
@@ -218,7 +228,7 @@ export async function streamingFetchPromise<T extends RequestSchema>(url: string
             const reader = resp.body.getReader();
 
             if(init.signal!=null) init.signal.addEventListener("abort", () => {
-                if(!reader.closed) reader.cancel(signal.reason);
+                if(!reader.closed) reader.cancel(init.signal.reason);
             });
 
             readResponse(reader, inputStream);
@@ -238,8 +248,5 @@ export async function streamingFetchPromise<T extends RequestSchema>(url: string
 
     }
 
-    return {
-        response: resp,
-        responseBody
-    };
+    return responseBody;
 }

@@ -2,10 +2,10 @@ import * as bitcoin from "bitcoinjs-lib";
 import * as tinySecpk256Interface from "@bitcoinerlab/secp256k1";
 bitcoin.initEccLib(tinySecpk256Interface);
 
-export * from "./btc/synchronizer/MempoolBtcRelaySynchronizer";
-export * from "./btc/MempoolApi";
-export * from "./btc/MempoolBitcoinRpc";
-export * from "./btc/MempoolBitcoinBlock";
+export * from "./btc/mempool/synchronizer/MempoolBtcRelaySynchronizer";
+export * from "./btc/mempool/MempoolApi";
+export * from "./btc/mempool/MempoolBitcoinRpc";
+export * from "./btc/mempool/MempoolBitcoinBlock";
 
 export * from "./errors/IntermediaryError";
 export * from "./errors/UserError";

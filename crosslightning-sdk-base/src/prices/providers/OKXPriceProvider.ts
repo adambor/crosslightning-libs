@@ -1,4 +1,4 @@
-import {getWithTimeout} from "../../utils/RetryUtils";
+import {httpGet} from "../../utils/RetryUtils";
 import {CoinTypes} from "../abstract/IPriceProvider";
 import {ExchangePriceProvider} from "./abstract/ExchangePriceProvider";
 
@@ -26,7 +26,7 @@ export class OKXPriceProvider extends ExchangePriceProvider {
     }
 
     async fetchPair(pair: string, abortSignal?: AbortSignal) {
-        const response = await getWithTimeout<OKXResponse>(
+        const response = await httpGet<OKXResponse>(
             this.url+"/market/index-tickers?instId="+pair,
             this.httpRequestTimeout,
             abortSignal

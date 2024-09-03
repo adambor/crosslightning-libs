@@ -7,6 +7,8 @@ import {SwapData} from "crosslightning-base";
 import {decipherAES, LNURLPaySuccessAction} from "js-lnurl/lib";
 import {Buffer} from "buffer";
 import {Token} from "../../ISwap";
+import createHash from "create-hash";
+import {IntermediaryError} from "../../../errors/IntermediaryError";
 
 function isLNURLPaySuccessAction(obj: any): obj is LNURLPaySuccessAction {
     return obj != null &&
@@ -39,8 +41,9 @@ export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
 
     private readonly confidence: number;
     private readonly pr: string;
-    private readonly lnurl?: string;
-    private readonly successAction?: LNURLPaySuccessAction;
+
+    lnurl?: string;
+    successAction?: LNURLPaySuccessAction;
 
     private secret?: string;
 
@@ -59,8 +62,18 @@ export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
         this.tryCalculateSwapFee();
     }
 
-    _setPaymentResult(result: { secret?: string; txId?: string }): void {
+    _setPaymentResult(result: { secret?: string; txId?: string }, check: boolean = false): Promise<boolean> {
+        if(result.secret==null) throw new IntermediaryError("No payment secret returned!");
+        if(check) {
+            const secretBuffer = Buffer.from(result.secret, "hex");
+            const hash = createHash("sha256").update(secretBuffer).digest();
+
+            const paymentHashBuffer = Buffer.from(this.data.getHash(), "hex");
+
+            if(!hash.equals(paymentHashBuffer)) throw new IntermediaryError("Invalid payment secret returned");
+        }
         this.secret = result.secret;
+        return Promise.resolve(true);
     }
 
 

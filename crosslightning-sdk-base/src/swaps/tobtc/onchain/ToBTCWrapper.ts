@@ -1,16 +1,141 @@
 import {ToBTCSwap} from "./ToBTCSwap";
 import {IToBTCWrapper} from "../IToBTCWrapper";
 import {AmountData} from "../../ClientSwapContract";
-import {SwapData} from "crosslightning-base";
+import {
+    ChainEvents,
+    ChainSwapType,
+    IntermediaryReputationType,
+    IStorageManager,
+    SwapContract,
+    SwapData
+} from "crosslightning-base";
 import { Intermediary } from "../../../intermediaries/Intermediary";
+import {ISwapPrice, PriceInfoType} from "../../../prices/abstract/ISwapPrice";
+import {EventEmitter} from "events";
+import {BitcoinRpc} from "crosslightning-base/dist";
+import {ISwapWrapperOptions} from "../../ISwapWrapper";
+import * as bitcoin from "bitcoinjs-lib";
+import * as BN from "bn.js";
+import {Buffer} from "buffer";
+import randomBytes from "randombytes";
+import {UserError} from "../../../errors/UserError";
+import {tryWithRetries} from "../../../utils/RetryUtils";
+import {IntermediaryError} from "../../../errors/IntermediaryError";
+import {SwapType} from "../../SwapType";
+import {extendAbortController} from "../../../utils/Utils";
+import {IntermediaryAPI, ToBTCResponseType} from "../../../intermediaries/IntermediaryAPI";
+import {RequestError} from "../../../errors/RequestError";
 
 export type ToBTCOptions = {
     confirmationTarget: number,
     confirmations: number
 }
 
-export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap<T>> {
+export type ToBTCWrapperOptions = ISwapWrapperOptions & {
+    safetyFactor?: number,
+    maxConfirmations?: number,
+    bitcoinNetwork?: bitcoin.networks.Network,
+
+    bitcoinBlocktime?: number,
+
+    maxExpectedOnchainSendSafetyFactor?: number,
+    maxExpectedOnchainSendGracePeriodBlocks?: number,
+};
+
+export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap<T>, ToBTCWrapperOptions> {
     protected readonly swapDeserializer = ToBTCSwap;
+
+    readonly btcRpc: BitcoinRpc<any>;
+
+    /**
+     * @param storage Storage interface for the current environment
+     * @param contract Underlying contract handling the swaps
+     * @param prices Swap pricing handler
+     * @param chainEvents On-chain event listener
+     * @param swapDataDeserializer Deserializer for SwapData
+     * @param btcRpc Bitcoin RPC
+     * @param options
+     * @param events Instance to use for emitting events
+     */
+    constructor(
+        storage: IStorageManager<ToBTCSwap<T>>,
+        contract: SwapContract<T, any, any, any>,
+        chainEvents: ChainEvents<T>,
+        prices: ISwapPrice,
+        swapDataDeserializer: new (data: any) => T,
+        btcRpc: BitcoinRpc<any>,
+        options?: ToBTCWrapperOptions,
+        events?: EventEmitter<{swapState: [ToBTCSwap<T>]}>
+    ) {
+        if(options==null) options = {};
+        options.bitcoinNetwork = options.bitcoinNetwork || bitcoin.networks.testnet;
+        options.safetyFactor = options.safetyFactor || 2;
+        options.maxConfirmations = options.maxConfirmations || 6;
+        options.bitcoinBlocktime = options.bitcoinBlocktime|| (60*10);
+        options.maxExpectedOnchainSendSafetyFactor = options.maxExpectedOnchainSendSafetyFactor || 4;
+        options.maxExpectedOnchainSendGracePeriodBlocks = options.maxExpectedOnchainSendGracePeriodBlocks || 12;
+        super(storage, contract, chainEvents, prices, swapDataDeserializer, options, events);
+        this.btcRpc = btcRpc;
+    }
+
+    private getRandomNonce(): BN {
+        const firstPart = new BN(Math.floor((Date.now()/1000)) - 700000000);
+
+        const nonceBuffer = Buffer.concat([
+            Buffer.from(firstPart.toArray("be", 5)),
+            randomBytes(3)
+        ]);
+
+        return new BN(nonceBuffer, "be");
+    }
+
+    private btcAddressToOutputScript(address: string): Buffer {
+        try {
+            return bitcoin.address.toOutputScript(address, this.options.bitcoinNetwork);
+        } catch (e) {
+            throw new UserError("Invalid address specified");
+        }
+    }
+
+    private verifyReturnedData(
+        resp: ToBTCResponseType,
+        amountData: AmountData,
+        lp: Intermediary,
+        options: ToBTCOptions,
+        data: T,
+        hash: string,
+        nonce: BN
+    ): void {
+        if(!resp.totalFee.eq(resp.swapFee.add(resp.networkFee))) throw new IntermediaryError("Invalid totalFee returned");
+
+        if(amountData.exactIn) {
+            if(!resp.total.eq(amountData.amount)) throw new IntermediaryError("Invalid total returned");
+        } else {
+            if(!resp.amount.eq(amountData.amount)) throw new IntermediaryError("Invalid amount returned");
+        }
+
+        const maxAllowedExpiryDelta: BN = new BN(options.confirmations+options.confirmationTarget+this.options.maxExpectedOnchainSendGracePeriodBlocks).mul(new BN(this.options.maxExpectedOnchainSendSafetyFactor)).mul(new BN(this.options.bitcoinBlocktime))
+        const currentTimestamp: BN = new BN(Math.floor(Date.now()/1000));
+        const maxAllowedExpiryTimestamp: BN = currentTimestamp.add(maxAllowedExpiryDelta);
+
+        if(data.getExpiry().gt(maxAllowedExpiryTimestamp)) {
+            console.error("Expiry time returned: "+data.getExpiry()+" maxAllowed: "+maxAllowedExpiryTimestamp);
+            throw new IntermediaryError("Expiry time returned too high!");
+        }
+
+        if(
+            !data.getAmount().eq(resp.total) ||
+            data.getHash()!==hash ||
+            !data.getEscrowNonce().eq(nonce) ||
+            data.getConfirmations()!==options.confirmations ||
+            data.getType()!==ChainSwapType.CHAIN_NONCED ||
+            !data.isPayIn() ||
+            !data.isToken(amountData.token) ||
+            data.getClaimer()!==lp.address
+        ) {
+            throw new IntermediaryError("Invalid data returned");
+        }
+    }
 
     /**
      * Returns quotes fetched from LPs, paying to an 'address' - a bitcoin address
@@ -35,37 +160,85 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap
     }[] {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const resultPromises = this.contract.payOnchain(
-            address,
-            amountData,
-            lps,
-            options,
-            additionalParams,
-            abortSignal
-        );
+        const nonce: BN = this.getRandomNonce();
+        const outputScript: Buffer = this.btcAddressToOutputScript(address);
+        const _hash: string = !amountData.exactIn ?
+            this.contract.getHashForOnchain(outputScript, amountData.amount, nonce).toString("hex") :
+            null;
 
-        return resultPromises.map(data => {
+        const _abortController = extendAbortController(abortSignal);
+        const pricePreFetchPromise: Promise<BN | null> = this.preFetchPrice(amountData, _abortController.signal);
+        const feeRatePromise: Promise<any> = this.preFetchFeeRate(amountData, _hash, _abortController);
+
+        return lps.map(lp => {
             return {
-                quote: data.response.then(response => new ToBTCSwap<T>(
-                    this,
-                    address,
-                    response.amount,
-                    options.confirmationTarget,
-                    response.fees.networkFee,
-                    response.fees.swapFee,
-                    response.fees.totalFee,
-                    response.data,
-                    response.authorization.prefix,
-                    response.authorization.timeout,
-                    response.authorization.signature,
-                    response.authorization.feeRate,
-                    data.intermediary.url+"/tobtc",
-                    response.authorization.expiry,
-                    response.pricingInfo
-                )),
-                intermediary: data.intermediary
-            };
+                intermediary: lp,
+                quote: (async () => {
+                    const abortController = extendAbortController(_abortController.signal);
+                    const reputationPromise: Promise<IntermediaryReputationType> = this.preFetchIntermediaryReputation(amountData, lp, abortController);
+
+                    try {
+                        const {signDataPromise, resp} = await tryWithRetries(async() => {
+                            const {signDataPrefetch, response} = IntermediaryAPI.initToBTC(lp.url, {
+                                btcAddress: address,
+                                amount: amountData.amount,
+                                confirmationTarget: options.confirmationTarget,
+                                confirmations: options.confirmations,
+                                nonce: nonce,
+                                token: amountData.token,
+                                offerer: this.contract.getAddress(),
+                                exactIn: amountData.exactIn,
+                                feeRate: feeRatePromise,
+                                additionalParams
+                            }, this.options.postRequestTimeout, abortController.signal);
+
+                            return {
+                                signDataPromise: this.preFetchSignData(signDataPrefetch),
+                                resp: await response
+                            };
+                        }, null, e => e instanceof RequestError, abortController.signal);
+
+                        let hash: string = amountData.exactIn ?
+                            this.contract.getHashForOnchain(outputScript, resp.amount, nonce).toString("hex") :
+                            _hash;
+                        const data: T = new this.swapDataDeserializer(resp.data);
+                        this.contract.setUsAsOfferer(data);
+
+                        this.verifyReturnedData(resp, amountData, lp, options, data, hash, nonce);
+                        const [pricingInfo, signatureExpiry, reputation] = await Promise.all([
+                            this.verifyReturnedPrice(
+                                lp.services[SwapType.TO_BTC], true, resp.amount, data.getAmount(),
+                                data.getToken(), resp, pricePreFetchPromise, abortController.signal
+                            ),
+                            this.verifyReturnedSignature(data, resp, feeRatePromise, signDataPromise, abortController.signal),
+                            reputationPromise
+                        ]);
+                        abortController.signal.throwIfAborted();
+
+                        lp.reputation[amountData.token.toString()] = reputation;
+
+                        return new ToBTCSwap<T>(this, {
+                            pricingInfo,
+                            url: lp.url,
+                            expiry: signatureExpiry,
+                            swapFee: resp.swapFee,
+                            feeRate: await feeRatePromise,
+                            prefix: resp.prefix,
+                            timeout: resp.timeout,
+                            signature: resp.signature,
+                            data,
+                            networkFee: resp.networkFee,
+                            address,
+                            amount: resp.amount,
+                            confirmationTarget: options.confirmationTarget,
+                            satsPerVByte: resp.satsPervByte
+                        });
+                    } catch (e) {
+                        abortController.abort(e);
+                        throw e;
+                    }
+                })()
+            }
         });
     }
-
 }

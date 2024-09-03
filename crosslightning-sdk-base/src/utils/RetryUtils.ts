@@ -1,4 +1,5 @@
 import {AbortError} from "../errors/AbortError";
+import {RequestError} from "../errors/RequestError";
 
 export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
     maxRetries?: number, delay?: number, exponential?: boolean
@@ -72,21 +73,47 @@ export function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit & {
     });
 }
 
-export async function getWithTimeout<T>(url: string, timeout?: number, abortSignal?: AbortSignal): Promise<T> {
-    const response: Response = await fetchWithTimeout(url, {
+export async function httpGet<T>(url: string, timeout?: number, abortSignal?: AbortSignal): Promise<T> {
+    const init = {
         method: "GET",
-        timeout: this.httpRequestTimeout,
+        timeout,
         signal: abortSignal
-    });
+    };
+
+    const response: Response = timeout==null ? await fetch(url, init) : await fetchWithTimeout(url, init);
 
     if(response.status!==200) {
         let resp: string;
         try {
             resp = await response.text();
         } catch (e) {
-            throw new Error(response.statusText);
+            throw new RequestError(response.statusText, response.status);
         }
-        throw new Error(resp);
+        throw RequestError.parse(resp, response.status);
+    }
+
+    return await response.json();
+}
+
+export async function httpPost<T>(url: string, body: any, timeout?: number, abortSignal?: AbortSignal): Promise<T> {
+    const init = {
+        method: "POST",
+        timeout,
+        body: JSON.stringify(body),
+        headers: {'Content-Type': 'application/json'},
+        signal: abortSignal
+    };
+
+    const response: Response = timeout==null ? await fetch(url, init) : await fetchWithTimeout(url, init);
+
+    if(response.status!==200) {
+        let resp: string;
+        try {
+            resp = await response.text();
+        } catch (e) {
+            throw new RequestError(response.statusText, response.status);
+        }
+        throw RequestError.parse(resp, response.status);
     }
 
     return await response.json();

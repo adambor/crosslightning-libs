@@ -1,4 +1,3 @@
-import {PaymentAuthError} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {
     IStorageManager,
@@ -9,6 +8,7 @@ import {fetchWithTimeout, tryWithRetries} from "../../../utils/RetryUtils";
 import {EventEmitter} from "events";
 import {LnForGasSwap, LnForGasSwapState} from "./LnForGasSwap";
 import {RequestError} from "../../..";
+import {PaymentAuthError} from "../../../errors/PaymentAuthError";
 
 export class LnForGasWrapper<T extends SwapData> {
 

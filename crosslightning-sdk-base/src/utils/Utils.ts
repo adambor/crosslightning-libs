@@ -1,3 +1,7 @@
+import {Buffer} from "buffer";
+import createHash from "create-hash";
+import * as BN from "bn.js";
+
 /**
  * Returns a promise that resolves when any of the passed promises resolves, and rejects if all the underlying
  *  promises fail with an array of errors returned by the respective promises
@@ -40,4 +44,10 @@ export function objectMap<InputType, OutputType>(
         resp[key] = translator(obj[key], key);
     }
     return resp;
+}
+
+export function extendAbortController(abortSignal?: AbortSignal) {
+    const _abortController = new AbortController();
+    if(abortSignal!=null) abortSignal.onabort = () => _abortController.abort(abortSignal.reason);
+    return _abortController;
 }

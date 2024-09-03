@@ -5,7 +5,7 @@ import {IStorageManager, StorageObject} from "crosslightning-base";
  *  used before for a given "storageKey"
  */
 //TODO: Implement removeDataArr
-export class IndexedDBWrapperStorage<T extends StorageObject> implements IStorageManager<T> {
+export class IndexedDBStorageManager<T extends StorageObject> implements IStorageManager<T> {
 
     storageKey: string;
     db: IDBDatabase;

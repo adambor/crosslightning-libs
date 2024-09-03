@@ -3,6 +3,7 @@ import {SwapHandlerInfoType} from "./IntermediaryDiscovery";
 import * as BN from "bn.js";
 import {ChainSwapType, SwapContract} from "crosslightning-base";
 import {tryWithRetries} from "../utils/RetryUtils";
+import {LNNodeLiquidity} from "../btc/LightningNetworkApi";
 
 export type ServicesType = {
     [key in SwapType]?: SwapHandlerInfoType
@@ -25,12 +26,6 @@ export type SCLiquidity = {
     [token: string]: BN
 };
 
-export type LNChannelData = {
-    publicKey: string,
-    numChannels: number,
-    capacity: BN
-};
-
 export class Intermediary {
 
     readonly url: string;
@@ -38,7 +33,7 @@ export class Intermediary {
     readonly services: ServicesType;
     reputation: ReputationType;
     liquidity: SCLiquidity = {};
-    lnData: LNChannelData;
+    lnData: LNNodeLiquidity;
 
     constructor(url: string, address: string, services: ServicesType, reputation: ReputationType = {}) {
         this.url = url;

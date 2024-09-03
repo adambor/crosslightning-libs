@@ -1,12 +1,11 @@
 import {BitcoinNetwork} from "../btc/BitcoinNetwork";
 import {ISwapPrice} from "../prices/abstract/ISwapPrice";
-import {IWrapperStorage} from "../storage/IWrapperStorage";
 import {ChainEvents, IStorageManager, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
 import {ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";
 import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
 import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
 import {FromBTCWrapper} from "./frombtc/onchain/FromBTCWrapper";
-import {AmountData, ClientSwapContract, LNURLPay, LNURLWithdraw,} from "./ClientSwapContract";
+import {AmountData} from "./ClientSwapContract";
 import {IntermediaryDiscovery, SwapBounds} from "../intermediaries/IntermediaryDiscovery";
 import * as bitcoin from "bitcoinjs-lib";
 import * as bolt11 from "bolt11";
@@ -20,20 +19,23 @@ import {FromBTCLNSwap} from "./frombtc/ln/FromBTCLNSwap";
 import {FromBTCSwap} from "./frombtc/onchain/FromBTCSwap";
 import {ToBTCLNSwap} from "./tobtc/ln/ToBTCLNSwap";
 import {ToBTCSwap} from "./tobtc/onchain/ToBTCSwap";
-import {MempoolApi} from "../btc/MempoolApi";
-import {MempoolBitcoinRpc} from "../btc/MempoolBitcoinRpc";
-import {BtcRelay} from "crosslightning-base/dist";
-import {MempoolBtcRelaySynchronizer} from "../btc/synchronizer/MempoolBtcRelaySynchronizer";
+import {MempoolApi} from "../btc/mempool/MempoolApi";
+import {MempoolBitcoinRpc} from "../btc/mempool/MempoolBitcoinRpc";
+import {BtcRelay, RelaySynchronizer} from "crosslightning-base/dist";
+import {MempoolBtcRelaySynchronizer} from "../btc/mempool/synchronizer/MempoolBtcRelaySynchronizer";
 import {OutOfBoundsError} from "../errors/OutOfBoundsError";
-import {IndexedDBWrapperStorage, Intermediary, LocalStorageManager} from "..";
 import {LnForGasWrapper} from "./swapforgas/ln/LnForGasWrapper";
 import {LnForGasSwap} from "./swapforgas/ln/LnForGasSwap";
 import {EventEmitter} from "events";
 import {Buffer} from "buffer";
+import {IndexedDBStorageManager} from "../storage/IndexedDBStorageManager";
+import {MempoolBitcoinBlock} from "../btc/mempool/MempoolBitcoinBlock";
+import {LocalStorageManager} from "../storage/LocalStorageManager";
+import {Intermediary} from "../intermediaries/Intermediary";
+import {LNURL, LNURLPay, LNURLWithdraw} from "../utils/LNURL";
 
 export type SwapperOptions<T extends SwapData> = {
     intermediaryUrl?: string | string[],
-    //wbtcToken?: PublicKey,
     pricing?: ISwapPrice,
     registryUrl?: string,
 
@@ -44,10 +46,10 @@ export type SwapperOptions<T extends SwapData> = {
     bitcoinNetwork?: BitcoinNetwork,
 
     storage?: {
-        toBtc?: IWrapperStorage,
-        fromBtc?: IWrapperStorage,
-        toBtcLn?: IWrapperStorage,
-        fromBtcLn?: IWrapperStorage,
+        toBtc?: IStorageManager<ToBTCSwap<T>>,
+        fromBtc?: IStorageManager<FromBTCSwap<T>>,
+        toBtcLn?: IStorageManager<ToBTCLNSwap<T>>,
+        fromBtcLn?: IStorageManager<FromBTCLNSwap<T>>,
         lnForGas?: IStorageManager<LnForGasSwap<T>>
     },
 
@@ -62,28 +64,31 @@ export type SwapperOptions<T extends SwapData> = {
 export class Swapper<
     T extends SwapData,
     E extends ChainEvents<T>,
-    P extends SwapContract<T, any, any, any>,
-    TokenAddressType> extends EventEmitter {
+    P extends SwapContract<T, TXType, any, any>,
+    TokenAddressType,
+    TXType
+> extends EventEmitter {
 
-    tobtcln: ToBTCLNWrapper<T>;
-    tobtc: ToBTCWrapper<T>;
-    frombtcln: FromBTCLNWrapper<T>;
-    frombtc: FromBTCWrapper<T>;
+    readonly tobtcln: ToBTCLNWrapper<T>;
+    readonly tobtc: ToBTCWrapper<T>;
+    readonly frombtcln: FromBTCLNWrapper<T>;
+    readonly frombtc: FromBTCWrapper<T>;
 
-    lnforgas: LnForGasWrapper<T>;
+    readonly lnforgas: LnForGasWrapper<T>;
 
     readonly intermediaryDiscovery: IntermediaryDiscovery<T>;
-    readonly clientSwapContract: ClientSwapContract<T>;
     readonly chainEvents: E;
-
     readonly swapContract: P;
-
-    readonly bitcoinNetwork: bitcoin.Network;
-
+    readonly mempoolApi: MempoolApi;
     readonly options: SwapperOptions<T>;
 
+    readonly bitcoinRpc: MempoolBitcoinRpc;
+    readonly bitcoinNetwork: bitcoin.Network;
+    readonly btcRelay: BtcRelay<any, T, MempoolBitcoinBlock>;
+    readonly synchronizer: RelaySynchronizer<any, T, MempoolBitcoinBlock>
+
     constructor(
-        btcRelay: BtcRelay<any, any, any>,
+        btcRelay: BtcRelay<any, T, MempoolBitcoinBlock>,
         bitcoinRpc: MempoolBitcoinRpc,
         swapContract: P,
         chainEvents: E,
@@ -99,36 +104,73 @@ export class Swapper<
         switch (options.bitcoinNetwork) {
             case BitcoinNetwork.MAINNET:
                 this.bitcoinNetwork = bitcoin.networks.bitcoin;
-                MempoolApi.setMempoolUrl("https://mempool.space/api/", options.getRequestTimeout);
+                this.mempoolApi = new MempoolApi("https://mempool.space/api/", options.getRequestTimeout);
                 break;
             case BitcoinNetwork.TESTNET:
                 this.bitcoinNetwork = bitcoin.networks.testnet;
-                MempoolApi.setMempoolUrl("https://mempool.space/testnet/api/", options.getRequestTimeout);
+                this.mempoolApi = new MempoolApi("https://mempool.space/testnet/api/", options.getRequestTimeout);
                 break;
-            case BitcoinNetwork.REGTEST:
-                this.bitcoinNetwork = bitcoin.networks.regtest;
-                break;
+            default:
+                throw new Error("Unsupported bitcoin network");
         }
 
         this.swapContract = swapContract;
-
-        const synchronizer = new MempoolBtcRelaySynchronizer(btcRelay, bitcoinRpc);
-
-        const clientSwapContract = new ClientSwapContract<T>(swapContract, swapDataConstructor, btcRelay, bitcoinRpc, null, options.pricing, {
-            bitcoinNetwork: this.bitcoinNetwork,
-            getRequestTimeout: options.getRequestTimeout,
-            postRequestTimeout: options.postRequestTimeout
-        });
-
-        this.tobtcln = new ToBTCLNWrapper<T>(options.storage?.toBtcLn || new IndexedDBWrapperStorage(storagePrefix + "Swaps-ToBTCLN"), clientSwapContract, chainEvents, swapDataConstructor, this);
-        this.tobtc = new ToBTCWrapper<T>(options.storage?.toBtc || new IndexedDBWrapperStorage(storagePrefix + "Swaps-ToBTC"), clientSwapContract, chainEvents, swapDataConstructor, this);
-        this.frombtcln = new FromBTCLNWrapper<T>(options.storage?.fromBtcLn || new IndexedDBWrapperStorage(storagePrefix + "Swaps-FromBTCLN"), clientSwapContract, chainEvents, swapDataConstructor, this);
-        this.frombtc = new FromBTCWrapper<T>(options.storage?.fromBtc || new IndexedDBWrapperStorage(storagePrefix + "Swaps-FromBTC"), clientSwapContract, chainEvents, swapDataConstructor, synchronizer, this);
-
-        this.lnforgas = new LnForGasWrapper<T>(options.storage?.lnForGas || new LocalStorageManager<LnForGasSwap<T>>(storagePrefix + "LnForGas"), swapContract, options);
-
         this.chainEvents = chainEvents;
-        this.clientSwapContract = clientSwapContract;
+        this.bitcoinRpc = new MempoolBitcoinRpc(this.mempoolApi);
+        this.btcRelay = btcRelay;
+        this.synchronizer = new MempoolBtcRelaySynchronizer(btcRelay, bitcoinRpc);
+
+        this.tobtcln = new ToBTCLNWrapper<T>(
+            options.storage?.toBtcLn || new IndexedDBStorageManager(storagePrefix + "Swaps-ToBTCLN"),
+            this.swapContract,
+            this.chainEvents,
+            options.pricing,
+            swapDataConstructor,
+            options
+        );
+        this.tobtc = new ToBTCWrapper<T>(
+            options.storage?.toBtc || new IndexedDBStorageManager(storagePrefix + "Swaps-ToBTC"),
+            this.swapContract,
+            this.chainEvents,
+            options.pricing,
+            swapDataConstructor,
+            this.bitcoinRpc,
+            {
+                getRequestTimeout: options.getRequestTimeout,
+                postRequestTimeout: options.postRequestTimeout,
+                bitcoinNetwork: this.bitcoinNetwork
+            }
+        );
+        this.frombtcln = new FromBTCLNWrapper<T>(
+            options.storage?.fromBtcLn || new IndexedDBStorageManager(storagePrefix + "Swaps-FromBTCLN"),
+            this.swapContract,
+            this.chainEvents,
+            options.pricing,
+            swapDataConstructor,
+            this.bitcoinRpc,
+            options
+        );
+        this.frombtc = new FromBTCWrapper<T>(
+            options.storage?.fromBtc || new IndexedDBStorageManager(storagePrefix + "Swaps-FromBTC"),
+            this.swapContract,
+            this.chainEvents,
+            options.pricing,
+            swapDataConstructor,
+            this.btcRelay,
+            this.synchronizer,
+            this.bitcoinRpc,
+            {
+                getRequestTimeout: options.getRequestTimeout,
+                postRequestTimeout: options.postRequestTimeout,
+                bitcoinNetwork: this.bitcoinNetwork
+            }
+        );
+
+        this.lnforgas = new LnForGasWrapper<T>(
+            options.storage?.lnForGas || new LocalStorageManager<LnForGasSwap<T>>(storagePrefix + "LnForGas"),
+            this.swapContract,
+            options
+        );
 
         if(options.intermediaryUrl!=null) {
             this.intermediaryDiscovery = new IntermediaryDiscovery<T>(swapContract, options.registryUrl, Array.isArray(options.intermediaryUrl) ? options.intermediaryUrl : [options.intermediaryUrl], options.getRequestTimeout);
@@ -181,7 +223,7 @@ export class Swapper<
      * @param lnurl
      */
     isValidLNURL(lnurl: string): boolean {
-        return this.clientSwapContract.isLNURL(lnurl);
+        return LNURL.isLNURL(lnurl);
     }
 
     /**
@@ -190,7 +232,7 @@ export class Swapper<
      * @param lnpr
      */
     getLNURLTypeAndData(lnurl: string, shouldRetry?: boolean): Promise<LNURLPay | LNURLWithdraw | null> {
-        return this.clientSwapContract.getLNURLType(lnurl, shouldRetry);
+        return LNURL.getLNURLType(lnurl, shouldRetry);
     }
 
     /**
@@ -252,7 +294,6 @@ export class Swapper<
      */
     async init() {
         await this.chainEvents.init();
-        await this.clientSwapContract.init();
 
         console.log("Initializing To BTCLN");
         await this.tobtcln.init();
@@ -290,7 +331,7 @@ export class Swapper<
         return set;
     }
 
-    async createSwap<S extends ISwap>(
+    async createSwap<S extends ISwap<T>>(
         create: (candidates: Intermediary[], abortSignal: AbortSignal) => Promise<{
             quote: Promise<S>,
             intermediary: Intermediary
@@ -505,7 +546,7 @@ export class Swapper<
         if(expirySeconds==null) expirySeconds = (3*24*3600);
         return this.createSwap<ToBTCLNSwap<T>>(
             (candidates: Intermediary[], abortSignal: AbortSignal) => this.tobtcln.createViaLNURL(
-                lnurlPay,
+                typeof(lnurlPay)==="string" ? lnurlPay : lnurlPay.params,
                 amountData,
                 candidates,
                 {
@@ -598,7 +639,7 @@ export class Swapper<
 
         return this.createSwap<FromBTCLNSwap<T>>(
             (candidates: Intermediary[], abortSignal: AbortSignal) => this.frombtcln.createViaLNURL(
-                lnurl,
+                typeof(lnurl)==="string" ? lnurl : lnurl.params,
                 amountData,
                 candidates,
                 additionalParams,
@@ -624,7 +665,7 @@ export class Swapper<
     /**
      * Returns all swaps that were initiated with the current provider's public key
      */
-    async getAllSwaps(): Promise<ISwap[]> {
+    async getAllSwaps(): Promise<ISwap<T>[]> {
         return [].concat(
             await this.tobtcln.getAllSwaps(),
             await this.tobtc.getAllSwaps(),
@@ -636,7 +677,7 @@ export class Swapper<
     /**
      * Returns swaps that were initiated with the current provider's public key, and there is an action required (either claim or refund)
      */
-    async getActionableSwaps(): Promise<ISwap[]> {
+    async getActionableSwaps(): Promise<ISwap<T>[]> {
         return [].concat(
             await this.tobtcln.getRefundableSwaps(),
             await this.tobtc.getRefundableSwaps(),

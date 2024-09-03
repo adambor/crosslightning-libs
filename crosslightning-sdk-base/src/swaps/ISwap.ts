@@ -2,25 +2,11 @@ import {SwapType} from "./SwapType";
 import {EventEmitter} from "events";
 import * as BN from "bn.js";
 import {Buffer} from "buffer";
-import {ISwapWrapper} from "./ISwapWrapper";
+import {ISwapWrapper, ISwapWrapperOptions} from "./ISwapWrapper";
 import {SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
 import {timeoutPromise} from "../utils/RetryUtils";
 import {AbortError} from "../errors/AbortError";
-
-export type PriceInfoType = {
-    isValid: boolean,
-    differencePPM: BN,
-    satsBaseFee: BN,
-    feePPM: BN
-};
-
-export function isPriceInfoType(obj: any): obj is PriceInfoType {
-    return obj!=null &&
-        typeof(obj.isValid) === "boolean" &&
-        BN.isBN(obj.differencePPM) &&
-        BN.isBN(obj.satsBaseFee) &&
-        BN.isBN(obj.feePPM);
-}
+import {isPriceInfoType, PriceInfoType} from "../prices/abstract/ISwapPrice";
 
 export type ISwapInit<T extends SwapData> = {
     pricingInfo: PriceInfoType,
@@ -65,8 +51,8 @@ export type Token = {
 
 export abstract class ISwap<T extends SwapData, S extends number = number> {
     protected readonly abstract TYPE: SwapType;
-    protected readonly wrapper: ISwapWrapper<T, ISwap<T, S>>;
-    protected expiry?: number;
+    protected readonly wrapper: ISwapWrapper<T, ISwap<T, S>, ISwapWrapperOptions>;
+    expiry?: number;
     readonly url: string;
 
     state: S;
@@ -96,10 +82,10 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
         swapState: [ISwap<T>]
     }> = new EventEmitter<{swapState: [ISwap<T>]}>();
 
-    protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>>, obj: any);
-    protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>>, swapInit: ISwapInit<T>);
+    protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>, ISwapWrapperOptions>, obj: any);
+    protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>, ISwapWrapperOptions>, swapInit: ISwapInit<T>);
     protected constructor(
-        wrapper: ISwapWrapper<T, ISwap<T, S>>,
+        wrapper: ISwapWrapper<T, ISwap<T, S>, ISwapWrapperOptions>,
         swapInitOrObj: ISwapInit<T> | any,
     ) {
         this.wrapper = wrapper;
@@ -115,7 +101,9 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
                 isValid: swapInitOrObj._isValid,
                 differencePPM: swapInitOrObj._differencePPM==null ? null : new BN(swapInitOrObj._differencePPM),
                 satsBaseFee: swapInitOrObj._satsBaseFee==null ? null : new BN(swapInitOrObj._satsBaseFee),
-                feePPM: swapInitOrObj._feePPM==null ? null : new BN(swapInitOrObj._feePPM)
+                feePPM: swapInitOrObj._feePPM==null ? null : new BN(swapInitOrObj._feePPM),
+                realPriceUSatPerToken: swapInitOrObj._realPriceUSatPerToken==null ? null : new BN(swapInitOrObj._realPriceUSatPerToken),
+                swapPriceUSatPerToken: swapInitOrObj._swapPriceUSatPerToken==null ? null : new BN(swapInitOrObj._swapPriceUSatPerToken),
             }
 
             this.data = swapInitOrObj.data!=null ? new wrapper.swapDataDeserializer(swapInitOrObj.data) : null;
@@ -144,7 +132,7 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
         while(status===SwapCommitStatus.NOT_COMMITED) {
             await timeoutPromise(interval, abortSignal);
             try {
-                status = await this.wrapper.contract.swapContract.getCommitStatus(this.data);
+                status = await this.wrapper.contract.getCommitStatus(this.data);
             } catch (e) {
                 console.error(e);
             }
@@ -166,7 +154,7 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
         while(status===SwapCommitStatus.COMMITED || status===SwapCommitStatus.REFUNDABLE) {
             await timeoutPromise(interval, abortSignal);
             try {
-                status = await this.wrapper.contract.swapContract.getCommitStatus(this.data);
+                status = await this.wrapper.contract.getCommitStatus(this.data);
             } catch (e) {
                 console.error(e);
             }
@@ -176,7 +164,7 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
     }
 
     /**
-     * Waits till the swap reaches a specific stateW
+     * Waits till the swap reaches a specific state
      *
      * @param targetState The state to wait for
      * @param type Whether to wait for the state exactly or also to a state with a higher number
@@ -205,21 +193,21 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
     //// Pricing
 
     /**
-     * Checks if the pricing for the swap is valid, according to max allowed fee set in the ISwapPrice
+     * Checks if the pricing for the swap is valid, according to max allowed price difference set in the ISwapPrice
      */
     hasValidPrice(): boolean {
         return this.pricingInfo==null ? null : this.pricingInfo.isValid;
     }
 
     /**
-     * Returns the price difference in PPM (parts per million)
+     * Returns the price difference between offered price and current market price in PPM (parts per million)
      */
     getPriceDifferencePPM(): BN {
         return this.pricingInfo==null ? null :this.pricingInfo.differencePPM;
     }
 
     /**
-     * Returns the price difference as a decimal number
+     * Returns the price difference between offered price and current market price as a decimal number
      */
     getPriceDifferencePct(): number {
         return this.pricingInfo==null ? null : this.pricingInfo.differencePPM==null ? null : this.pricingInfo.differencePPM.toNumber()/1000000;
@@ -228,7 +216,17 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
     /**
      * Re-fetches & revalidates the price data
      */
-    abstract refetchPriceData(): Promise<PriceInfoType>;
+    abstract refreshPriceData(): Promise<PriceInfoType>;
+
+    /**
+     * Returns the offered swap quote price
+     */
+    abstract getSwapPrice(): number;
+
+    /**
+     * Returns the real current market price fetched from reputable exchanges
+     */
+    abstract getMarketPrice(): number;
 
 
     //////////////////////////////
@@ -278,7 +276,7 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
     abstract isFinished(): boolean;
 
     /**
-     * Checks whether the swap's quote has expired and cannot be committed again
+     * Checks whether the swap's quote has expired and cannot be committed anymore
      */
     abstract isQuoteExpired(): boolean;
 
@@ -294,16 +292,16 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
      * Get the estimated smart chain fee of the commit transaction
      */
     getCommitFee(): Promise<BN> {
-        return this.wrapper.contract.swapContract.getCommitFee(this.data);
+        return this.wrapper.contract.getCommitFee(this.data);
     }
 
     /**
-     * Returns input amount of the swap, user needs to pay this much
+     * Returns output amount of the swap, user receives this much
      */
     abstract getOutAmount(): BN;
 
     /**
-     * Returns output amount of the swap, user receives this much
+     * Returns input amount of the swap, user needs to pay this much
      */
     abstract getInAmount(): BN;
 
@@ -336,24 +334,22 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
     abstract canCommit(): boolean;
 
     /**
-     * Commits the swap on-chain, locking the tokens from the intermediary in an HTLC
-     * Important: Make sure this transaction is confirmed and only after it is call claim()
+     * Commits the swap on-chain, locking the tokens in an HTLC or PTLC
      *
-     * @param noWaitForConfirmation     Do not wait for transaction confirmation (careful! be sure that transaction confirms before calling claim())
-     * @param abortSignal               Abort signal
+     * @param noWaitForConfirmation Do not wait for transaction confirmation
+     * @param abortSignal Abort signal
      */
     abstract commit(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
 
     /**
-     * Commits the swap on-chain, locking the tokens from the intermediary in an HTLC
-     * Important: Make sure this transaction is confirmed and only after it is call claim()
+     * Returns transactions required for committing the swap on-chain, locking the tokens in an HTLC or PTLC
      */
     abstract txsCommit(): Promise<any[]>;
 
     /**
-     * Returns a promise that resolves when swap is committed
+     * Waits till a swap is committed
      *
-     * @param abortSignal   AbortSignal
+     * @param abortSignal AbortSignal
      */
     abstract waitTillCommited(abortSignal?: AbortSignal): Promise<void>;
 
@@ -368,6 +364,8 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
             _differencePPM: this.pricingInfo.differencePPM==null ? null :this.pricingInfo.differencePPM.toString(10),
             _satsBaseFee: this.pricingInfo.satsBaseFee==null ? null :this.pricingInfo.satsBaseFee.toString(10),
             _feePPM: this.pricingInfo.feePPM==null ? null :this.pricingInfo.feePPM.toString(10),
+            _realPriceUSatPerToken: this.pricingInfo.realPriceUSatPerToken==null ? null :this.pricingInfo.realPriceUSatPerToken.toString(10),
+            _swapPriceUSatPerToken: this.pricingInfo.swapPriceUSatPerToken==null ? null :this.pricingInfo.swapPriceUSatPerToken.toString(10),
             state: this.state,
             url: this.url,
             data: this.data!=null ? this.data.serialize() : null,

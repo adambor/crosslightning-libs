@@ -7,14 +7,19 @@ import {
     SwapData
 } from "crosslightning-base";
 import {tryWithRetries} from "../../utils/RetryUtils";
-import {ISwapWrapper} from "../ISwapWrapper";
+import {ISwapWrapper, ISwapWrapperOptions} from "../ISwapWrapper";
+import {AmountData} from "../ClientSwapContract";
 
 
-export abstract class IToBTCWrapper<T extends SwapData, S extends IToBTCSwap<T> = IToBTCSwap<T>> extends ISwapWrapper<T, S> {
+export abstract class IToBTCWrapper<
+    T extends SwapData,
+    S extends IToBTCSwap<T> = IToBTCSwap<T>,
+    O extends ISwapWrapperOptions = ISwapWrapperOptions
+> extends ISwapWrapper<T, S, O> {
 
     private async syncStateFromChain(swap: S): Promise<boolean> {
         if(swap.state===ToBTCSwapState.CREATED || swap.state===ToBTCSwapState.COMMITED) {
-            const res = await tryWithRetries(() => this.contract.swapContract.getCommitStatus(swap.data));
+            const res = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
             switch(res) {
                 case SwapCommitStatus.PAID:
                     swap.state = ToBTCSwapState.CLAIMED;
@@ -41,21 +46,15 @@ export abstract class IToBTCWrapper<T extends SwapData, S extends IToBTCSwap<T> 
         }
     }
 
-    private async checkSwapConcluded(swap: S): Promise<boolean> {
-        //Check if that maybe already concluded
-        try {
-            const refundAuth = await this.contract.getRefundAuthorization(swap.data, swap.url);
-            if(refundAuth==null) return false;
-            if(!refundAuth.is_paid) {
-                swap.state = ToBTCSwapState.REFUNDABLE;
-            } else {
-                swap._setPaymentResult(refundAuth);
-            }
-            return true;
-        } catch (e) {
+    protected preFetchFeeRate(amountData: Omit<AmountData, "amount">, hash: string | null, abortController: AbortController): Promise<any | null> {
+        return tryWithRetries(
+            () => this.contract.getInitPayInFeeRate(this.contract.getAddress(), null, amountData.token, hash),
+            null, null, abortController.signal
+        ).catch(e => {
             console.error(e);
-        }
-        return false;
+            abortController.abort(e);
+            return null;
+        });
     }
 
     protected async checkPastSwap(swap: S): Promise<boolean> {
@@ -69,7 +68,7 @@ export abstract class IToBTCWrapper<T extends SwapData, S extends IToBTCSwap<T> 
 
         if(swap.state===ToBTCSwapState.COMMITED) {
             //Check if that maybe already concluded
-            changed ||= await this.checkSwapConcluded(swap);
+            changed ||= await swap.checkIntermediarySwapProcessed(false);
         }
 
         return changed;
@@ -103,7 +102,7 @@ export abstract class IToBTCWrapper<T extends SwapData, S extends IToBTCSwap<T> 
     }
 
     protected isOurSwap(swap: S): boolean {
-        return this.contract.swapContract.areWeOfferer(swap.data);
+        return this.contract.areWeOfferer(swap.data);
     }
 
     /**

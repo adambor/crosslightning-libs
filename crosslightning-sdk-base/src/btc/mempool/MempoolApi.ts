@@ -1,10 +1,9 @@
 import {Transaction} from "bitcoinjs-lib";
-import createHash from "create-hash";
 import * as BN from "bn.js";
-import {fetchWithTimeout, timeoutPromise, tryWithRetries} from "../utils/RetryUtils";
+import {fetchWithTimeout, tryWithRetries} from "../../utils/RetryUtils";
 import {Buffer} from "buffer";
 
-type TxVout = {
+export type TxVout = {
     scriptpubkey: string,
     scriptpubkey_asm: string,
     scriptpubkey_type: string,
@@ -12,7 +11,7 @@ type TxVout = {
     value: number
 };
 
-type TxVin = {
+export type TxVin = {
     txid: string,
     vout: number,
     prevout: TxVout,
@@ -161,80 +160,10 @@ export type TransactionProof = {
     pos: number
 };
 
-const BITCOIN_BLOCKTIME = 600 * 1000;
-const BITCOIN_BLOCKSIZE = 1024*1024;
-
 export class MempoolApi {
 
     url: string;
     timeout: number;
-
-    /**
-     * Returns a txo hash for a specific transaction vout
-     *
-     * @param vout
-     * @private
-     */
-    private static getTxoHash(vout: TxVout): Buffer {
-        return createHash("sha256").update(Buffer.concat([
-            Buffer.from(new BN(vout.value).toArray("le", 8)),
-            Buffer.from(vout.scriptpubkey, "hex")
-        ])).digest()
-    }
-
-    /**
-     * Returns delay in milliseconds till an unconfirmed transaction is expected to confirm, returns -1
-     *  if the transaction won't confirm any time soon
-     *
-     * @param feeRate
-     * @private
-     */
-    private async getTimeTillConfirmation(feeRate: number): Promise<number> {
-        const mempoolBlocks = await this.getPendingBlocks();
-        const mempoolBlockIndex = mempoolBlocks.findIndex(block => block.feeRange[0]<=feeRate);
-        if(mempoolBlockIndex===-1) return -1;
-        //Last returned block is usually an aggregate (or a stack) of multiple btc blocks, if tx falls in this block
-        // and the last returned block really is an aggregate one (size bigger than BITCOIN_BLOCKSIZE) we return -1
-        if(
-            mempoolBlockIndex+1===mempoolBlocks.length &&
-            mempoolBlocks[mempoolBlocks.length-1].blockVSize>BITCOIN_BLOCKSIZE
-        ) return -1;
-        return (mempoolBlockIndex+1) * BITCOIN_BLOCKTIME;
-    }
-
-    /**
-     * Returns current confirmation count for a transaction & estimates after which time it will be confirmed with the
-     *  required amount of confirmations, confirmationDelay of -1 means the transaction won't confirm in the near future
-     *
-     * @param tx
-     * @param requiredConfirmations
-     * @private
-     */
-    private async getConfirmationDelay(tx: BitcoinTransaction, requiredConfirmations: number): Promise<{
-        confirmations: number,
-        confirmationDelay: number
-    } | null> {
-        let confirmations: number = 0;
-        let confirmationDelay: number = 0;
-        if(tx.status.confirmed) {
-            const tipHeight = await this.getTipBlockHeight();
-            confirmations = tipHeight-tx.status.block_height+1;
-            if(confirmations<requiredConfirmations) confirmationDelay = ((requiredConfirmations-confirmations)*BITCOIN_BLOCKTIME);
-        } else {
-            //Get CPFP data
-            const cpfpData = await this.getCPFPData(tx.txid);
-            if(cpfpData.effectiveFeePerVsize==null) {
-                //Transaction is either confirmed in the meantime, or replaced
-                return null;
-            }
-            confirmationDelay = (await this.getTimeTillConfirmation(cpfpData.effectiveFeePerVsize));
-            if(confirmationDelay!==-1) confirmationDelay += (requiredConfirmations-1)*BITCOIN_BLOCKTIME;
-        }
-        return {
-            confirmations,
-            confirmationDelay
-        }
-    }
 
     /**
      * Sends a GET or POST request to the mempool api, handling the non-200 responses as errors & throwing
@@ -244,7 +173,7 @@ export class MempoolApi {
      * @param type
      * @param body
      */
-    async request<T>(
+    private async request<T>(
         path: string,
         responseType: T extends string ? "str" : "obj",
         type: "GET" | "POST" = "GET",
@@ -381,84 +310,6 @@ export class MempoolApi {
      */
     getAddressTransactions(address: string): Promise<BitcoinTransaction[]> {
         return this.request<BitcoinTransaction[]>("address/"+address+"/txs", "obj");
-    }
-
-    /**
-     * Checks if an address received the transaction with the required txoHash, returns info about that
-     *  specific transaction if found, or null if not found
-     *
-     * @param address
-     * @param txoHash
-     */
-    async checkAddressTxos(address: string, txoHash: Buffer): Promise<{
-        tx: BitcoinTransaction,
-        vout: number
-    } | null> {
-        const allTxs = await this.getAddressTransactions(address);
-
-        const relevantTxs = allTxs
-            .map(tx => {
-                return {
-                    tx,
-                    vout: tx.vout.findIndex(vout => MempoolApi.getTxoHash(vout).equals(txoHash))
-                }
-            })
-            .filter(obj => obj.vout>=0)
-            .sort((a, b) => {
-                if(a.tx.status.confirmed && !b.tx.status.confirmed) return -1;
-                if(!a.tx.status.confirmed && b.tx.status.confirmed) return 1;
-                if(a.tx.status.confirmed && b.tx.status.confirmed) return a.tx.status.block_height-b.tx.status.block_height;
-                return 0;
-            });
-
-        return relevantTxs.length>0 ? relevantTxs[0] : null;
-    }
-
-    /**
-     * Waits till the address receives a transaction containing a specific txoHash
-     *
-     * @param address
-     * @param txoHash
-     * @param requiredConfirmations
-     * @param stateUpdateCbk
-     * @param abortSignal
-     * @param intervalSeconds
-     */
-    async waitForAddressTxo(
-        address: string,
-        txoHash: Buffer,
-        requiredConfirmations: number,
-        stateUpdateCbk:(confirmations: number, txId: string, vout: number, txEtaMS: number) => void,
-        abortSignal?: AbortSignal,
-        intervalSeconds?: number
-    ): Promise<{
-        tx: BitcoinTransaction,
-        vout: number
-    }> {
-        if(abortSignal!=null && abortSignal.aborted) {
-            throw new Error("Aborted");
-        }
-
-        while(abortSignal==null || !abortSignal.aborted) {
-            const result = await this.checkAddressTxos(address, txoHash);
-            if(result==null) continue;
-
-            const confirmationData = await this.getConfirmationDelay(result.tx, requiredConfirmations);
-            if(confirmationData==null) continue;
-
-            if(stateUpdateCbk!=null) stateUpdateCbk(
-                confirmationData.confirmations,
-                result.tx.txid,
-                result.vout,
-                confirmationData.confirmationDelay
-            );
-
-            if(confirmationData.confirmationDelay===0) return result;
-
-            await timeoutPromise(intervalSeconds || 5);
-        }
-
-        throw new Error("Aborted");
     }
 
     /**

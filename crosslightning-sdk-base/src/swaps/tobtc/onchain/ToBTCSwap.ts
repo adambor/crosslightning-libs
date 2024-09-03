@@ -4,6 +4,8 @@ import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
 import {Token} from "../../ISwap";
+import {Buffer} from "buffer";
+import {IntermediaryError} from "../../../errors/IntermediaryError";
 
 
 export type ToBTCSwapInit<T extends SwapData> = IToBTCSwapInit<T> & {
@@ -23,6 +25,9 @@ export function isToBTCSwapInit<T extends SwapData>(obj: any): obj is ToBTCSwapI
 
 export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
     protected readonly TYPE = SwapType.TO_BTC;
+
+    protected readonly wrapper: ToBTCWrapper<T>;
+
     private readonly address: string;
     private readonly amount: BN;
     private readonly confirmationTarget: number;
@@ -36,6 +41,7 @@ export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
         wrapper: ToBTCWrapper<T>,
         initOrObject: ToBTCSwapInit<T> | any
     ) {
+        if(isToBTCSwapInit(initOrObject)) initOrObject.url += "/tobtc";
         super(wrapper, initOrObject);
         if(!isToBTCSwapInit<T>(initOrObject)) {
             this.address = initOrObject.address;
@@ -47,8 +53,22 @@ export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
         this.tryCalculateSwapFee();
     }
 
-    _setPaymentResult(result: { secret?: string; txId?: string }): void {
+    async _setPaymentResult(result: { secret?: string; txId?: string }, check: boolean = false): Promise<boolean> {
+        if(result.txId==null) throw new IntermediaryError("No btc txId returned!");
+        if(check) {
+            const btcTx = await this.wrapper.btcRpc.getTransaction(result.txId);
+            if(btcTx==null) return false;
+
+            const foundVout = btcTx.outs.find(vout => this.data.getHash()===this.wrapper.contract.getHashForOnchain(
+                Buffer.from(vout.scriptPubKey.hex, "hex"),
+                new BN(vout.value),
+                this.data.getEscrowNonce()
+            ).toString("hex"));
+
+            if(foundVout==null) throw new IntermediaryError("Invalid btc txId returned");
+        }
         this.txId = result.txId;
+        return true;
     }
 
 

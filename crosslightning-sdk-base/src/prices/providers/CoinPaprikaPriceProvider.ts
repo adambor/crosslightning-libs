@@ -1,6 +1,6 @@
 import {CoinType, CoinTypes, IPriceProvider} from "../abstract/IPriceProvider";
 import * as BN from "bn.js";
-import {getWithTimeout} from "../../utils/RetryUtils";
+import {httpGet} from "../../utils/RetryUtils";
 import {HttpPriceProvider} from "./abstract/HttpPriceProvider";
 
 export type CoinPaprikaResponse = {
@@ -18,7 +18,7 @@ export class CoinPaprikaPriceProvider extends HttpPriceProvider {
     }
 
     async fetchPrice(token: CoinType, abortSignal?: AbortSignal) {
-        const response = await getWithTimeout<CoinPaprikaResponse>(
+        const response = await httpGet<CoinPaprikaResponse>(
             this.url+"/tickers/"+token.coinId+"?quotes=BTC",
             this.httpRequestTimeout,
             abortSignal

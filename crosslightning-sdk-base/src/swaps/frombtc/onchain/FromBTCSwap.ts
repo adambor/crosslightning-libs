@@ -1,15 +1,12 @@
 import {IFromBTCSwap} from "../IFromBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as bitcoin from "bitcoinjs-lib";
-import randomBytes from "randombytes";
 import createHash from "create-hash";
-import {MempoolApi} from "../../../btc/MempoolApi";
 import {FromBTCWrapper} from "./FromBTCWrapper";
 import * as BN from "bn.js";
-import {SignatureVerificationError, SwapData} from "crosslightning-base";
-import {Fee, isISwapInit, ISwapInit, PriceInfoType, Token} from "../../ISwap";
+import {SwapData} from "crosslightning-base";
+import {isISwapInit, ISwapInit, Token} from "../../ISwap";
 import {Buffer} from "buffer";
-import {tryWithRetries} from "../../../utils/RetryUtils";
 
 export enum FromBTCSwapState {
     FAILED = -2,
@@ -33,9 +30,12 @@ export function isFromBTCSwapInit<T extends SwapData>(obj: any): obj is FromBTCS
 
 export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCSwapState> {
     protected readonly TYPE = SwapType.FROM_BTC;
+
     protected readonly COMMIT_STATE = FromBTCSwapState.CLAIM_COMMITED;
     protected readonly CLAIM_STATE = FromBTCSwapState.CLAIM_CLAIMED;
     protected readonly FAIL_STATE = FromBTCSwapState.FAILED;
+
+    readonly wrapper: FromBTCWrapper<T>;
 
     readonly address: string;
     readonly amount: BN;
@@ -45,8 +45,8 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCSwap
 
     constructor(wrapper: FromBTCWrapper<T>, init: FromBTCSwapInit<T>);
     constructor(wrapper: FromBTCWrapper<T>, obj: any);
-
     constructor(wrapper: FromBTCWrapper<T>, initOrObject: FromBTCSwapInit<T> | any) {
+        if(isFromBTCSwapInit(initOrObject)) initOrObject.url += "/frombtc";
         super(wrapper, initOrObject);
         if(!isFromBTCSwapInit(initOrObject)) {
             this.address = initOrObject.address;
@@ -68,29 +68,8 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCSwap
         };
     }
 
-    /**
-     * Checks whether a bitcoin payment was already made, returns the payment or null when no payment has been made.
-     */
-    async getBitcoinPayment(): Promise<{txId: string, confirmations: number, targetConfirmations: number} | null> {
-        const result = await MempoolApi.checkAddressTxos(this.address, this.getTxoHash());
-
-        if(result==null) return null;
-
-        let confirmations = 0;
-        if(result.tx.status.confirmed) {
-            const tipHeight = await MempoolApi.getTipBlockHeight();
-            confirmations = tipHeight-result.tx.status.block_height+1;
-        }
-
-        return {
-            txId: result.tx.txid,
-            confirmations,
-            targetConfirmations: this.data.getConfirmations()
-        }
-    }
-
     getTxoHash(): Buffer {
-        const parsedOutputScript = bitcoin.address.toOutputScript(this.address, this.wrapper.contract.options.bitcoinNetwork);
+        const parsedOutputScript = bitcoin.address.toOutputScript(this.address, this.wrapper.options.bitcoinNetwork);
 
         return createHash("sha256").update(Buffer.concat([
             Buffer.from(this.amount.toArray("le", 8)),
@@ -98,7 +77,10 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCSwap
         ])).digest();
     }
 
-    getAddress(): string {
+    /**
+     * Returns bitcoin address where the on-chain BTC should be sent to
+     */
+    getBitcoinAddress(): string {
         if(this.state===FromBTCSwapState.PR_CREATED) return null;
         return this.address;
     }
@@ -108,39 +90,34 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCSwap
         return "bitcoin:"+this.address+"?amount="+encodeURIComponent((this.amount.toNumber()/100000000).toString(10));
     }
 
+    /**
+     * Returns timeout time (in UNIX milliseconds) when the on-chain address will expire and no funds should be sent
+     *  to that address anymore
+     */
     getTimeoutTime(): number {
-        return this.wrapper.contract.getOnchainSendTimeout(this.data).toNumber()*1000;
+        return this.wrapper.getOnchainSendTimeout(this.data).toNumber()*1000;
     }
 
-    /**
-     * Returns whether the swap is finished and in its terminal state (this can mean successful, refunded or failed)
-     */
     isFinished(): boolean {
         return this.state===FromBTCSwapState.CLAIM_CLAIMED || this.state===FromBTCSwapState.QUOTE_EXPIRED || this.state===FromBTCSwapState.FAILED;
     }
 
     isClaimable(): boolean {
-        return this.state===FromBTCSwapState.BTC_TX_CONFIRMED || (this.state===FromBTCSwapState.CLAIM_COMMITED && !this.wrapper.contract.swapContract.isExpired(this.data) && this.getTimeoutTime()>Date.now());
+        return this.state===FromBTCSwapState.BTC_TX_CONFIRMED || (this.state===FromBTCSwapState.CLAIM_COMMITED && !this.wrapper.contract.isExpired(this.data) && this.getTimeoutTime()>Date.now());
     }
 
     isQuoteExpired(): boolean {
         return this.state===FromBTCSwapState.QUOTE_EXPIRED;
     }
 
-    /**
-     * Returns if the swap can be committed
-     */
     canCommit(): boolean {
         if(this.state!==FromBTCSwapState.PR_CREATED) return false;
-        const expiry = this.wrapper.contract.getOnchainSendTimeout(this.data);
+        const expiry = this.wrapper.getOnchainSendTimeout(this.data);
         const currentTimestamp = new BN(Math.floor(Date.now()/1000));
 
-        return expiry.sub(currentTimestamp).gte(new BN(this.wrapper.contract.options.minSendWindow));
+        return expiry.sub(currentTimestamp).gte(new BN(this.wrapper.options.minSendWindow));
     }
 
-    /**
-     * Returns if the swap can be claimed
-     */
     canClaim(): boolean {
         return this.state===FromBTCSwapState.BTC_TX_CONFIRMED;
     }
@@ -149,13 +126,13 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCSwap
     //////////////////////////////
     //// Amounts & fees
 
-    /**
-     * Returns amount that will be sent on Bitcoin on-chain
-     */
     getInAmount(): BN {
         return new BN(this.amount);
     }
 
+    /**
+     * Returns claimer bounty, acting as a reward for watchtowers to claim the swap automatically
+     */
     getClaimerBounty(): BN {
         return this.data.getClaimerBounty();
     }
@@ -167,9 +144,9 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCSwap
     /**
      * Waits till the bitcoin transaction confirms and swap becomes claimable
      *
-     * @param abortSignal           Abort signal
-     * @param checkIntervalSeconds  How often to poll the intermediary for answer
-     * @param updateCallback        Callback called when txId is found, and also called with subsequent confirmations
+     * @param abortSignal Abort signal
+     * @param checkIntervalSeconds How often to check the bitcoin transaction
+     * @param updateCallback Callback called when txId is found, and also called with subsequent confirmations
      */
     async waitForBitcoinTransaction(
         abortSignal?: AbortSignal,
@@ -178,9 +155,16 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCSwap
     ): Promise<void> {
         if(this.state!==FromBTCSwapState.CLAIM_COMMITED) throw new Error("Must be in COMMITED state!");
 
-        const result = await this.wrapper.contract.btcRpc.waitForAddressTxo(this.address, this.getTxoHash(), this.data.getConfirmations(), (confirmations: number, txId: string, vout: number, txEtaMs: number) => {
-            if(updateCallback!=null) updateCallback(txId, confirmations, this.data.getConfirmations(), txEtaMs);
-        }, abortSignal, checkIntervalSeconds);
+        const result = await this.wrapper.btcRpc.waitForAddressTxo(
+            this.address,
+            this.getTxoHash(),
+            this.data.getConfirmations(),
+            (confirmations: number, txId: string, vout: number, txEtaMs: number) => {
+                if(updateCallback!=null) updateCallback(txId, confirmations, this.data.getConfirmations(), txEtaMs);
+            },
+            abortSignal,
+            checkIntervalSeconds
+        );
 
         if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
 
@@ -193,24 +177,44 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCSwap
         await this._saveAndEmit();
     }
 
+    /**
+     * Checks whether a bitcoin payment was already made, returns the payment or null when no payment has been made.
+     */
+    async getBitcoinPayment(): Promise<{
+        txId: string,
+        vout: number,
+        confirmations: number,
+        targetConfirmations: number
+    } | null> {
+        const result = await this.wrapper.btcRpc.checkAddressTxos(this.address, this.getTxoHash());
+        if(result==null) return null;
+
+        return {
+            txId: result.tx.txid,
+            vout: result.vout,
+            confirmations: result.tx.confirmations,
+            targetConfirmations: this.data.getConfirmations()
+        }
+    }
+
 
     //////////////////////////////
     //// Claim
 
     /**
-     * Claims and finishes the swap once it was successfully committed on-chain with commit()
+     * Returns transactions required to claim the swap on-chain (and possibly also sync the bitcoin light client)
+     *  after a bitcoin transaction was sent and confirmed
      */
     async txsClaim(): Promise<any[]> {
         if(!this.canClaim()) throw new Error("Must be in BTC_TX_CONFIRMED state!");
 
-        const txData = await MempoolApi.getTransaction(this.txId);
-        const rawTx = await MempoolApi.getRawTransaction(this.txId);
+        const tx = await this.wrapper.btcRpc.getTransaction(this.txId);
 
-        return await this.wrapper.contract.swapContract.txsClaimWithTxData(this.data, txData.status.block_height, {
-            blockhash: txData.status.block_hash,
+        return await this.wrapper.contract.txsClaimWithTxData(this.data, tx.blockheight, {
+            blockhash: tx.blockhash,
             confirmations: this.data.getConfirmations(),
-            txid: txData.txid,
-            hex: rawTx.toString("hex")
+            txid: tx.txid,
+            hex: tx.hex
         }, this.vout, null, (this.wrapper as FromBTCWrapper<T>).synchronizer, true);
     }
 

@@ -3,11 +3,11 @@ import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {StorageObject, SwapData} from "crosslightning-base";
 import {fetchWithTimeout, tryWithRetries} from "../../../utils/RetryUtils";
-import {PaymentAuthError} from "../../ClientSwapContract";
 import {LnForGasWrapper} from "./LnForGasWrapper";
 import {EventEmitter} from "events";
 import {AbortError, RequestError} from "../../..";
 import {Buffer} from "buffer";
+import {PaymentAuthError} from "../../../errors/PaymentAuthError";
 
 const timeoutPromise = (timeoutSeconds) => {
     return new Promise(resolve => {

@@ -1,4 +1,4 @@
-import {getWithTimeout} from "../../utils/RetryUtils";
+import {httpGet} from "../../utils/RetryUtils";
 import {CoinTypes} from "../abstract/IPriceProvider";
 import {ExchangePriceProvider} from "./abstract/ExchangePriceProvider";
 
@@ -14,7 +14,7 @@ export class BinancePriceProvider extends ExchangePriceProvider {
     }
 
     async fetchPair(pair: string, abortSignal?: AbortSignal) {
-        const response = await getWithTimeout<BinanceResponse>(
+        const response = await httpGet<BinanceResponse>(
             this.url+"/ticker/price?symbol="+pair,
             this.httpRequestTimeout,
             abortSignal

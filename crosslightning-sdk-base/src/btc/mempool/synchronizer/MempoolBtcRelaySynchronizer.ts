@@ -1,7 +1,7 @@
 import {BtcRelay, BtcStoredHeader, RelaySynchronizer} from "crosslightning-base/dist";
 import {MempoolBitcoinBlock} from "../MempoolBitcoinBlock";
 import {MempoolBitcoinRpc} from "../MempoolBitcoinRpc";
-import {timeoutPromise} from "../../utils/RetryUtils";
+import {timeoutPromise} from "../../../utils/RetryUtils";
 
 
 export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> implements RelaySynchronizer<B, TX, MempoolBitcoinBlock > {
