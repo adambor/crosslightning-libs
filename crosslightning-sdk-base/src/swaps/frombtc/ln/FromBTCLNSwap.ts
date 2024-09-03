@@ -4,7 +4,6 @@ import {IFromBTCSwap} from "../IFromBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SignatureVerificationError, SwapCommitStatus, SwapData} from "crosslightning-base";
-import {timeoutPromise, tryWithRetries} from "../../../utils/RetryUtils";
 import {ISwapInit, Token} from "../../ISwap";
 import {Buffer} from "buffer";
 import {LNURL, LNURLWithdraw, LNURLWithdrawParamsWithUrl} from "../../../utils/LNURL";
@@ -16,6 +15,7 @@ import {
 } from "../../../intermediaries/IntermediaryAPI";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {PaymentAuthError} from "../../../errors/PaymentAuthError";
+import {timeoutPromise, tryWithRetries} from "../../../utils/Utils";
 
 export enum FromBTCLNSwapState {
     QUOTE_EXPIRED = -2,

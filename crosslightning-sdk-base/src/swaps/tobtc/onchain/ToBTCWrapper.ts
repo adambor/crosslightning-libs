@@ -18,10 +18,9 @@ import * as BN from "bn.js";
 import {Buffer} from "buffer";
 import randomBytes from "randombytes";
 import {UserError} from "../../../errors/UserError";
-import {tryWithRetries} from "../../../utils/RetryUtils";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {SwapType} from "../../SwapType";
-import {extendAbortController} from "../../../utils/Utils";
+import {extendAbortController, tryWithRetries} from "../../../utils/Utils";
 import {IntermediaryAPI, ToBTCResponseType} from "../../../intermediaries/IntermediaryAPI";
 import {RequestError} from "../../../errors/RequestError";
 

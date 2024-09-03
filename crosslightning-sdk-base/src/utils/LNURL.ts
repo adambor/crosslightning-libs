@@ -1,4 +1,3 @@
-import {httpGet, tryWithRetries} from "./RetryUtils";
 import {RequestError} from "../errors/RequestError";
 import {findlnurl, getParams, LNURLPayParams, LNURLWithdrawParams, LNURLPaySuccessAction} from "js-lnurl";
 import * as BN from "bn.js";
@@ -6,6 +5,7 @@ import {decode as bolt11Decode, PaymentRequestObject, TagsObject} from "bolt11";
 import createHash from "create-hash";
 import {LNURLPayResult} from "js-lnurl/lib/types";
 import {UserError} from "../errors/UserError";
+import {httpGet, tryWithRetries} from "./Utils";
 
 export type LNURLWithdrawParamsWithUrl = LNURLWithdrawParams & {url: string};
 export type LNURLPayParamsWithUrl = LNURLPayParams & {url: string};

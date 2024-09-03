@@ -17,9 +17,9 @@ import {SwapWrapperStorage} from "./SwapWrapperStorage";
 import {ISwapPrice, PriceInfoType} from "../prices/abstract/ISwapPrice";
 import * as BN from "bn.js";
 import {Intermediary} from "../intermediaries/Intermediary";
-import {tryWithRetries} from "../utils/RetryUtils";
 import {IntermediaryError} from "../errors/IntermediaryError";
 import {SwapHandlerInfoType} from "../intermediaries/IntermediaryDiscovery";
+import {tryWithRetries} from "../utils/Utils";
 
 export type AmountData = {
     amount: BN,

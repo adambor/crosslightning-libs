@@ -2,12 +2,12 @@ import {decode as bolt11Decode} from "bolt11";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {StorageObject, SwapData} from "crosslightning-base";
-import {fetchWithTimeout, tryWithRetries} from "../../../utils/RetryUtils";
 import {LnForGasWrapper} from "./LnForGasWrapper";
 import {EventEmitter} from "events";
 import {AbortError, RequestError} from "../../..";
 import {Buffer} from "buffer";
 import {PaymentAuthError} from "../../../errors/PaymentAuthError";
+import {fetchWithTimeout, tryWithRetries} from "../../../utils/Utils";
 
 const timeoutPromise = (timeoutSeconds) => {
     return new Promise(resolve => {

@@ -2,11 +2,11 @@ import {BtcBlockWithTxs, BtcSyncInfo, BtcTx} from "crosslightning-base";
 import {MempoolBitcoinBlock} from "./MempoolBitcoinBlock";
 import {BitcoinTransaction, MempoolApi, TxVout} from "./MempoolApi";
 import {Buffer} from "buffer";
-import {timeoutPromise} from "../../utils/RetryUtils";
 import createHash from "create-hash";
 import * as BN from "bn.js";
 import {BitcoinRpcWithTxoListener, BtcTxWithBlockheight} from "../BitcoinRpcWithTxoListener";
 import {LightningNetworkApi, LNNodeLiquidity} from "../LightningNetworkApi";
+import {timeoutPromise} from "../../utils/Utils";
 
 const BITCOIN_BLOCKTIME = 600 * 1000;
 const BITCOIN_BLOCKSIZE = 1024*1024;

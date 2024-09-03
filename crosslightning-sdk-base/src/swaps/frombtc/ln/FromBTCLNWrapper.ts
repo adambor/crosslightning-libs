@@ -12,7 +12,6 @@ import {
     SwapCommitStatus, SwapContract,
     SwapData
 } from "crosslightning-base";
-import {tryWithRetries} from "../../../utils/RetryUtils";
 import {Intermediary} from "../../../intermediaries/Intermediary";
 import {Buffer} from "buffer";
 import {UserError} from "../../../errors/UserError";
@@ -20,7 +19,7 @@ import randomBytes from "randombytes";
 import createHash from "create-hash";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {SwapType} from "../../SwapType";
-import {extendAbortController} from "../../../utils/Utils";
+import {extendAbortController, tryWithRetries} from "../../../utils/Utils";
 import {FromBTCLNResponseType, IntermediaryAPI} from "../../../intermediaries/IntermediaryAPI";
 import {RequestError} from "../../../errors/RequestError";
 import {LightningNetworkApi, LNNodeLiquidity} from "../../../btc/LightningNetworkApi";

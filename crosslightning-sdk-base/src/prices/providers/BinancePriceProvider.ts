@@ -1,6 +1,6 @@
-import {httpGet} from "../../utils/RetryUtils";
 import {CoinTypes} from "../abstract/IPriceProvider";
 import {ExchangePriceProvider} from "./abstract/ExchangePriceProvider";
+import {httpGet} from "../../utils/Utils";
 
 export type BinanceResponse = {
     symbol: string;

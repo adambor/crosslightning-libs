@@ -1,6 +1,5 @@
-import {Buffer} from "buffer";
-import createHash from "create-hash";
-import * as BN from "bn.js";
+import {RequestError} from "../errors/RequestError";
+import {AbortError} from "../errors/AbortError";
 
 /**
  * Returns a promise that resolves when any of the passed promises resolves, and rejects if all the underlying
@@ -50,4 +49,141 @@ export function extendAbortController(abortSignal?: AbortSignal) {
     const _abortController = new AbortController();
     if(abortSignal!=null) abortSignal.onabort = () => _abortController.abort(abortSignal.reason);
     return _abortController;
+}
+
+export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
+    maxRetries?: number, delay?: number, exponential?: boolean
+}, errorAllowed?: (e: any) => boolean, abortSignal?: AbortSignal): Promise<T> {
+
+    retryPolicy = retryPolicy || {};
+    retryPolicy.maxRetries = retryPolicy.maxRetries || 5;
+    retryPolicy.delay = retryPolicy.delay || 500;
+    retryPolicy.exponential = retryPolicy.exponential == null ? true : retryPolicy.exponential;
+
+    let err = null;
+
+    for (let i = 0; i < retryPolicy.maxRetries; i++) {
+        try {
+            const resp: T = await func();
+            return resp;
+        } catch (e) {
+            if (errorAllowed != null && errorAllowed(e)) throw e;
+            err = e;
+            console.error("tryWithRetries: " + i, e);
+        }
+        if (abortSignal != null && abortSignal.aborted) throw (abortSignal.reason || new Error("Aborted"));
+        if (i !== retryPolicy.maxRetries - 1) {
+            await new Promise<void>((resolve, reject) => {
+                let timeout;
+                let abortHandler;
+
+                timeout = setTimeout(() => {
+                    if (abortSignal != null) abortSignal.removeEventListener("abort", abortHandler);
+                    resolve()
+                }, retryPolicy.exponential ? retryPolicy.delay * Math.pow(2, i) : retryPolicy.delay);
+                abortHandler = () => {
+                    clearTimeout(timeout);
+                    reject(abortSignal.reason);
+                };
+
+                if (abortSignal != null) abortSignal.addEventListener("abort", abortHandler);
+            });
+        }
+    }
+
+    throw err;
+
+}
+
+export function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit & {
+    timeout?: number
+}): Promise<Response> {
+    if (init == null) init = {};
+    if (init.timeout == null) return fetch(input, init);
+
+    let timedOut = false;
+    const abortController = new AbortController();
+    const timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        abortController.abort(new Error("Network request timed out"))
+    }, init.timeout);
+    let originalSignal: AbortSignal;
+    if (init.signal != null) {
+        originalSignal = init.signal;
+        originalSignal.addEventListener("abort", () => {
+            clearTimeout(timeoutHandle);
+            abortController.abort(originalSignal.reason);
+        });
+    }
+    init.signal = abortController.signal;
+    return fetch(input, init).catch(e => {
+        if (e.name === "AbortError") {
+            throw init.signal.reason;
+        } else {
+            throw e;
+        }
+    });
+}
+
+export async function httpGet<T>(url: string, timeout?: number, abortSignal?: AbortSignal): Promise<T> {
+    const init = {
+        method: "GET",
+        timeout,
+        signal: abortSignal
+    };
+
+    const response: Response = timeout == null ? await fetch(url, init) : await fetchWithTimeout(url, init);
+
+    if (response.status !== 200) {
+        let resp: string;
+        try {
+            resp = await response.text();
+        } catch (e) {
+            throw new RequestError(response.statusText, response.status);
+        }
+        throw RequestError.parse(resp, response.status);
+    }
+
+    return await response.json();
+}
+
+export async function httpPost<T>(url: string, body: any, timeout?: number, abortSignal?: AbortSignal): Promise<T> {
+    const init = {
+        method: "POST",
+        timeout,
+        body: JSON.stringify(body),
+        headers: {'Content-Type': 'application/json'},
+        signal: abortSignal
+    };
+
+    const response: Response = timeout == null ? await fetch(url, init) : await fetchWithTimeout(url, init);
+
+    if (response.status !== 200) {
+        let resp: string;
+        try {
+            resp = await response.text();
+        } catch (e) {
+            throw new RequestError(response.statusText, response.status);
+        }
+        throw RequestError.parse(resp, response.status);
+    }
+
+    return await response.json();
+}
+
+export function timeoutPromise(timeoutSeconds: number, abortSignal?: AbortSignal) {
+    return new Promise((resolve, reject) => {
+        if (abortSignal != null && abortSignal.aborted) {
+            reject(abortSignal.reason || new AbortError());
+            return;
+        }
+        let timeoutHandle = setTimeout(resolve, timeoutSeconds * 1000);
+        if (abortSignal != null) {
+            abortSignal.addEventListener("abort", () => {
+                if (timeoutHandle != null) clearTimeout(timeoutHandle);
+                timeoutHandle = null;
+                reject(abortSignal.reason || new AbortError());
+            });
+        }
+    });
 }

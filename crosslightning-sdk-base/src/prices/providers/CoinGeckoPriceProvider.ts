@@ -1,7 +1,7 @@
 import * as BN from "bn.js";
-import {httpGet} from "../../utils/RetryUtils";
 import {CoinType, CoinTypes, IPriceProvider} from "../abstract/IPriceProvider";
 import {HttpPriceProvider} from "./abstract/HttpPriceProvider";
+import {httpGet} from "../../utils/Utils";
 
 export type CoinGeckoResponse = {
     [coinId: string]: {sats: number}

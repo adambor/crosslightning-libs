@@ -2,7 +2,6 @@ import {IToBTCWrapper} from "./IToBTCWrapper";
 import {Fee, isISwapInit, ISwap, ISwapInit, Token} from "../ISwap";
 import * as BN from "bn.js";
 import {SignatureVerificationError, SwapCommitStatus, SwapData} from "crosslightning-base";
-import {timeoutPromise, tryWithRetries} from "../../utils/RetryUtils";
 import {PriceInfoType} from "../../prices/abstract/ISwapPrice";
 import {
     IntermediaryAPI,
@@ -10,6 +9,7 @@ import {
     RefundAuthorizationResponseCodes
 } from "../../intermediaries/IntermediaryAPI";
 import {IntermediaryError} from "../../errors/IntermediaryError";
+import {timeoutPromise, tryWithRetries} from "../../utils/Utils";
 
 export type IToBTCSwapInit<T extends SwapData> = ISwapInit<T> & {
     networkFee: BN,

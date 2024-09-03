@@ -1,7 +1,7 @@
 import {Transaction} from "bitcoinjs-lib";
 import * as BN from "bn.js";
-import {fetchWithTimeout, tryWithRetries} from "../../utils/RetryUtils";
 import {Buffer} from "buffer";
+import {fetchWithTimeout, tryWithRetries} from "../../utils/Utils";
 
 export type TxVout = {
     scriptpubkey: string,

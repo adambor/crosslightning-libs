@@ -2,8 +2,8 @@ import {SwapType} from "../swaps/SwapType";
 import {SwapHandlerInfoType} from "./IntermediaryDiscovery";
 import * as BN from "bn.js";
 import {ChainSwapType, SwapContract} from "crosslightning-base";
-import {tryWithRetries} from "../utils/RetryUtils";
 import {LNNodeLiquidity} from "../btc/LightningNetworkApi";
+import {tryWithRetries} from "../utils/Utils";
 
 export type ServicesType = {
     [key in SwapType]?: SwapHandlerInfoType

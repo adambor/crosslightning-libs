@@ -6,8 +6,8 @@ import {
     SwapCommitStatus,
     SwapData
 } from "crosslightning-base";
-import {tryWithRetries} from "../../utils/RetryUtils";
 import {AmountData, ISwapWrapper, ISwapWrapperOptions} from "../ISwapWrapper";
+import {tryWithRetries} from "../../utils/Utils";
 
 
 export abstract class IToBTCWrapper<

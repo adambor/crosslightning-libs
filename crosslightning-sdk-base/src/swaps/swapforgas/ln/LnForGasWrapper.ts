@@ -4,11 +4,11 @@ import {
     SwapContract,
     SwapData,
 } from "crosslightning-base";
-import {fetchWithTimeout, tryWithRetries} from "../../../utils/RetryUtils";
 import {EventEmitter} from "events";
 import {LnForGasSwap, LnForGasSwapState} from "./LnForGasSwap";
 import {RequestError} from "../../..";
 import {PaymentAuthError} from "../../../errors/PaymentAuthError";
+import {fetchWithTimeout, tryWithRetries} from "../../../utils/Utils";
 
 export class LnForGasWrapper<T extends SwapData> {
 

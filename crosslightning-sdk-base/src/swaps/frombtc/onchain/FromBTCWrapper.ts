@@ -10,7 +10,6 @@ import {
     SwapCommitStatus, SwapContract,
     SwapData
 } from "crosslightning-base";
-import {tryWithRetries} from "../../../utils/RetryUtils";
 import {EventEmitter} from "events";
 import {Intermediary} from "../../../intermediaries/Intermediary";
 import {BitcoinRpcWithTxoListener} from "../../../btc/BitcoinRpcWithTxoListener";
@@ -20,7 +19,7 @@ import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
 import {Buffer} from "buffer";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {SwapType} from "../../SwapType";
-import {extendAbortController} from "../../../utils/Utils";
+import {extendAbortController, tryWithRetries} from "../../../utils/Utils";
 import {BtcRelay} from "crosslightning-base/dist";
 import {FromBTCResponseType, IntermediaryAPI} from "../../../intermediaries/IntermediaryAPI";
 import {RequestError} from "../../../errors/RequestError";

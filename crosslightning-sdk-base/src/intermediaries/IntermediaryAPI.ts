@@ -1,4 +1,3 @@
-import {fetchWithTimeout, httpGet, httpPost, tryWithRetries} from "../utils/RetryUtils";
 import {RequestError} from "../errors/RequestError";
 import * as BN from "bn.js";
 import {
@@ -9,6 +8,7 @@ import {
 } from "../utils/paramcoders/SchemaVerifier";
 import {RequestBody, streamingFetchWithTimeoutPromise} from "../utils/paramcoders/client/StreamingFetchPromise";
 import {Psbt} from "bitcoinjs-lib";
+import {fetchWithTimeout, httpGet, httpPost, tryWithRetries} from "../utils/Utils";
 
 export enum RefundAuthorizationResponseCodes {
     EXPIRED=20010,

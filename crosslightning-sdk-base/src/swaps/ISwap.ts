@@ -4,9 +4,9 @@ import * as BN from "bn.js";
 import {Buffer} from "buffer";
 import {ISwapWrapper, ISwapWrapperOptions} from "./ISwapWrapper";
 import {SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
-import {timeoutPromise} from "../utils/RetryUtils";
 import {AbortError} from "../errors/AbortError";
 import {isPriceInfoType, PriceInfoType} from "../prices/abstract/ISwapPrice";
+import {timeoutPromise} from "../utils/Utils";
 
 export type ISwapInit<T extends SwapData> = {
     pricingInfo: PriceInfoType,

@@ -3,8 +3,8 @@ import {IFromBTCWrapper} from "./IFromBTCWrapper";
 import {Fee, ISwap, ISwapInit, Token} from "../ISwap";
 import * as BN from "bn.js";
 import {SignatureVerificationError, SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
-import {tryWithRetries} from "../../utils/RetryUtils";
 import {PriceInfoType} from "../../prices/abstract/ISwapPrice";
+import {tryWithRetries} from "../../utils/Utils";
 
 
 export abstract class IFromBTCSwap<T extends SwapData, S extends number = number> extends ISwap<T, S> {

@@ -1,7 +1,7 @@
 import {CoinType, CoinTypes, IPriceProvider} from "../abstract/IPriceProvider";
 import * as BN from "bn.js";
-import {httpGet} from "../../utils/RetryUtils";
 import {HttpPriceProvider} from "./abstract/HttpPriceProvider";
+import {httpGet} from "../../utils/Utils";
 
 export type CoinPaprikaResponse = {
     quotes: {

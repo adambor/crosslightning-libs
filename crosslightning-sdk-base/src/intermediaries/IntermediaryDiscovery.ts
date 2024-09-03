@@ -4,10 +4,10 @@ import {SwapType} from "../swaps/SwapType";
 import * as BN from "bn.js";
 import {SwapData, TokenAddress} from "crosslightning-base";
 import {SwapContract} from "crosslightning-base/dist";
-import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
 import {AbortError} from "../errors/AbortError";
 import {EventEmitter} from "events";
 import {Buffer} from "buffer";
+import {fetchWithTimeout, tryWithRetries} from "../utils/Utils";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",

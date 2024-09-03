@@ -1,13 +1,12 @@
 import BN = require("bn.js");
 import {IPriceProvider} from "./abstract/IPriceProvider";
 import {TokenAddress} from "crosslightning-base";
-import {tryWithRetries} from "../utils/RetryUtils";
 import {HttpResponseError} from "../errors/HttpResponseError";
 import {BinancePriceProvider} from "./providers/BinancePriceProvider";
 import {OKXPriceProvider} from "./providers/OKXPriceProvider";
 import {CoinGeckoPriceProvider} from "./providers/CoinGeckoPriceProvider";
 import {CoinPaprikaPriceProvider} from "./providers/CoinPaprikaPriceProvider";
-import {promiseAny, objectMap} from "../utils/Utils";
+import {promiseAny, objectMap, tryWithRetries} from "../utils/Utils";
 import {ICachedSwapPrice} from "./abstract/ICachedSwapPrice";
 
 export type RedundantSwapPriceAssets = {
