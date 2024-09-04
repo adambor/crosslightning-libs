@@ -145,12 +145,26 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, Fro
         return Promise.resolve(false);
     }
 
+    /**
+     * Generates a new 32-byte secret to be used as pre-image for lightning network invoice & HTLC swap\
+     *
+     * @private
+     * @returns Hash pre-image & payment hash
+     */
     private getSecretAndHash(): {secret: Buffer, paymentHash: Buffer} {
         const secret = randomBytes(32);
         const paymentHash = createHash("sha256").update(secret).digest();
         return {secret, paymentHash};
     }
 
+    /**
+     * Pre-fetches intermediary's LN node capacity, doesn't throw, instead returns null
+     *
+     * @param pubkeyPromise Promise that resolves when we receive "lnPublicKey" param from the intermediary thorugh
+     *  streaming
+     * @private
+     * @returns LN Node liquidity
+     */
     private preFetchLnCapacity(pubkeyPromise: Promise<string>): Promise<LNNodeLiquidity | null> {
         return pubkeyPromise.then(pubkey => {
             if(pubkey==null) return null;
@@ -161,6 +175,18 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, Fro
         })
     }
 
+    /**
+     * Verifies response returned from intermediary
+     *
+     * @param resp Response as returned by the intermediary
+     * @param amountData
+     * @param lp Intermediary
+     * @param options Options as passed to the swap creation function
+     * @param decodedPr Decoded bolt11 lightning network invoice
+     * @param amountIn Amount in sats that will be paid for the swap
+     * @private
+     * @throws {IntermediaryError} in case the response is invalid
+     */
     private verifyReturnedData(
         resp: FromBTCLNResponseType,
         amountData: AmountData,
@@ -181,18 +207,28 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, Fro
         }
     }
 
+    /**
+     * Verifies whether the intermediary's lightning node has enough inbound capacity to receive the LN payment
+     *
+     * @param lp Intermediary
+     * @param decodedPr Decoded bolt11 lightning network invoice
+     * @param amountIn Amount to be paid for the swap in sats
+     * @param lnCapacityPrefetchPromise Pre-fetch for LN node capacity, preFetchLnCapacity()
+     * @param abortSignal
+     * @private
+     * @throws {IntermediaryError} if the lightning network node doesn't have enough inbound liquidity
+     * @throws {Error} if the lightning network node's inbound liquidity might be enough, but the swap would
+     *  deplete more than half of the liquidity
+     */
     private async verifyLnNodeCapacity(
         lp: Intermediary,
         decodedPr: PaymentRequestObject & {tagsObject: TagsObject},
         amountIn: BN,
         lnCapacityPrefetchPromise: Promise<LNNodeLiquidity | null>,
         abortSignal?: AbortSignal
-    ) {
+    ): Promise<void> {
         let result: LNNodeLiquidity = await lnCapacityPrefetchPromise;
-        if(result==null) result = await tryWithRetries(
-            () => this.lnApi.getLNNodeLiquidity(decodedPr.payeeNodeKey),
-            null, null, abortSignal
-        );
+        if(result==null) result = await this.lnApi.getLNNodeLiquidity(decodedPr.payeeNodeKey);
 
         if(result===null) throw new IntermediaryError("LP's lightning node not found in the lightning network graph!");
 
@@ -315,6 +351,14 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, Fro
         });
     }
 
+    /**
+     * Parses and fetches lnurl withdraw params from the specified lnurl
+     *
+     * @param lnurl LNURL to be parsed and fetched
+     * @param abortSignal
+     * @private
+     * @throws {UserError} if the LNURL is invalid or if it's not a LNURL-withdraw
+     */
     private async getLNURLWithdraw(lnurl: string | LNURLWithdrawParamsWithUrl, abortSignal: AbortSignal): Promise<LNURLWithdrawParamsWithUrl> {
         if(typeof(lnurl)!=="string") return lnurl;
 

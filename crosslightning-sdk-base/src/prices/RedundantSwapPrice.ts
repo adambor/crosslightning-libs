@@ -1,13 +1,13 @@
 import BN = require("bn.js");
 import {IPriceProvider} from "./abstract/IPriceProvider";
 import {TokenAddress} from "crosslightning-base";
-import {HttpResponseError} from "../errors/HttpResponseError";
 import {BinancePriceProvider} from "./providers/BinancePriceProvider";
 import {OKXPriceProvider} from "./providers/OKXPriceProvider";
 import {CoinGeckoPriceProvider} from "./providers/CoinGeckoPriceProvider";
 import {CoinPaprikaPriceProvider} from "./providers/CoinPaprikaPriceProvider";
 import {promiseAny, objectMap, tryWithRetries} from "../utils/Utils";
 import {ICachedSwapPrice} from "./abstract/ICachedSwapPrice";
+import {RequestError} from "../errors/RequestError";
 
 export type RedundantSwapPriceAssets = {
     [ticker: string]: {
@@ -118,7 +118,7 @@ export class RedundantSwapPrice extends ICachedSwapPrice {
                 })
             ))
         } catch (e) {
-            throw e.find(err => !(err instanceof HttpResponseError)) || e[0];
+            throw e.find(err => !(err instanceof RequestError)) || e[0];
         }
     }
 
@@ -141,7 +141,7 @@ export class RedundantSwapPrice extends ICachedSwapPrice {
                 });
             }
             return this.fetchPriceFromMaybeOperationalPriceApis(token, abortSignal);
-        }, null, e => e instanceof HttpResponseError, abortSignal);
+        }, null, e => e instanceof RequestError, abortSignal);
     }
 
     protected getDecimals(token: TokenAddress): number | null {

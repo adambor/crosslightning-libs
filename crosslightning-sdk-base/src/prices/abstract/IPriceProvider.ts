@@ -18,6 +18,14 @@ export abstract class IPriceProvider {
         this.coinsMap = coinsMap;
     }
 
+    /**
+     * Fetches the price for a given token against BTC
+     *
+     * @param token
+     * @param abortSignal
+     * @protected
+     * @returns Price per token in uSats (micro sats)
+     */
     protected abstract fetchPrice(token: CoinType, abortSignal?: AbortSignal): Promise<BN>;
 
     /**
@@ -40,6 +48,13 @@ export abstract class IPriceProvider {
         return this.fetchPrice(coin, abortSignal);
     }
 
+    /**
+     * Returns the decimal places of the specified token, or -1 if token should be ignored, returns null if
+     *  token is not found
+     *
+     * @param token
+     * @protected
+     */
     getDecimals(token: TokenAddress): number {
         const coin = this.coinsMap[token.toString()];
 

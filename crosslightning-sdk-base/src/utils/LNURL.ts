@@ -80,6 +80,11 @@ export const MAIL_REGEX = /(?:[A-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-z0-9!#$%&'*+/=
 
 export class LNURL {
 
+    /**
+     * Checks whether a provided string is bare (non bech32 encoded) lnurl
+     * @param str
+     * @private
+     */
     private static isBareLNURL(str: string): boolean {
         try {
             return str.startsWith("lnurlw://") || str.startsWith("lnurlp://");
@@ -87,10 +92,29 @@ export class LNURL {
         return false;
     }
 
+    /**
+     * Checks if the provided string is a lightning network address (e.g. satoshi@nakamoto.com)
+     * @param str
+     * @private
+     */
     private static isLightningAddress(str: string): boolean {
         return MAIL_REGEX.test(str);
     }
 
+    /**
+     * Checks whether a given string is a LNURL or lightning address
+     * @param str
+     */
+    static isLNURL(str: string): boolean {
+        return findlnurl(str)!=null || LNURL.isLightningAddress(str) || LNURL.isBareLNURL(str);
+    }
+
+    /**
+     * Extracts the URL that needs to be request from LNURL or lightning address
+     * @param str
+     * @private
+     * @returns An URL to send the request to, or null if it cannot be parsed
+     */
     private static extractCallUrl(str: string): string | null {
         if(MAIL_REGEX.test(str)) {
             //lightning e-mail like address
@@ -118,6 +142,14 @@ export class LNURL {
         return null;
     }
 
+    /**
+     * Sends a request to obtain data about a specific LNURL or lightning address
+     *
+     * @param str A lnurl or lightning address
+     * @param shouldRetry Whether we should retry in case of network failure
+     * @param timeout Request timeout in milliseconds
+     * @param abortSignal
+     */
     static async getLNURL(
         str: string,
         shouldRetry: boolean = true,
@@ -164,10 +196,14 @@ export class LNURL {
         };
     }
 
-    static isLNURL(str: string): boolean {
-        return findlnurl(str)!=null || LNURL.isLightningAddress(str) || LNURL.isBareLNURL(str);
-    }
-
+    /**
+     * Sends a request to obtain data about a specific LNURL or lightning address
+     *
+     * @param str A lnurl or lightning address
+     * @param shouldRetry Whether we should retry in case of network failure
+     * @param timeout Request timeout in milliseconds
+     * @param abortSignal
+     */
     static async getLNURLType(str: string, shouldRetry?: boolean, timeout?: number, abortSignal?: AbortSignal): Promise<LNURLPay | LNURLWithdraw | null> {
         let res: any = await LNURL.getLNURL(str, shouldRetry, timeout, abortSignal);
 
@@ -215,6 +251,15 @@ export class LNURL {
         return null;
     }
 
+    /**
+     * Uses a LNURL-pay request by obtaining a lightning network invoice from it
+     *
+     * @param payRequest LNURL params as returned from the getLNURL call
+     * @param amount Amount of sats (BTC) to pay
+     * @param comment Optional comment for the payment request
+     * @param timeout Request timeout in milliseconds
+     * @param abortSignal
+     */
     static async useLNURLPay(
         payRequest: LNURLPayParamsWithUrl,
         amount: BN,
@@ -258,6 +303,14 @@ export class LNURL {
         }
     }
 
+    /**
+     * Submits the bolt11 lightning invoice to the lnurl withdraw url
+     *
+     * @param withdrawRequest Withdraw request to use
+     * @param withdrawRequest.k1 K1 parameter
+     * @param withdrawRequest.callback A URL to call
+     * @param lnpr bolt11 lightning network invoice to submit to the withdrawal endpoint
+     */
     static async postInvoiceToLNURLWithdraw(
         withdrawRequest: {k1: string, callback: string},
         lnpr: string
@@ -276,6 +329,12 @@ export class LNURL {
         if(isLNURLError(response)) throw new RequestError("LNURL callback error: " + response.reason, 200);
     }
 
+    /**
+     * Uses a LNURL-withdraw request by submitting a lightning network invoice to it
+     *
+     * @param withdrawRequest Withdrawal request as returned from getLNURL call
+     * @param lnpr bolt11 lightning network invoice to submit to the withdrawal endpoint
+     */
     static async useLNURLWithdraw(
         withdrawRequest: LNURLWithdrawParamsWithUrl,
         lnpr: string

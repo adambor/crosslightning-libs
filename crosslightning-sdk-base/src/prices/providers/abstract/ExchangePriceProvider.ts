@@ -4,6 +4,13 @@ import BN from "bn.js";
 
 export abstract class ExchangePriceProvider extends HttpPriceProvider {
 
+    /**
+     * Fetches the price on the specific exchange pair
+     *
+     * @param pair
+     * @param abortSignal
+     * @protected
+     */
     protected abstract fetchPair(pair: string, abortSignal?: AbortSignal): Promise<number>;
 
     protected async fetchPrice(token: CoinType, abortSignal?: AbortSignal): Promise<BN> {

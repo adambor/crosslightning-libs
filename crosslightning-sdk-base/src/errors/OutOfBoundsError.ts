@@ -1,6 +1,9 @@
 import * as BN from "bn.js";
 import {RequestError} from "./RequestError";
 
+/**
+ * An error indicating out of bounds (amount too high or too low) on swap initialization
+ */
 export class OutOfBoundsError extends RequestError {
 
     min: BN;

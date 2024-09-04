@@ -1,5 +1,4 @@
 import {RequestError} from "../errors/RequestError";
-import {AbortError} from "../errors/AbortError";
 
 /**
  * Returns a promise that resolves when any of the passed promises resolves, and rejects if all the underlying
@@ -45,12 +44,29 @@ export function objectMap<InputType, OutputType>(
     return resp;
 }
 
+/**
+ * Creates a new abort controller that will abort if the passed abort signal aborts
+ *
+ * @param abortSignal
+ */
 export function extendAbortController(abortSignal?: AbortSignal) {
     const _abortController = new AbortController();
     if(abortSignal!=null) abortSignal.onabort = () => _abortController.abort(abortSignal.reason);
     return _abortController;
 }
 
+/**
+ * Runs the passed function multiple times if it fails
+ *
+ * @param func A callback for executing the action
+ * @param retryPolicy Retry policy
+ * @param retryPolicy.maxRetries How many retries to attempt in total
+ * @param retryPolicy.delay How long should the delay be
+ * @param retryPolicy.exponential Whether to use exponentially increasing delays
+ * @param errorAllowed A callback for determining whether a given error is allowed, and we should therefore not retry
+ * @param abortSignal
+ * @returns Result of the action executing callback
+ */
 export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
     maxRetries?: number, delay?: number, exponential?: boolean
 }, errorAllowed?: (e: any) => boolean, abortSignal?: AbortSignal): Promise<T> {
@@ -95,6 +111,12 @@ export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
 
 }
 
+/**
+ * Mimics fetch API byt adds a timeout to the request
+ *
+ * @param input
+ * @param init
+ */
 export function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit & {
     timeout?: number
 }): Promise<Response> {
@@ -125,6 +147,13 @@ export function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit & {
     });
 }
 
+/**
+ * Sends an HTTP GET request through a fetch API, handles non 200 response codes as errors
+ * @param url Send request to this URL
+ * @param timeout Timeout (in milliseconds) for the request to conclude
+ * @param abortSignal
+ * @throws {RequestError} if non 200 response code was returned
+ */
 export async function httpGet<T>(url: string, timeout?: number, abortSignal?: AbortSignal): Promise<T> {
     const init = {
         method: "GET",
@@ -147,6 +176,14 @@ export async function httpGet<T>(url: string, timeout?: number, abortSignal?: Ab
     return await response.json();
 }
 
+/**
+ * Sends an HTTP POST request through a fetch API, handles non 200 response codes as errors
+ * @param url Send request to this URL
+ * @param body A HTTP request body to send to the server
+ * @param timeout Timeout (in milliseconds) for the request to conclude
+ * @param abortSignal
+ * @throws {RequestError} if non 200 response code was returned
+ */
 export async function httpPost<T>(url: string, body: any, timeout?: number, abortSignal?: AbortSignal): Promise<T> {
     const init = {
         method: "POST",
@@ -171,10 +208,16 @@ export async function httpPost<T>(url: string, body: any, timeout?: number, abor
     return await response.json();
 }
 
+/**
+ * Returns a promise that resolves after given amount seconds
+ *
+ * @param timeoutSeconds how many seconds to wait for
+ * @param abortSignal
+ */
 export function timeoutPromise(timeoutSeconds: number, abortSignal?: AbortSignal) {
     return new Promise((resolve, reject) => {
         if (abortSignal != null && abortSignal.aborted) {
-            reject(abortSignal.reason || new AbortError());
+            reject(abortSignal.reason);
             return;
         }
         let timeoutHandle = setTimeout(resolve, timeoutSeconds * 1000);
@@ -182,7 +225,7 @@ export function timeoutPromise(timeoutSeconds: number, abortSignal?: AbortSignal
             abortSignal.addEventListener("abort", () => {
                 if (timeoutHandle != null) clearTimeout(timeoutHandle);
                 timeoutHandle = null;
-                reject(abortSignal.reason || new AbortError());
+                reject(abortSignal.reason);
             });
         }
     });

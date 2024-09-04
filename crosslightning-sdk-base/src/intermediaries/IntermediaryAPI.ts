@@ -2,13 +2,18 @@ import {RequestError} from "../errors/RequestError";
 import * as BN from "bn.js";
 import {
     FieldTypeEnum,
-    RequestSchema,
     RequestSchemaResult,
-    RequestSchemaResultPromise, verifySchema
+    verifySchema
 } from "../utils/paramcoders/SchemaVerifier";
-import {RequestBody, streamingFetchWithTimeoutPromise} from "../utils/paramcoders/client/StreamingFetchPromise";
-import {Psbt} from "bitcoinjs-lib";
-import {fetchWithTimeout, httpGet, httpPost, tryWithRetries} from "../utils/Utils";
+import {streamingFetchWithTimeoutPromise} from "../utils/paramcoders/client/StreamingFetchPromise";
+import {httpGet, httpPost, tryWithRetries} from "../utils/Utils";
+import randomBytes from "randombytes";
+
+export type InfoHandlerResponse = {
+    address: string,
+    envelope: string,
+    signature: string
+};
 
 export enum RefundAuthorizationResponseCodes {
     EXPIRED=20010,
@@ -202,6 +207,23 @@ export type FromBTCLNInit = BaseFromBTCSwapInit & {
 }
 
 export class IntermediaryAPI {
+
+    static async getIntermediaryInfo(
+        url: string,
+        timeout?: number,
+        abortSignal?: AbortSignal
+    ): Promise<InfoHandlerResponse> {
+        const nonce = randomBytes(32).toString("hex");
+
+        const response = await httpPost<InfoHandlerResponse>(url+"/info", {
+            nonce,
+        }, timeout, abortSignal);
+
+        const info = JSON.parse(response.envelope);
+        if(nonce!==info.nonce) throw new Error("Invalid response - nonce");
+
+        return response;
+    }
 
     static async getRefundAuthorization(
         url: string,

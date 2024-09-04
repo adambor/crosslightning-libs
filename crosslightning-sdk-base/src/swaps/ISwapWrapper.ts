@@ -80,6 +80,14 @@ export abstract class ISwapWrapper<
         this.options = options;
     }
 
+    /**
+     * Pre-fetches swap price for a given swap
+     *
+     * @param amountData
+     * @param abortSignal
+     * @protected
+     * @returns Price of the token in uSats (micro sats)
+     */
     protected preFetchPrice(amountData: Omit<AmountData, "amount">, abortSignal?: AbortSignal): Promise<BN | null> {
         return this.prices.preFetchPrice(amountData.token, abortSignal).catch(e => {
             console.error(e);
@@ -87,11 +95,20 @@ export abstract class ISwapWrapper<
         });
     }
 
+    /**
+     * Pre-fetches intermediary's reputation, doesn't throw, instead aborts via abortController and returns null
+     *
+     * @param amountData
+     * @param lp Intermediary
+     * @param abortController
+     * @protected
+     * @returns Intermediary's reputation or null if failed
+     */
     protected preFetchIntermediaryReputation(
         amountData: Omit<AmountData, "amount">,
         lp: Intermediary,
         abortController: AbortController
-    ): Promise<IntermediaryReputationType> {
+    ): Promise<IntermediaryReputationType | null> {
         return tryWithRetries(
             () => this.contract.getIntermediaryReputation(lp.address, amountData.token),
             null, null, abortController.signal
@@ -105,6 +122,13 @@ export abstract class ISwapWrapper<
         });
     }
 
+    /**
+     * Pre-fetches signature verification data from the server's pre-sent promise, doesn't throw, instead returns null
+     *
+     * @param signDataPrefetch Promise that resolves when we receive "signDataPrefetch" from the LP in streaming mode
+     * @protected
+     * @returns Pre-fetched signature verification data or null if failed
+     */
     protected preFetchSignData(signDataPrefetch: Promise<any | null>): Promise<any | null> {
         if(this.contract.preFetchForInitSignatureVerification==null) return Promise.resolve(null);
         return signDataPrefetch.then(obj => {
@@ -116,9 +140,21 @@ export abstract class ISwapWrapper<
         });
     }
 
+    /**
+     * Verifies swap initialization signature returned by the intermediary
+     *
+     * @param data Parsed swap data from the intermediary
+     * @param signatureData Response of the intermediary
+     * @param feeRatePromise Pre-fetched fee rate promise
+     * @param preFetchSignatureVerificationData Pre-fetched signature verification data
+     * @param abortSignal
+     * @protected
+     * @returns Swap initialization signature expiry
+     * @throws {SignatureVerificationError} when swap init signature is invalid
+     */
     protected async verifyReturnedSignature(
         data: T,
-        parsedData: {
+        {timeout, prefix, signature}: {
             timeout: string,
             prefix: string,
             signature: string
@@ -130,22 +166,37 @@ export abstract class ISwapWrapper<
         const [feeRate, preFetchedSignatureData] = await Promise.all([feeRatePromise, preFetchSignatureVerificationData]);
         await tryWithRetries(
             () => data.isPayIn() ?
-                this.contract.isValidClaimInitAuthorization(data, parsedData.timeout, parsedData.prefix, parsedData.signature, feeRate, preFetchedSignatureData) :
-                this.contract.isValidInitAuthorization(data, parsedData.timeout, parsedData.prefix, parsedData.signature, feeRate, preFetchedSignatureData),
+                this.contract.isValidClaimInitAuthorization(data, timeout, prefix, signature, feeRate, preFetchedSignatureData) :
+                this.contract.isValidInitAuthorization(data, timeout, prefix, signature, feeRate, preFetchedSignatureData),
             null,
             e => e instanceof SignatureVerificationError,
             abortSignal
         );
         return await tryWithRetries(
             () => data.isPayIn() ?
-                this.contract.getClaimInitAuthorizationExpiry(data, parsedData.timeout, parsedData.prefix, parsedData.signature, preFetchedSignatureData) :
-                this.contract.getInitAuthorizationExpiry(data, parsedData.timeout, parsedData.prefix, parsedData.signature, preFetchedSignatureData),
+                this.contract.getClaimInitAuthorizationExpiry(data, timeout, prefix, signature, preFetchedSignatureData) :
+                this.contract.getInitAuthorizationExpiry(data, timeout, prefix, signature, preFetchedSignatureData),
             null,
             e => e instanceof SignatureVerificationError,
             abortSignal
         );
     }
 
+    /**
+     * Verifies returned  price for swaps
+     *
+     * @param lpServiceData Service data for the service in question (TO_BTCLN, TO_BTC, etc.) of the given intermediary
+     * @param send Whether this is a send (SOL -> SC) or receive (BTC -> SC) swap
+     * @param amountSats Amount in BTC
+     * @param amountToken Amount in token
+     * @param token Token used in the swap
+     * @param feeData Fee data as returned by the intermediary
+     * @param pricePrefetchPromise Price pre-fetch promise
+     * @param abortSignal
+     * @protected
+     * @returns Price info object
+     * @throws {IntermediaryError} if the calculated fee is too high
+     */
     protected async verifyReturnedPrice(
         lpServiceData: SwapHandlerInfoType,
         send: boolean,
@@ -174,13 +225,53 @@ export abstract class ISwapWrapper<
         return isValidAmount;
     }
 
+    /**
+     * Checks if the provided swap is "ours", belonging to the underlying provider's address/public key
+     * @param swap Swap to be checked
+     * @protected
+     */
     protected abstract isOurSwap(swap: S): boolean;
+
+    /**
+     * Processes InitializeEvent for a given swap
+     * @param swap
+     * @param event
+     * @protected
+     * @returns Whether the swap was updated/changed
+     */
     protected abstract processEventInitialize(swap: S, event: InitializeEvent<T>): Promise<boolean>;
+
+    /**
+     * Processes ClaimEvent for a given swap
+     * @param swap
+     * @param event
+     * @protected
+     * @returns Whether the swap was updated/changed
+     */
     protected abstract processEventClaim(swap: S, event: ClaimEvent<T>): Promise<boolean>;
+
+    /**
+     * Processes RefundEvent for a given swap
+     * @param swap
+     * @param event
+     * @protected
+     * @returns Whether the swap was updated/changed
+     */
     protected abstract processEventRefund(swap: S, event: RefundEvent<T>): Promise<boolean>;
 
+    /**
+     * Checks past swap and syncs its state from the chain, this is called on initialization for all unfinished swaps
+     * @param swap
+     * @protected
+     * @returns Whether the swap was updated/changed
+     */
     protected abstract checkPastSwap(swap: S): Promise<boolean>;
 
+    /**
+     * Processes batch of SC on-chain events
+     * @param events
+     * @private
+     */
     private async processEvents(events: SwapEvent<T>[]): Promise<boolean> {
         for(let event of events) {
             const paymentHash = event.paymentHash;
@@ -200,6 +291,9 @@ export abstract class ISwapWrapper<
         return true;
     }
 
+    /**
+     * Initializes the swap wrapper, needs to be called before any other action can be taken
+     */
     public async init(): Promise<void> {
         await this.storage.init();
         if(this.isInitialized) return;

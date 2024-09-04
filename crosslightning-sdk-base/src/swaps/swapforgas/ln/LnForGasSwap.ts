@@ -4,10 +4,10 @@ import * as BN from "bn.js";
 import {StorageObject, SwapData} from "crosslightning-base";
 import {LnForGasWrapper} from "./LnForGasWrapper";
 import {EventEmitter} from "events";
-import {AbortError, RequestError} from "../../..";
 import {Buffer} from "buffer";
 import {PaymentAuthError} from "../../../errors/PaymentAuthError";
 import {fetchWithTimeout, tryWithRetries} from "../../../utils/Utils";
+import {RequestError} from "../../../errors/RequestError";
 
 const timeoutPromise = (timeoutSeconds) => {
     return new Promise(resolve => {
@@ -119,8 +119,7 @@ export class LnForGasSwap<T extends SwapData> implements StorageObject {
             signal: abortSignal,
             timeout: this.wrapper.options.getRequestTimeout
         }), null, null, abortSignal);
-
-        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
+        if(abortSignal!=null) abortSignal.throwIfAborted();
 
         if(response.status!==200) {
             let resp: string;
@@ -133,8 +132,7 @@ export class LnForGasSwap<T extends SwapData> implements StorageObject {
         }
 
         let jsonBody: any = await response.json();
-
-        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
+        if(abortSignal!=null) abortSignal.throwIfAborted();
 
         if(jsonBody.code===10000) {
             //tx id returned
@@ -186,12 +184,11 @@ export class LnForGasSwap<T extends SwapData> implements StorageObject {
             const result = await this.getInvoiceStatus(
                 abortSignal
             );
-            if(result.is_paid) return result as any;
+            if(result.is_paid) return;
             await timeoutPromise(checkIntervalSeconds || 5);
         }
 
-        throw new AbortError();
-
+        throw abortSignal.reason;
     }
 
     /**

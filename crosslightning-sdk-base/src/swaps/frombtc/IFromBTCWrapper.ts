@@ -13,10 +13,25 @@ export abstract class IFromBTCWrapper<
     O extends ISwapWrapperOptions = ISwapWrapperOptions
 > extends ISwapWrapper<T, S, O> {
 
+    /**
+     * Returns a random sequence to be used for swaps
+     *
+     * @protected
+     * @returns Random 64-bit sequence number
+     */
     protected getRandomSequence(): BN {
         return new BN(randomBytes(8));
     }
 
+    /**
+     * Pre-fetches feeRate for a given swap
+     *
+     * @param amountData
+     * @param hash optional hash of the swap or null
+     * @param abortController
+     * @protected
+     * @returns Fee rate
+     */
     protected preFetchFeeRate(
         amountData: AmountData,
         hash: string | null,
@@ -32,6 +47,14 @@ export abstract class IFromBTCWrapper<
         });
     }
 
+    /**
+     * Pre-fetches intermediary's available SC on-chain liquidity
+     * @param amountData
+     * @param lp Intermediary
+     * @param abortController
+     * @protected
+     * @returns Intermediary's liquidity balance
+     */
     protected preFetchIntermediaryLiquidity(amountData: AmountData, lp: Intermediary, abortController: AbortController): Promise<BN | null> {
         return tryWithRetries(
             () => this.contract.getIntermediaryBalance(lp.address, amountData.token),
@@ -42,6 +65,16 @@ export abstract class IFromBTCWrapper<
         })
     }
 
+    /**
+     * Verifies whether the intermediary has enough available liquidity such that we can initiate the swap
+     *
+     * @param lp Intermediary
+     * @param amount Swap amount that we should receive
+     * @param token Swap token
+     * @param liquidityPromise pre-fetched liquidity promise as obtained from preFetchIntermediaryLiquidity()
+     * @protected
+     * @throws {IntermediaryError} if intermediary's liquidity is lower than what's required for the swap
+     */
     protected async verifyIntermediaryLiquidity(
         lp: Intermediary,
         amount: BN,

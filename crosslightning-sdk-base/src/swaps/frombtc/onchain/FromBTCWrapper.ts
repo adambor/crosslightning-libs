@@ -139,13 +139,13 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
         }
     }
 
-    protected async processEventInitialize(swap: FromBTCSwap<T>, event: InitializeEvent<T>): Promise<boolean> {
+    protected processEventInitialize(swap: FromBTCSwap<T>, event: InitializeEvent<T>): Promise<boolean> {
         if(swap.state===FromBTCSwapState.PR_CREATED) {
-            if(swap.data!=null && !swap.data.getSequence().eq(event.sequence)) return false;
+            if(swap.data!=null && !swap.data.getSequence().eq(event.sequence)) return Promise.resolve(false);
             swap.state = FromBTCSwapState.CLAIM_COMMITED;
-            return true;
+            return Promise.resolve(true);
         }
-        return false;
+        return Promise.resolve(false);
     }
 
     protected processEventClaim(swap: FromBTCSwap<T>, event: ClaimEvent<T>): Promise<boolean> {
@@ -164,11 +164,25 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
         return Promise.resolve(false);
     }
 
+    /**
+     * Returns the swap expiry, leaving enough time for the user to send a transaction and for it to confirm
+     *
+     * @param data Parsed swap data
+     */
     getOnchainSendTimeout(data: SwapData): BN {
         const tsDelta = (this.options.blocksTillTxConfirms + data.getConfirmations()) * this.options.bitcoinBlocktime * this.options.safetyFactor;
         return data.getExpiry().sub(new BN(tsDelta));
     }
 
+    /**
+     * Pre-fetches claimer (watchtower) bounty data for the swap. Doesn't throw, instead returns null and aborts the
+     *  provided abortController
+     *
+     * @param amountData
+     * @param options Options as passed to the swap creation function
+     * @param abortController
+     * @private
+     */
     private async preFetchClaimerBounty(
         amountData: AmountData,
         options: FromBTCOptions,
@@ -191,7 +205,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
             const [feePerBlock, btcRelayData, currentBtcBlock, claimFeeRate] = await Promise.all([
                 tryWithRetries(() => this.btcRelay.getFeePerBlock(), null, null, abortController.signal),
                 tryWithRetries(() => this.btcRelay.getTipData(), null, null, abortController.signal),
-                tryWithRetries(() => this.btcRpc.getTipHeight(), null, null, abortController.signal),
+                this.btcRpc.getTipHeight(),
                 tryWithRetries<BN>(
                     () => (this.contract as any).getRawClaimFee!=null ?
                         (this.contract as any).getRawClaimFee(dummySwapData) :
@@ -215,7 +229,15 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
         }
     }
 
-    private getTotalClaimerBounty(
+    /**
+     * Returns calculated claimer bounty calculated from the claimer bounty data as fetched from preFetchClaimerBounty()
+     *
+     * @param data Parsed swap data returned from the intermediary
+     * @param options Options as passed to the swap creation function
+     * @param claimerBounty Claimer bounty data as fetched from preFetchClaimerBounty() function
+     * @private
+     */
+    private getClaimerBounty(
         data: T,
         options: FromBTCOptions,
         claimerBounty: {
@@ -232,6 +254,19 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
         return claimerBounty.addFee.add(totalBlock.mul(claimerBounty.feePerBlock));
     }
 
+    /**
+     * Verifies response returned from intermediary
+     *
+     * @param resp Response as returned by the intermediary
+     * @param amountData
+     * @param lp Intermediary
+     * @param options Options as passed to the swap creation function
+     * @param data Parsed swap data returned by the intermediary
+     * @param sequence Required swap sequence
+     * @param claimerBounty Claimer bount data as returned from the preFetchClaimerBounty() pre-fetch promise
+     * @private
+     * @throws {IntermediaryError} in case the response is invalid
+     */
     private verifyReturnedData(
         resp: FromBTCResponseType,
         amountData: AmountData,
@@ -255,7 +290,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
 
         if(data.getConfirmations()>this.options.maxConfirmations) throw new IntermediaryError("Requires too many confirmations");
 
-        const totalClaimerBounty = this.getTotalClaimerBounty(data, options, claimerBounty);
+        const totalClaimerBounty = this.getClaimerBounty(data, options, claimerBounty);
 
         if(
             !data.getClaimerBounty().eq(totalClaimerBounty) ||

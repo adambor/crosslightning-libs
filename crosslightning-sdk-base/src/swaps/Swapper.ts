@@ -76,6 +76,7 @@ export class Swapper<
 
     readonly lnforgas: LnForGasWrapper<T>;
 
+    readonly prices: ISwapPrice;
     readonly intermediaryDiscovery: IntermediaryDiscovery<T>;
     readonly chainEvents: E;
     readonly swapContract: P;
@@ -114,6 +115,7 @@ export class Swapper<
                 throw new Error("Unsupported bitcoin network");
         }
 
+        this.prices = options.pricing;
         this.swapContract = swapContract;
         this.chainEvents = chainEvents;
         this.bitcoinRpc = new MempoolBitcoinRpc(this.mempoolApi);
@@ -711,6 +713,20 @@ export class Swapper<
      */
     getBalance(token: TokenAddress): Promise<BN> {
         return this.swapContract.getBalance(token, false);
+    }
+
+    /**
+     * Returns the address of the native currency of the chain
+     */
+    getNativeCurrency(): TokenAddressType {
+        return this.swapContract.getNativeCurrencyAddress();
+    }
+
+    /**
+     * Returns the smart chain on-chain address of the underlying provider
+     */
+    getAddress(): string {
+        return this.swapContract.getAddress();
     }
 
 }

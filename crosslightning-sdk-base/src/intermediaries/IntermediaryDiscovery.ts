@@ -4,10 +4,11 @@ import {SwapType} from "../swaps/SwapType";
 import * as BN from "bn.js";
 import {SwapData, TokenAddress} from "crosslightning-base";
 import {SwapContract} from "crosslightning-base/dist";
-import {AbortError} from "../errors/AbortError";
 import {EventEmitter} from "events";
 import {Buffer} from "buffer";
-import {fetchWithTimeout, tryWithRetries} from "../utils/Utils";
+import {httpGet, tryWithRetries} from "../utils/Utils";
+import {RequestError} from "../errors/RequestError";
+import {IntermediaryAPI} from "./IntermediaryAPI";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -30,12 +31,6 @@ type InfoHandlerResponseEnvelope = {
     services: {
         [key in SwapHandlerType]?: SwapHandlerInfoType
     }
-};
-
-type InfoHandlerResponse = {
-    address: string,
-    envelope: string,
-    signature: string
 };
 
 export type TokenBounds = {
@@ -126,31 +121,12 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
             return this.overrideNodeUrls;
         }
 
-        const response: Response = await tryWithRetries(() => {
-            return fetchWithTimeout(this.registryUrl, {
-                method: "GET",
-                headers: {'Content-Type': 'application/json'},
-                signal: abortSignal,
-                timeout: this.httpRequestTimeout
-            })
-        }, null, null, abortSignal);
-        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
+        const response = await tryWithRetries(
+            () => httpGet<{content: string}>(this.registryUrl, this.httpRequestTimeout, abortSignal),
+            null, e => e instanceof RequestError, abortSignal
+        );
 
-        if(response.status!==200) {
-            let resp: string;
-            try {
-                resp = await response.text();
-            } catch (e) {
-                throw new Error(response.statusText);
-            }
-            throw new Error(resp);
-        }
-
-        let jsonBody: any = await response.json();
-        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
-
-        const content = jsonBody.content.replace(new RegExp("\\n", "g"), "");
-        console.log(content);
+        const content = response.content.replace(new RegExp("\\n", "g"), "");
 
         const urls: string[] = JSON.parse(Buffer.from(content, "base64").toString());
 
@@ -164,40 +140,14 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
      * @param abortSignal
      */
     private async getNodeInfo(url: string, abortSignal?: AbortSignal) : Promise<{address: string, info: InfoHandlerResponseEnvelope}> {
-        const nonce = randomBytes(32).toString("hex");
+        const response = await IntermediaryAPI.getIntermediaryInfo(url);
 
-        const response: Response = await fetchWithTimeout(url+"/info", {
-            method: "POST",
-            body: JSON.stringify({
-                nonce
-            }),
-            headers: {'Content-Type': 'application/json'},
-            signal: abortSignal,
-            timeout: this.httpRequestTimeout
-        });
-        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
-
-        if(response.status!==200) {
-            let resp: string;
-            try {
-                resp = await response.text();
-            } catch (e) {
-                throw new Error(response.statusText);
-            }
-            throw new Error(resp);
-        }
-
-        let jsonBody: InfoHandlerResponse = await response.json();
-        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
-
-        const info: InfoHandlerResponseEnvelope = JSON.parse(jsonBody.envelope);
-        if(nonce!==info.nonce) throw new Error("Invalid response - nonce");
-        await this.swapContract.isValidDataSignature(Buffer.from(jsonBody.envelope), jsonBody.signature, jsonBody.address);
-        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
+        await this.swapContract.isValidDataSignature(Buffer.from(response.envelope), response.signature, response.address);
+        if(abortSignal!=null) abortSignal.throwIfAborted();
 
         return {
-            address: jsonBody.address,
-            info
+            address: response.address,
+            info: JSON.parse(response.envelope)
         };
     }
 

@@ -4,7 +4,6 @@ import * as BN from "bn.js";
 import {Buffer} from "buffer";
 import {ISwapWrapper, ISwapWrapperOptions} from "./ISwapWrapper";
 import {SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
-import {AbortError} from "../errors/AbortError";
 import {isPriceInfoType, PriceInfoType} from "../prices/abstract/ISwapPrice";
 import {timeoutPromise} from "../utils/Utils";
 
@@ -183,7 +182,7 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
             this.events.on("swapState", listener);
             if(abortSignal!=null) abortSignal.addEventListener("abort", () => {
                 this.events.removeListener("swapState", listener);
-                reject(abortSignal.reason || new AbortError());
+                reject(abortSignal.reason);
             });
         });
     }

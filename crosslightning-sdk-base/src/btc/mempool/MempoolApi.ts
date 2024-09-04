@@ -2,6 +2,7 @@ import {Transaction} from "bitcoinjs-lib";
 import * as BN from "bn.js";
 import {Buffer} from "buffer";
 import {fetchWithTimeout, tryWithRetries} from "../../utils/Utils";
+import {RequestError} from "../../errors/RequestError";
 
 export type TxVout = {
     scriptpubkey: string,
@@ -190,9 +191,9 @@ export class MempoolApi {
             try {
                 resp = await response.text();
             } catch (e) {
-                throw new Error(response.statusText);
+                throw new RequestError(response.statusText, response.status);
             }
-            throw new Error(resp);
+            throw RequestError.parse(resp, response.status);
         }
 
         if(responseType==="str") return await response.text() as any;

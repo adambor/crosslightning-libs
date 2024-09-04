@@ -44,7 +44,26 @@ export abstract class ISwapPrice {
      */
     protected abstract getPrice(token: TokenAddress, abortSignal?: AbortSignal): Promise<BN>;
 
-    public async isValidAmountSend(amountSats: BN,satsBaseFee: BN, feePPM: BN, paidToken: BN, token: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<PriceInfoType> {
+    /**
+     * Checks whether the swap amounts are valid given the current market rate for a given pair
+     *
+     * @param amountSats Amount of sats (BTC) to be received from the swap
+     * @param satsBaseFee Base fee in sats (BTC) as reported by the intermediary
+     * @param feePPM PPM fee rate as reported by the intermediary
+     * @param paidToken Amount of token to be paid to the swap
+     * @param token
+     * @param abortSignal
+     * @param preFetchedPrice Already pre-fetched price
+     */
+    public async isValidAmountSend(
+        amountSats: BN,
+        satsBaseFee: BN,
+        feePPM: BN,
+        paidToken: BN,
+        token: TokenAddress,
+        abortSignal?: AbortSignal,
+        preFetchedPrice?: BN
+    ): Promise<PriceInfoType> {
         const totalSats = amountSats.mul(new BN(1000000).add(feePPM)).div(new BN(1000000))
             .add(satsBaseFee);
         const totalUSats = totalSats.mul(new BN(1000000));
@@ -77,7 +96,26 @@ export abstract class ISwapPrice {
         };
     }
 
-    public async isValidAmountReceive(amountSats: BN,satsBaseFee: BN, feePPM: BN, receiveToken: BN, token: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<PriceInfoType> {
+    /**
+     * Checks whether the swap amounts are valid given the current market rate for a given pair
+     *
+     * @param amountSats Amount of sats (BTC) to be paid to the swap
+     * @param satsBaseFee Base fee in sats (BTC) as reported by the intermediary
+     * @param feePPM PPM fee rate as reported by the intermediary
+     * @param receiveToken Amount of token to be received from the swap
+     * @param token
+     * @param abortSignal
+     * @param preFetchedPrice Already pre-fetched price
+     */
+    public async isValidAmountReceive(
+        amountSats: BN,
+        satsBaseFee: BN,
+        feePPM: BN,
+        receiveToken: BN,
+        token: TokenAddress,
+        abortSignal?: AbortSignal,
+        preFetchedPrice?: BN
+    ): Promise<PriceInfoType> {
         const totalSats = amountSats.mul(new BN(1000000).sub(feePPM)).div(new BN(1000000))
             .sub(satsBaseFee);
         const totalUSats = totalSats.mul(new BN(1000000));
@@ -135,20 +173,12 @@ export abstract class ISwapPrice {
     }
 
     /**
-     * Returns amount of satoshis that are equivalent to        if(this.getDecimals(toToken.toString())==null) throw new Error("Token not found!");
-
-        const price = preFetchedPrice || await this.getPrice(toToken, abortSignal);
-
-        return fromAmount
-            .mul(new BN(10).pow(new BN(this.getDecimals(toToken.toString()))))
-            .mul(new BN(1000000)) //To usat
-            .div(price)
- {fromAmount} of {fromToken}
+     * Returns amount of satoshis that are equivalent to {fromAmount} of {fromToken}
      *
-     * @param fromAmount        Amount of the token
-     * @param fromToken         Token
+     * @param fromAmount Amount of the token
+     * @param fromToken Token
      * @param abortSignal
-     * @param preFetchedPrice
+     * @param preFetchedPrice Pre-fetched swap price if available
      */
     public async getToBtcSwapAmount(fromAmount: BN, fromToken: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<BN> {
         if(this.getDecimals(fromToken.toString())==null) throw new Error("Token not found");
@@ -161,6 +191,10 @@ export abstract class ISwapPrice {
             .div(new BN(10).pow(new BN(this.getDecimals(fromToken.toString()))));
     }
 
+    /**
+     * Returns whether the token should be ignored and pricing for it not calculated
+     * @param tokenAddress
+     */
     public shouldIgnore(tokenAddress: TokenAddress): boolean {
         const coin = this.getDecimals(tokenAddress.toString());
         if(coin==null) throw new Error("Token not found");

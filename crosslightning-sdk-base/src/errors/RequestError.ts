@@ -1,6 +1,9 @@
 import {OutOfBoundsError} from "./OutOfBoundsError";
 import * as BN from "bn.js";
 
+/**
+ * An error returned by the intermediary in a http response
+ */
 export class RequestError extends Error {
 
     httpCode: number;

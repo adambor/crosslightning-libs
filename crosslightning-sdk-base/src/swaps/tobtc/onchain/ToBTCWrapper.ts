@@ -9,7 +9,7 @@ import {
     SwapData
 } from "crosslightning-base";
 import { Intermediary } from "../../../intermediaries/Intermediary";
-import {ISwapPrice, PriceInfoType} from "../../../prices/abstract/ISwapPrice";
+import {ISwapPrice} from "../../../prices/abstract/ISwapPrice";
 import {EventEmitter} from "events";
 import {BitcoinRpc} from "crosslightning-base/dist";
 import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
@@ -43,15 +43,16 @@ export type ToBTCWrapperOptions = ISwapWrapperOptions & {
 export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap<T>, ToBTCWrapperOptions> {
     protected readonly swapDeserializer = ToBTCSwap;
 
+
     readonly btcRpc: BitcoinRpc<any>;
 
     /**
      * @param storage Storage interface for the current environment
-     * @param contract Underlying contract handling the swaps
+     * @param contract Chain specific swap contract
      * @param prices Swap pricing handler
-     * @param chainEvents On-chain event listener
-     * @param swapDataDeserializer Deserializer for SwapData
-     * @param btcRpc Bitcoin RPC
+     * @param chainEvents Smart chain on-chain event listener
+     * @param swapDataDeserializer Deserializer for chain specific SwapData
+     * @param btcRpc Bitcoin RPC api
      * @param options
      * @param events Instance to use for emitting events
      */
@@ -76,6 +77,11 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap
         this.btcRpc = btcRpc;
     }
 
+    /**
+     * Returns randomly generated random escrow nonce to be used for to BTC on-chain swaps
+     * @private
+     * @returns Escrow nonce
+     */
     private getRandomNonce(): BN {
         const firstPart = new BN(Math.floor((Date.now()/1000)) - 700000000);
 
@@ -87,6 +93,14 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap
         return new BN(nonceBuffer, "be");
     }
 
+    /**
+     * Converts bitcoin address to its corresponding output script
+     *
+     * @param addr Bitcoin address to get the output script for
+     * @private
+     * @returns Output script as Buffer
+     * @throws {UserError} if invalid address is specified
+     */
     private btcAddressToOutputScript(addr: string): Buffer {
         try {
             return address.toOutputScript(addr, this.options.bitcoinNetwork);
@@ -95,6 +109,19 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap
         }
     }
 
+    /**
+     * Verifies returned LP data
+     *
+     * @param resp LP's response
+     * @param amountData
+     * @param lp
+     * @param options Options as passed to the swap create function
+     * @param data LP's returned parsed swap data
+     * @param hash Payment hash of the swap
+     * @param nonce Escrow nonce that should be used for the swap
+     * @private
+     * @throws {IntermediaryError} if returned data are not correct
+     */
     private verifyReturnedData(
         resp: ToBTCResponseType,
         amountData: AmountData,
@@ -112,7 +139,14 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap
             if(!resp.amount.eq(amountData.amount)) throw new IntermediaryError("Invalid amount returned");
         }
 
-        const maxAllowedExpiryDelta: BN = new BN(options.confirmations+options.confirmationTarget+this.options.maxExpectedOnchainSendGracePeriodBlocks).mul(new BN(this.options.maxExpectedOnchainSendSafetyFactor)).mul(new BN(this.options.bitcoinBlocktime))
+        const maxAllowedBlockDelta: BN = new BN(
+            options.confirmations+
+            options.confirmationTarget+
+            this.options.maxExpectedOnchainSendGracePeriodBlocks
+        );
+        const maxAllowedExpiryDelta: BN = maxAllowedBlockDelta
+            .muln(this.options.maxExpectedOnchainSendSafetyFactor)
+            .muln(this.options.bitcoinBlocktime);
         const currentTimestamp: BN = new BN(Math.floor(Date.now()/1000));
         const maxAllowedExpiryTimestamp: BN = currentTimestamp.add(maxAllowedExpiryDelta);
 

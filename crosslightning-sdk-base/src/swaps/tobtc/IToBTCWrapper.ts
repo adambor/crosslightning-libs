@@ -16,6 +16,13 @@ export abstract class IToBTCWrapper<
     O extends ISwapWrapperOptions = ISwapWrapperOptions
 > extends ISwapWrapper<T, S, O> {
 
+    /**
+     * Checks the swap's state on-chain and compares it to its internal state, updates/changes it according to on-chain
+     *  data
+     *
+     * @param swap Swap to be checked
+     * @private
+     */
     private async syncStateFromChain(swap: S): Promise<boolean> {
         if(swap.state===ToBTCSwapState.CREATED || swap.state===ToBTCSwapState.COMMITED) {
             const res = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
@@ -45,6 +52,15 @@ export abstract class IToBTCWrapper<
         }
     }
 
+    /**
+     * Pre-fetches feeRate for a given swap
+     *
+     * @param amountData
+     * @param hash optional hash of the swap or null
+     * @param abortController
+     * @protected
+     * @returns Fee rate
+     */
     protected preFetchFeeRate(amountData: Omit<AmountData, "amount">, hash: string | null, abortController: AbortController): Promise<any | null> {
         return tryWithRetries(
             () => this.contract.getInitPayInFeeRate(this.contract.getAddress(), null, amountData.token, hash),

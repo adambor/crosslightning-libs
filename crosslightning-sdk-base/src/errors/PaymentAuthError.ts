@@ -1,4 +1,6 @@
-
+/**
+ * An error when the payment authorization returned by the intermediary is invalid
+ */
 export class PaymentAuthError extends Error {
 
     code: number;
