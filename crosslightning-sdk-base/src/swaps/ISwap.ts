@@ -129,7 +129,7 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
     protected async watchdogWaitTillCommited(abortSignal?: AbortSignal, interval: number = 5): Promise<void> {
         let status: SwapCommitStatus = SwapCommitStatus.NOT_COMMITED;
         while(status===SwapCommitStatus.NOT_COMMITED) {
-            await timeoutPromise(interval, abortSignal);
+            await timeoutPromise(interval*1000, abortSignal);
             try {
                 status = await this.wrapper.contract.getCommitStatus(this.data);
             } catch (e) {
@@ -151,7 +151,7 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
     > {
         let status: SwapCommitStatus = SwapCommitStatus.COMMITED;
         while(status===SwapCommitStatus.COMMITED || status===SwapCommitStatus.REFUNDABLE) {
-            await timeoutPromise(interval, abortSignal);
+            await timeoutPromise(interval*1000, abortSignal);
             try {
                 status = await this.wrapper.contract.getCommitStatus(this.data);
             } catch (e) {

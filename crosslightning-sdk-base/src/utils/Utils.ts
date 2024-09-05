@@ -89,21 +89,7 @@ export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
         }
         if (abortSignal != null && abortSignal.aborted) throw (abortSignal.reason || new Error("Aborted"));
         if (i !== retryPolicy.maxRetries - 1) {
-            await new Promise<void>((resolve, reject) => {
-                let timeout;
-                let abortHandler;
-
-                timeout = setTimeout(() => {
-                    if (abortSignal != null) abortSignal.removeEventListener("abort", abortHandler);
-                    resolve()
-                }, retryPolicy.exponential ? retryPolicy.delay * Math.pow(2, i) : retryPolicy.delay);
-                abortHandler = () => {
-                    clearTimeout(timeout);
-                    reject(abortSignal.reason);
-                };
-
-                if (abortSignal != null) abortSignal.addEventListener("abort", abortHandler);
-            });
+            await timeoutPromise(retryPolicy.exponential ? retryPolicy.delay * Math.pow(2, i) : retryPolicy.delay, abortSignal);
         }
     }
 
@@ -121,23 +107,8 @@ export function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit & {
     timeout?: number
 }): Promise<Response> {
     if (init == null) init = {};
-    if (init.timeout == null) return fetch(input, init);
+    if (init.timeout != null) init.signal = timeoutSignal(init.timeout, new Error("Network request timed out"), init.signal);
 
-    let timedOut = false;
-    const abortController = new AbortController();
-    const timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        abortController.abort(new Error("Network request timed out"))
-    }, init.timeout);
-    let originalSignal: AbortSignal;
-    if (init.signal != null) {
-        originalSignal = init.signal;
-        originalSignal.addEventListener("abort", () => {
-            clearTimeout(timeoutHandle);
-            abortController.abort(originalSignal.reason);
-        });
-    }
-    init.signal = abortController.signal;
     return fetch(input, init).catch(e => {
         if (e.name === "AbortError") {
             throw init.signal.reason;
@@ -211,16 +182,16 @@ export async function httpPost<T>(url: string, body: any, timeout?: number, abor
 /**
  * Returns a promise that resolves after given amount seconds
  *
- * @param timeoutSeconds how many seconds to wait for
+ * @param timeout how many milliseconds to wait for
  * @param abortSignal
  */
-export function timeoutPromise(timeoutSeconds: number, abortSignal?: AbortSignal) {
+export function timeoutPromise(timeout: number, abortSignal?: AbortSignal) {
     return new Promise((resolve, reject) => {
         if (abortSignal != null && abortSignal.aborted) {
             reject(abortSignal.reason);
             return;
         }
-        let timeoutHandle = setTimeout(resolve, timeoutSeconds * 1000);
+        let timeoutHandle = setTimeout(resolve, timeout);
         if (abortSignal != null) {
             abortSignal.addEventListener("abort", () => {
                 if (timeoutHandle != null) clearTimeout(timeoutHandle);
@@ -229,4 +200,24 @@ export function timeoutPromise(timeoutSeconds: number, abortSignal?: AbortSignal
             });
         }
     });
+}
+
+/**
+ * Returns an abort signal that aborts after a specified timeout in milliseconds
+ *
+ * @param timeout Milliseconds to wait
+ * @param abortReason Abort with this abort reason
+ * @param abortSignal Abort signal to extend
+ */
+export function timeoutSignal(timeout: number, abortReason?: any, abortSignal?: AbortSignal): AbortSignal {
+    if(timeout==null) return abortSignal;
+    const abortController = new AbortController();
+    const timeoutHandle = setTimeout(() => abortController.abort(abortReason || new Error("Timed out")), timeout);
+    if(abortSignal!=null) {
+        abortSignal.addEventListener("abort", () => {
+            clearTimeout(timeoutHandle);
+            abortController.abort(abortSignal.reason);
+        });
+    }
+    return abortController.signal;
 }

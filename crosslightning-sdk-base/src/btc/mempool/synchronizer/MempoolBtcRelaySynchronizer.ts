@@ -103,7 +103,7 @@ export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> imp
 
             if(retrievedHeaders.length>0) {
                 spvTipBlockHeight = retrievedHeaders[0].height;
-                await timeoutPromise(1);
+                await timeoutPromise(1000);
             }
         }
 

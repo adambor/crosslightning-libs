@@ -235,7 +235,7 @@ export class MempoolBitcoinRpc implements BitcoinRpcWithTxoListener<MempoolBitco
         }
 
         while(abortSignal==null || !abortSignal.aborted) {
-            await timeoutPromise(intervalSeconds || 5, abortSignal);
+            await timeoutPromise((intervalSeconds || 5)*1000, abortSignal);
 
             const result = await this.checkAddressTxos(address, txoHash);
             if(result==null) continue;

@@ -293,7 +293,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap<T, ToBTCSwapS
             if(resp.code===RefundAuthorizationResponseCodes.PAID && !await this._setPaymentResult(resp.data, true)) {
                 resp = {code: RefundAuthorizationResponseCodes.PENDING, msg: ""};
             }
-            if(resp.code===RefundAuthorizationResponseCodes.PENDING) await timeoutPromise(checkIntervalSeconds, abortSignal);
+            if(resp.code===RefundAuthorizationResponseCodes.PENDING) await timeoutPromise(checkIntervalSeconds*1000, abortSignal);
         }
         return resp;
     }

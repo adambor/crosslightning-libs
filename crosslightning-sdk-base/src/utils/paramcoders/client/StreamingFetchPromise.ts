@@ -3,6 +3,7 @@ import {RequestSchema, RequestSchemaResultPromise, verifyField} from "../SchemaV
 import {ParamDecoder} from "../ParamDecoder";
 import {Buffer} from "buffer";
 import {RequestError} from "../../../errors/RequestError";
+import {timeoutSignal} from "../../Utils";
 
 export type RequestBody = {
     [key: string]: Promise<any> | any
@@ -52,23 +53,7 @@ export function streamingFetchWithTimeoutPromise<T extends RequestSchema>(
     signal?: AbortSignal,
     streamRequest?: boolean
 ): Promise<RequestSchemaResultPromise<T>> {
-    if(timeout==null) return streamingFetchPromise<T>(url, body, schema, signal, streamRequest);
-
-    const abortController = new AbortController();
-    const timeoutHandle = setTimeout(() => {
-        abortController.abort(new Error("Network request timed out"))
-    }, timeout);
-    let originalSignal: AbortSignal;
-    if(signal!=null) {
-        originalSignal = signal;
-        originalSignal.addEventListener("abort", () => {
-            clearTimeout(timeoutHandle);
-            abortController.abort(originalSignal.reason);
-        });
-    }
-
-    signal = abortController.signal;
-
+    if(timeout!=null) signal = timeoutSignal(timeout, new Error("Network request timed out"), signal);
     return streamingFetchPromise<T>(url, body, schema, signal, streamRequest);
 }
 

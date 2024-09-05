@@ -192,7 +192,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCLN
         while(!abortController.signal.aborted && resp.code===PaymentAuthorizationResponseCodes.PENDING) {
             resp = await IntermediaryAPI.getPaymentAuthorization(this.url, this.data.getHash());
             if(resp.code!==PaymentAuthorizationResponseCodes.PENDING)
-                await timeoutPromise(checkIntervalSeconds, abortController.signal);
+                await timeoutPromise(checkIntervalSeconds*1000, abortController.signal);
         }
         this.lnurlFailSignal.signal.removeEventListener("abort", lnurlFailListener);
         abortController.signal.throwIfAborted();
