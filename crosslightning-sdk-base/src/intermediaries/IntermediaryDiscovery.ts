@@ -123,7 +123,7 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
 
         const response = await tryWithRetries(
             () => httpGet<{content: string}>(this.registryUrl, this.httpRequestTimeout, abortSignal),
-            null, e => e instanceof RequestError, abortSignal
+            null, RequestError, abortSignal
         );
 
         const content = response.content.replace(new RegExp("\\n", "g"), "");

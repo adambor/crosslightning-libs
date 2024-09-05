@@ -32,7 +32,10 @@ export type FromBTCLNOptions = {
     descriptionHash?: Buffer
 };
 
-export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromBTCLNSwap<T>> {
+export class FromBTCLNWrapper<
+    T extends SwapData,
+    TXType = any
+> extends IFromBTCWrapper<T, FromBTCLNSwap<T, TXType>> {
     protected readonly swapDeserializer = FromBTCLNSwap;
 
     protected readonly lnApi: LightningNetworkApi;
@@ -48,20 +51,20 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, Fro
      * @param events Instance to use for emitting events
      */
     constructor(
-        storage: IStorageManager<FromBTCLNSwap<T>>,
+        storage: IStorageManager<FromBTCLNSwap<T, TXType>>,
         contract: SwapContract<T, any, any, any>,
         chainEvents: ChainEvents<T>,
         prices: ISwapPrice,
         swapDataDeserializer: new (data: any) => T,
         lnApi: LightningNetworkApi,
         options: ISwapWrapperOptions,
-        events?: EventEmitter<{swapState: [FromBTCLNSwap<T>]}>
+        events?: EventEmitter<{swapState: [FromBTCLNSwap<T, TXType>]}>
     ) {
         super(storage, contract, chainEvents, prices, swapDataDeserializer, options, events);
         this.lnApi = lnApi;
     }
 
-    protected async checkPastSwap(swap: FromBTCLNSwap<T>): Promise<boolean> {
+    protected async checkPastSwap(swap: FromBTCLNSwap<T, TXType>): Promise<boolean> {
         if(swap.state===FromBTCLNSwapState.PR_CREATED) {
             if(swap.getTimeoutTime()<Date.now()) {
                 swap.state = FromBTCLNSwapState.QUOTE_EXPIRED;
@@ -119,7 +122,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, Fro
         }
     }
 
-    protected async processEventInitialize(swap: FromBTCLNSwap<T>, event: InitializeEvent<T>): Promise<boolean> {
+    protected async processEventInitialize(swap: FromBTCLNSwap<T, TXType>, event: InitializeEvent<T>): Promise<boolean> {
         if(swap.state===FromBTCLNSwapState.PR_PAID) {
             const swapData = await event.swapData();
             if(swap.data!=null && !swap.data.equals(swapData)) return false;
@@ -129,7 +132,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, Fro
         }
     }
 
-    protected processEventClaim(swap: FromBTCLNSwap<T>, event: ClaimEvent<T>): Promise<boolean> {
+    protected processEventClaim(swap: FromBTCLNSwap<T, TXType>, event: ClaimEvent<T>): Promise<boolean> {
         if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
             swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
             return Promise.resolve(true);
@@ -137,7 +140,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, Fro
         return Promise.resolve(false);
     }
 
-    protected processEventRefund(swap: FromBTCLNSwap<T>, event: RefundEvent<T>): Promise<boolean> {
+    protected processEventRefund(swap: FromBTCLNSwap<T, TXType>, event: RefundEvent<T>): Promise<boolean> {
         if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
             swap.state = FromBTCLNSwapState.FAILED;
             return Promise.resolve(true);
@@ -262,7 +265,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, Fro
             feeRatePromise?: Promise<any>
         }
     ): {
-        quote: Promise<FromBTCLNSwap<T>>,
+        quote: Promise<FromBTCLNSwap<T, TXType>>,
         intermediary: Intermediary
     }[] {
         if(options==null) options = {};
@@ -285,7 +288,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, Fro
 
                     const liquidityPromise: Promise<BN> = this.preFetchIntermediaryLiquidity(amountData, lp, abortController);
 
-                    const {lnCapacityPromise, resp} = await tryWithRetries(async() => {
+                    const {lnCapacityPromise, resp} = await tryWithRetries(async(retryCount: number) => {
                         const {lnPublicKey, response} = IntermediaryAPI.initFromBTCLN(lp.url, {
                             paymentHash,
                             amount: amountData.amount,
@@ -295,13 +298,13 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, Fro
                             exactOut: !amountData.exactIn,
                             feeRate: preFetches.feeRatePromise,
                             additionalParams
-                        }, this.options.postRequestTimeout, abortController.signal);
+                        }, this.options.postRequestTimeout, abortController.signal, retryCount>0 ? false : null);
 
                         return {
                             lnCapacityPromise: this.preFetchLnCapacity(lnPublicKey),
                             resp: await response
                         };
-                    }, null, e => e instanceof RequestError, abortController.signal);
+                    }, null, RequestError, abortController.signal);
 
                     const decodedPr = bolt11Decode(resp.pr);
                     const amountIn = new BN(decodedPr.millisatoshis).add(new BN(999)).div(new BN(1000));
@@ -317,7 +320,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, Fro
                             this.verifyLnNodeCapacity(lp, decodedPr, amountIn, lnCapacityPromise, abortController.signal)
                         ]);
 
-                        return new FromBTCLNSwap<T>(this, {
+                        return new FromBTCLNSwap<T, TXType>(this, {
                             pricingInfo,
                             url: lp.url,
                             expiry: decodedPr.timeExpireDate*1000,
@@ -384,7 +387,7 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T, Fro
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
     ): Promise<{
-        quote: Promise<FromBTCLNSwap<T>>,
+        quote: Promise<FromBTCLNSwap<T, TXType>>,
         intermediary: Intermediary
     }[]> {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");

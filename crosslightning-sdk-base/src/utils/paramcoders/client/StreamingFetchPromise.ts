@@ -1,9 +1,8 @@
-import {ParamEncoder} from "../ParamEncoder";
 import {RequestSchema, RequestSchemaResultPromise, verifyField} from "../SchemaVerifier";
-import {ParamDecoder} from "../ParamDecoder";
-import {Buffer} from "buffer";
 import {RequestError} from "../../../errors/RequestError";
-import {timeoutSignal} from "../../Utils";
+import {extendAbortController, objectMap, timeoutSignal} from "../../Utils";
+import {StreamParamEncoder} from "./StreamParamEncoder";
+import {ResponseParamDecoder} from "./ResponseParamDecoder";
 
 export type RequestBody = {
     [key: string]: Promise<any> | any
@@ -31,21 +30,18 @@ const supportsRequestStreams: boolean = (() => {
     }
 })();
 
-
-async function readResponse(reader: ReadableStreamDefaultReader, inputStream: ParamDecoder) {
-    while(true) {
-        const readResp = await reader.read().catch(e => {
-            console.error(e);
-            return null;
-        });
-        if(readResp==null || readResp.done) {
-            inputStream.onEnd();
-            break;
-        }
-        inputStream.onData(Buffer.from(readResp.value));
-    }
-}
-export function streamingFetchWithTimeoutPromise<T extends RequestSchema>(
+/**
+ * Sends a POST request to the specified URL in a streaming request/response mode
+ *
+ * @param url URL to send the request to
+ * @param body An object containing properties that should be sent to the server, can be Promise or any
+ * @param schema Schema of the response that should be received from the server
+ * @param timeout Timeout in millseconds for the request to succeed & all its response properties to resolve
+ * @param signal Abort signal
+ * @param streamRequest Whether the request should be streamed or not
+ * @throws {RequestError} When the response code is not 200
+ */
+export async function streamingFetchPromise<T extends RequestSchema>(
     url: string,
     body: RequestBody,
     schema: T,
@@ -53,29 +49,18 @@ export function streamingFetchWithTimeoutPromise<T extends RequestSchema>(
     signal?: AbortSignal,
     streamRequest?: boolean
 ): Promise<RequestSchemaResultPromise<T>> {
-    if(timeout!=null) signal = timeoutSignal(timeout, new Error("Network request timed out"), signal);
-    return streamingFetchPromise<T>(url, body, schema, signal, streamRequest);
-}
-
-export async function streamingFetchPromise<T extends RequestSchema>(
-    url: string,
-    body: RequestBody,
-    schema: T,
-    signal?: AbortSignal,
-    streamRequest?: boolean
-): Promise<RequestSchemaResultPromise<T>> {
     if(streamRequest==null) streamRequest = supportsRequestStreams;
+    if(timeout!=null) signal = timeoutSignal(timeout, new Error("Network request timed out"), signal);
 
     const init: RequestInit = {
-        method: "POST"
+        method: "POST",
+        headers: {}
     };
 
+    const immediateValues: any = {};
+    const promises: Promise<any>[] = [];
+
     if(!streamRequest) {
-
-        const immediateValues: any = {};
-
-        const promises: Promise<any>[] = [];
-
         for(let key in body) {
             if(body[key] instanceof Promise) {
                 promises.push(body[key].then((val) => {
@@ -96,20 +81,11 @@ export async function streamingFetchPromise<T extends RequestSchema>(
         if(signal!=null) signal.throwIfAborted();
 
         init.body = JSON.stringify(immediateValues);
-        if(init.headers==null) init.headers = {};
         init.headers['content-type'] = "application/json";
-
     } else {
+        const outputStream = new StreamParamEncoder();
 
         let hasPromiseInBody = false;
-        const immediateValues: any = {};
-
-        let stream = new TransformStream();
-        let writeStream = stream.writable.getWriter();
-        const outputStream = new ParamEncoder(writeStream.write.bind(writeStream), writeStream.close.bind(writeStream));
-
-        const promises: Promise<any>[] = [];
-
         for(let key in body) {
             if(body[key] instanceof Promise) {
                 promises.push(body[key].then((val) => {
@@ -124,36 +100,28 @@ export async function streamingFetchPromise<T extends RequestSchema>(
         }
 
         if(hasPromiseInBody) {
-            init.body = stream.readable;
-            if(init.headers==null) init.headers = {};
+            init.body = outputStream.getReadableStream();
             init.headers['content-type'] = "application/x-multiple-json";
             (init as any).duplex = "half";
 
             promises.push(outputStream.writeParams(immediateValues));
 
-            const abortController = new AbortController();
-            if(signal!=null) {
-                signal.addEventListener("abort", () => abortController.abort(signal.reason));
-            }
+            const abortController = extendAbortController(signal);
+            signal = abortController.signal;
+
             Promise.all(promises).then(() => outputStream.end()).catch(e => {
                 e._inputPromiseError = true;
                 abortController.abort(e);
             });
-            signal = abortController.signal;
 
-            signal.addEventListener("abort", () => {
-                if(!writeStream.closed) writeStream.close();
-            });
+            signal.addEventListener("abort", () => outputStream.end());
         } else {
             init.body = JSON.stringify(immediateValues);
-            if(init.headers==null) init.headers = {};
             init.headers['content-type'] = "application/json";
         }
-
     }
 
     if(signal!=null) init.signal = signal;
-    if(init.headers==null) init.headers = {};
     init.headers['accept'] = "application/x-multiple-json";
 
     const resp = await fetch(url, init).catch(e => {
@@ -175,63 +143,25 @@ export async function streamingFetchPromise<T extends RequestSchema>(
         throw new RequestError(respTxt, resp.status);
     }
 
-    const responseBody: any = {};
-
     if(resp.headers.get("content-type")!=="application/x-multiple-json") {
         const respBody = await resp.json();
 
-        for(let key in schema) {
+        return objectMap<any, Promise<any>>(schema, (schemaValue, key) => {
             const value = respBody[key];
 
             if(value===undefined) {
-                responseBody[key] = Promise.reject(new Error("EOF before field seen!"));
+                return Promise.reject(new Error("EOF before field seen!"));
             } else {
-                const result = verifyField(schema[key], value);
-                if(value===undefined) {
-                    responseBody[key] = Promise.reject(new Error("Invalid field value"));
-                } else {
-                    responseBody[key] = Promise.resolve(result);
-                }
-            }
-        }
-    } else {
-        const inputStream = new ParamDecoder();
-
-        for(let key in schema) {
-            responseBody[key] = inputStream.getParam(key).then(value => {
-                const result = verifyField(schema[key], value);
-                if(value===undefined) {
+                const result = verifyField(schemaValue, value);
+                if(result===undefined) {
                     return Promise.reject(new Error("Invalid field value"));
                 } else {
-                    return result;
+                    return Promise.resolve(result);
                 }
-            });
-        }
-
-        try {
-            //Read from stream
-            const reader = resp.body.getReader();
-
-            if(init.signal!=null) init.signal.addEventListener("abort", () => {
-                if(!reader.closed) reader.cancel(init.signal.reason);
-            });
-
-            readResponse(reader, inputStream);
-        } catch (e) {
-            //Read in one piece
-            resp.arrayBuffer().then(respBuffer => {
-                if(init.signal!=null && init.signal.aborted) {
-                    inputStream.onError(init.signal.reason);
-                    return;
-                }
-                inputStream.onData(Buffer.from(respBuffer));
-                inputStream.onEnd();
-            }).catch(e => {
-                inputStream.onError(e);
-            });
-        }
-
+            }
+        }) as any;
+    } else {
+        const decoder = new ResponseParamDecoder<T>(resp, schema, init.signal);
+        return decoder.getParams();
     }
-
-    return responseBody;
 }

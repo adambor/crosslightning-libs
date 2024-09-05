@@ -43,18 +43,18 @@ export type ToBTCLNWrapperOptions = ISwapWrapperOptions & {
     paymentTimeoutSeconds?: number
 };
 
-export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCLNSwap<T>, ToBTCLNWrapperOptions> {
+export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrapper<T, ToBTCLNSwap<T, TXType>, ToBTCLNWrapperOptions, TXType> {
 
     protected readonly swapDeserializer = ToBTCLNSwap;
 
     constructor(
-        storage: IStorageManager<ToBTCLNSwap<T>>,
+        storage: IStorageManager<ToBTCLNSwap<T, TXType>>,
         contract: SwapContract<T, any, any, any>,
         chainEvents: ChainEvents<T>,
         prices: ISwapPrice,
         swapDataDeserializer: new (data: any) => T,
         options?: ToBTCLNWrapperOptions,
-        events?: EventEmitter<{swapState: [ToBTCLNSwap<T>]}>
+        events?: EventEmitter<{swapState: [ToBTCLNSwap<T, TXType>]}>
     ) {
         if(options==null) options = {};
         options.paymentTimeoutSeconds ??= 3*24*60*60;
@@ -172,7 +172,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCLN
         preFetches.reputationPromise ??= this.preFetchIntermediaryReputation(amountData, lp, abortController);
 
         try {
-            const {signDataPromise, resp} = await tryWithRetries(async() => {
+            const {signDataPromise, resp} = await tryWithRetries(async(retryCount: number) => {
                 const {signDataPrefetch, response} = IntermediaryAPI.initToBTCLN(lp.url, {
                     offerer: this.contract.getAddress(),
                     pr,
@@ -181,7 +181,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCLN
                     token: amountData.token,
                     feeRate: preFetches.feeRatePromise,
                     additionalParams
-                }, this.options.postRequestTimeout, abortController.signal);
+                }, this.options.postRequestTimeout, abortController.signal, retryCount>0 ? false : null);
 
                 return {
                     signDataPromise: this.preFetchSignData(signDataPrefetch),
@@ -212,7 +212,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCLN
 
             lp.reputation[amountData.token.toString()] = reputation;
 
-            return new ToBTCLNSwap<T>(this, {
+            return new ToBTCLNSwap<T, TXType>(this, {
                 pricingInfo,
                 url: lp.url,
                 expiry: signatureExpiry,
@@ -257,7 +257,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCLN
             payStatusPromise: Promise<void>
         }
     ): {
-        quote: Promise<ToBTCLNSwap<T>>,
+        quote: Promise<ToBTCLNSwap<T, TXType>>,
         intermediary: Intermediary
     }[] {
         options ??= {};
@@ -331,7 +331,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCLN
         const reputationPromise: Promise<IntermediaryReputationType> = this.preFetchIntermediaryReputation(amountData, lp, abortController);
 
         try {
-            const {signDataPromise, prepareResp} = await tryWithRetries(async() => {
+            const {signDataPromise, prepareResp} = await tryWithRetries(async(retryCount: number) => {
                 const {signDataPrefetch, response} = IntermediaryAPI.prepareToBTCLNExactIn(lp.url, {
                     token: amountData.token,
                     offerer: this.contract.getAddress(),
@@ -340,7 +340,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCLN
                     maxFee: await options.maxFee,
                     expiryTimestamp: options.expiryTimestamp,
                     additionalParams
-                }, this.options.postRequestTimeout, abortController.signal);
+                }, this.options.postRequestTimeout, abortController.signal, retryCount>0 ? false : null);
 
                 return {
                     signDataPromise: this.preFetchSignData(signDataPrefetch),
@@ -366,13 +366,13 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCLN
             const payStatusPromise = this.preFetchPayStatus(parsedInvoice, abortController);
 
             const resp = await tryWithRetries(
-                () => IntermediaryAPI.initToBTCLNExactIn(lp.url, {
+                (retryCount: number) => IntermediaryAPI.initToBTCLNExactIn(lp.url, {
                     pr: invoice,
                     reqId: resp.reqId,
                     feeRate: preFetches.feeRatePromise,
                     additionalParams
-                }, this.options.postRequestTimeout, abortController.signal),
-                null, e => e instanceof RequestError, abortController.signal
+                }, this.options.postRequestTimeout, abortController.signal, retryCount>0 ? false : null),
+                null, RequestError, abortController.signal
             );
 
             const totalFee: BN = resp.swapFee.add(resp.maxFee);
@@ -397,7 +397,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCLN
 
             lp.reputation[amountData.token.toString()] = reputation;
 
-            return new ToBTCLNSwap<T>(this, {
+            return new ToBTCLNSwap<T, TXType>(this, {
                 pricingInfo,
                 url: lp.url,
                 expiry: signatureExpiry,
@@ -438,7 +438,7 @@ export class ToBTCLNWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCLN
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
     ): Promise<{
-        quote: Promise<ToBTCLNSwap<T>>,
+        quote: Promise<ToBTCLNSwap<T, TXType>>,
         intermediary: Intermediary
     }[]> {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");

@@ -38,7 +38,10 @@ export type FromBTCWrapperOptions = ISwapWrapperOptions & {
     bitcoinBlocktime?: number
 };
 
-export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromBTCSwap<T>, FromBTCWrapperOptions> {
+export class FromBTCWrapper<
+    T extends SwapData,
+    TXType = any
+> extends IFromBTCWrapper<T, FromBTCSwap<T, TXType>, FromBTCWrapperOptions, TXType> {
     protected readonly swapDeserializer = FromBTCSwap;
 
     readonly synchronizer: RelaySynchronizer<any,any,any>;
@@ -58,7 +61,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
      * @param events Instance to use for emitting events
      */
     constructor(
-        storage: IStorageManager<FromBTCSwap<T>>,
+        storage: IStorageManager<FromBTCSwap<T, TXType>>,
         contract: SwapContract<T, any, any, any>,
         chainEvents: ChainEvents<T>,
         prices: ISwapPrice,
@@ -67,7 +70,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
         synchronizer: RelaySynchronizer<any,any,any>,
         btcRpc: BitcoinRpcWithTxoListener<any>,
         options?: FromBTCWrapperOptions,
-        events?: EventEmitter<{swapState: [FromBTCSwap<T>]}>
+        events?: EventEmitter<{swapState: [FromBTCSwap<T, TXType>]}>
     ) {
         if(options==null) options = {};
         options.bitcoinNetwork = options.bitcoinNetwork || networks.testnet;
@@ -82,7 +85,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
         this.btcRpc = btcRpc;
     }
 
-    protected async checkPastSwap(swap: FromBTCSwap<T>): Promise<boolean> {
+    protected async checkPastSwap(swap: FromBTCSwap<T, TXType>): Promise<boolean> {
         if(swap.state===FromBTCSwapState.PR_CREATED) {
             try {
                 const status = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
@@ -139,7 +142,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
         }
     }
 
-    protected processEventInitialize(swap: FromBTCSwap<T>, event: InitializeEvent<T>): Promise<boolean> {
+    protected processEventInitialize(swap: FromBTCSwap<T, TXType>, event: InitializeEvent<T>): Promise<boolean> {
         if(swap.state===FromBTCSwapState.PR_CREATED) {
             if(swap.data!=null && !swap.data.getSequence().eq(event.sequence)) return Promise.resolve(false);
             swap.state = FromBTCSwapState.CLAIM_COMMITED;
@@ -148,7 +151,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
         return Promise.resolve(false);
     }
 
-    protected processEventClaim(swap: FromBTCSwap<T>, event: ClaimEvent<T>): Promise<boolean> {
+    protected processEventClaim(swap: FromBTCSwap<T, TXType>, event: ClaimEvent<T>): Promise<boolean> {
         if(swap.state===FromBTCSwapState.PR_CREATED || swap.state===FromBTCSwapState.CLAIM_COMMITED || swap.state===FromBTCSwapState.BTC_TX_CONFIRMED) {
             swap.state = FromBTCSwapState.CLAIM_CLAIMED;
             return Promise.resolve(true);
@@ -156,7 +159,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
         return Promise.resolve(false);
     }
 
-    protected processEventRefund(swap: FromBTCSwap<T>, event: RefundEvent<T>): Promise<boolean> {
+    protected processEventRefund(swap: FromBTCSwap<T, TXType>, event: RefundEvent<T>): Promise<boolean> {
         if(swap.state===FromBTCSwapState.PR_CREATED || swap.state===FromBTCSwapState.CLAIM_COMMITED || swap.state===FromBTCSwapState.BTC_TX_CONFIRMED) {
             swap.state = FromBTCSwapState.FAILED;
             return Promise.resolve(true);
@@ -335,7 +338,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
     ): {
-        quote: Promise<FromBTCSwap<T>>,
+        quote: Promise<FromBTCSwap<T, TXType>>,
         intermediary: Intermediary
     }[] {
         if(options==null) options = {};
@@ -357,7 +360,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
                     const liquidityPromise: Promise<BN> = this.preFetchIntermediaryLiquidity(amountData, lp, abortController);
 
                     try {
-                        const {signDataPromise, resp} = await tryWithRetries(async() => {
+                        const {signDataPromise, resp} = await tryWithRetries(async(retryCount: number) => {
                             const {signDataPrefetch, response} = IntermediaryAPI.initFromBTC(lp.url, {
                                 claimer: this.contract.getAddress(),
                                 amount: amountData.amount,
@@ -369,7 +372,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
                                 claimerBounty: claimerBountyPrefetchPromise,
                                 feeRate: feeRatePromise,
                                 additionalParams
-                            }, this.options.postRequestTimeout, abortController.signal);
+                            }, this.options.postRequestTimeout, abortController.signal, retryCount>0 ? false : null);
 
                             return {
                                 signDataPromise: this.preFetchSignData(signDataPrefetch),
@@ -391,7 +394,7 @@ export class FromBTCWrapper<T extends SwapData> extends IFromBTCWrapper<T, FromB
                             this.verifyIntermediaryLiquidity(lp, data.getAmount(), data.getToken(), liquidityPromise),
                         ]);
 
-                        return new FromBTCSwap<T>(this, {
+                        return new FromBTCSwap<T, TXType>(this, {
                             pricingInfo,
                             url: lp.url,
                             expiry: signatureExpiry,

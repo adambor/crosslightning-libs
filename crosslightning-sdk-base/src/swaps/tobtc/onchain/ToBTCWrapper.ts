@@ -40,9 +40,8 @@ export type ToBTCWrapperOptions = ISwapWrapperOptions & {
     maxExpectedOnchainSendGracePeriodBlocks?: number,
 };
 
-export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap<T>, ToBTCWrapperOptions> {
+export class ToBTCWrapper<T extends SwapData, TXType = any> extends IToBTCWrapper<T, ToBTCSwap<T, TXType>, ToBTCWrapperOptions, TXType> {
     protected readonly swapDeserializer = ToBTCSwap;
-
 
     readonly btcRpc: BitcoinRpc<any>;
 
@@ -57,14 +56,14 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap
      * @param events Instance to use for emitting events
      */
     constructor(
-        storage: IStorageManager<ToBTCSwap<T>>,
+        storage: IStorageManager<ToBTCSwap<T, TXType>>,
         contract: SwapContract<T, any, any, any>,
         chainEvents: ChainEvents<T>,
         prices: ISwapPrice,
         swapDataDeserializer: new (data: any) => T,
         btcRpc: BitcoinRpc<any>,
         options?: ToBTCWrapperOptions,
-        events?: EventEmitter<{swapState: [ToBTCSwap<T>]}>
+        events?: EventEmitter<{swapState: [ToBTCSwap<T, TXType>]}>
     ) {
         if(options==null) options = {};
         options.bitcoinNetwork = options.bitcoinNetwork || networks.testnet;
@@ -187,7 +186,7 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
     ): {
-        quote: Promise<ToBTCSwap<T>>,
+        quote: Promise<ToBTCSwap<T, TXType>>,
         intermediary: Intermediary
     }[] {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
@@ -210,7 +209,7 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap
                     const reputationPromise: Promise<IntermediaryReputationType> = this.preFetchIntermediaryReputation(amountData, lp, abortController);
 
                     try {
-                        const {signDataPromise, resp} = await tryWithRetries(async() => {
+                        const {signDataPromise, resp} = await tryWithRetries(async(retryCount) => {
                             const {signDataPrefetch, response} = IntermediaryAPI.initToBTC(lp.url, {
                                 btcAddress: address,
                                 amount: amountData.amount,
@@ -222,13 +221,13 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap
                                 exactIn: amountData.exactIn,
                                 feeRate: feeRatePromise,
                                 additionalParams
-                            }, this.options.postRequestTimeout, abortController.signal);
+                            }, this.options.postRequestTimeout, abortController.signal, retryCount>0 ? false : null);
 
                             return {
                                 signDataPromise: this.preFetchSignData(signDataPrefetch),
                                 resp: await response
                             };
-                        }, null, e => e instanceof RequestError, abortController.signal);
+                        }, null, RequestError, abortController.signal);
 
                         let hash: string = amountData.exactIn ?
                             this.contract.getHashForOnchain(outputScript, resp.amount, nonce).toString("hex") :
@@ -249,7 +248,7 @@ export class ToBTCWrapper<T extends SwapData> extends IToBTCWrapper<T, ToBTCSwap
 
                         lp.reputation[amountData.token.toString()] = reputation;
 
-                        return new ToBTCSwap<T>(this, {
+                        return new ToBTCSwap<T, TXType>(this, {
                             pricingInfo,
                             url: lp.url,
                             expiry: signatureExpiry,

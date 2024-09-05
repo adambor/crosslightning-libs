@@ -5,7 +5,7 @@ import {
     RequestSchemaResult,
     verifySchema
 } from "../utils/paramcoders/SchemaVerifier";
-import {streamingFetchWithTimeoutPromise} from "../utils/paramcoders/client/StreamingFetchPromise";
+import {streamingFetchPromise} from "../utils/paramcoders/client/StreamingFetchPromise";
 import {httpGet, httpPost, tryWithRetries} from "../utils/Utils";
 import randomBytes from "randombytes";
 
@@ -206,6 +206,7 @@ export type FromBTCLNInit = BaseFromBTCSwapInit & {
     descriptionHash?: Buffer
 }
 
+//TODO: Don't use streamRequest=true always, just set it to false when the prior request fails
 export class IntermediaryAPI {
 
     static async getIntermediaryInfo(
@@ -238,7 +239,7 @@ export class IntermediaryAPI {
                 "&sequence=" + encodeURIComponent(sequence.toString(10)),
             timeout,
             abortSignal
-        ), null, e => e instanceof RequestError, abortSignal);
+        ), null, RequestError, abortSignal);
     }
 
     static async getPaymentAuthorization(
@@ -252,14 +253,14 @@ export class IntermediaryAPI {
                 "?paymentHash="+encodeURIComponent(paymentHash),
             timeout,
             abortSignal
-        ), null, e => e instanceof RequestError, abortSignal);
+        ), null, RequestError, abortSignal);
     }
 
-    static initToBTC(url: string, init: ToBTCInit, timeout?: number, abortSignal?: AbortSignal): {
+    static initToBTC(url: string, init: ToBTCInit, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): {
         signDataPrefetch: Promise<any>,
         response: Promise<ToBTCResponseType>
     } {
-        const responseBodyPromise = streamingFetchWithTimeoutPromise(url+"/tobtc/payInvoice", {
+        const responseBodyPromise = streamingFetchPromise(url+"/tobtc/payInvoice", {
             ...init.additionalParams,
             address: init.btcAddress,
             amount: init.amount.toString(10),
@@ -275,7 +276,7 @@ export class IntermediaryAPI {
             msg: FieldTypeEnum.String,
             data: FieldTypeEnum.AnyOptional,
             signDataPrefetch: FieldTypeEnum.AnyOptional
-        }, timeout, abortSignal, true);
+        }, timeout, abortSignal, streamRequest);
 
         return {
             signDataPrefetch: responseBodyPromise.then(responseBody => responseBody.signDataPrefetch),
@@ -292,11 +293,11 @@ export class IntermediaryAPI {
         };
     }
 
-    static initFromBTC(url: string, init: FromBTCInit, timeout?: number, abortSignal?: AbortSignal): {
+    static initFromBTC(url: string, init: FromBTCInit, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): {
         signDataPrefetch: Promise<any>,
         response: Promise<FromBTCResponseType>
     } {
-        const responseBodyPromise = streamingFetchWithTimeoutPromise(url+"/frombtc/getAddress", {
+        const responseBodyPromise = streamingFetchPromise(url+"/frombtc/getAddress", {
             ...init.additionalParams,
             address: init.claimer,
             amount: init.amount.toString(10),
@@ -320,7 +321,7 @@ export class IntermediaryAPI {
             msg: FieldTypeEnum.String,
             data: FieldTypeEnum.AnyOptional,
             signDataPrefetch: FieldTypeEnum.AnyOptional
-        }, timeout, abortSignal, true);
+        }, timeout, abortSignal, streamRequest);
 
         return {
             signDataPrefetch: responseBodyPromise.then(responseBody => responseBody.signDataPrefetch),
@@ -337,11 +338,11 @@ export class IntermediaryAPI {
         };
     }
 
-    static initFromBTCLN(url: string, init: FromBTCLNInit, timeout?: number, abortSignal?: AbortSignal): {
+    static initFromBTCLN(url: string, init: FromBTCLNInit, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): {
         lnPublicKey: Promise<string>,
         response: Promise<FromBTCLNResponseType>
     } {
-        const responseBodyPromise = streamingFetchWithTimeoutPromise(url+"/frombtcln/createInvoice", {
+        const responseBodyPromise = streamingFetchPromise(url+"/frombtcln/createInvoice", {
             ...init.additionalParams,
             paymentHash: init.paymentHash.toString("hex"),
             amount: init.amount.toString(),
@@ -355,7 +356,7 @@ export class IntermediaryAPI {
             msg: FieldTypeEnum.String,
             data: FieldTypeEnum.AnyOptional,
             lnPublicKey: FieldTypeEnum.StringOptional
-        }, timeout, abortSignal, true);
+        }, timeout, abortSignal, streamRequest);
 
         return {
             lnPublicKey: responseBodyPromise.then(responseBody => responseBody.lnPublicKey),
@@ -372,11 +373,11 @@ export class IntermediaryAPI {
         };
     }
 
-    static initToBTCLN(url: string, init: ToBTCLNInit, timeout?: number, abortSignal?: AbortSignal): {
+    static initToBTCLN(url: string, init: ToBTCLNInit, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): {
         signDataPrefetch: Promise<any>,
         response: Promise<ToBTCLNResponseType>
     } {
-        const responseBodyPromise = streamingFetchWithTimeoutPromise(url+"/tobtcln/payInvoice", {
+        const responseBodyPromise = streamingFetchPromise(url+"/tobtcln/payInvoice", {
             exactIn: false,
             ...init.additionalParams,
             pr: init.pr,
@@ -390,7 +391,7 @@ export class IntermediaryAPI {
             msg: FieldTypeEnum.String,
             data: FieldTypeEnum.AnyOptional,
             signDataPrefetch: FieldTypeEnum.AnyOptional
-        }, timeout, abortSignal, true);
+        }, timeout, abortSignal, streamRequest);
 
         return {
             signDataPrefetch: responseBodyPromise.then(responseBody => responseBody.signDataPrefetch),
@@ -407,8 +408,8 @@ export class IntermediaryAPI {
         };
     }
 
-    static async initToBTCLNExactIn(url: string, init: ToBTCLNInitExactIn, timeout?: number, abortSignal?: AbortSignal): Promise<ToBTCLNResponseType> {
-        const responseBody = await streamingFetchWithTimeoutPromise(url+"/tobtcln/payInvoiceExactIn", {
+    static async initToBTCLNExactIn(url: string, init: ToBTCLNInitExactIn, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): Promise<ToBTCLNResponseType> {
+        const responseBody = await streamingFetchPromise(url+"/tobtcln/payInvoiceExactIn", {
             ...init.additionalParams,
             pr: init.pr,
             reqId: init.reqId,
@@ -417,7 +418,7 @@ export class IntermediaryAPI {
             code: FieldTypeEnum.Number,
             msg: FieldTypeEnum.String,
             data: FieldTypeEnum.AnyOptional
-        }, timeout, abortSignal, true);
+        }, timeout, abortSignal, streamRequest);
 
         const [code, msg, data] = await Promise.all([
             responseBody.code,
@@ -433,12 +434,13 @@ export class IntermediaryAPI {
         url: string,
         init: ToBTCLNPrepareExactIn,
         timeout?: number,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        streamRequest?: boolean
     ): {
         signDataPrefetch: Promise<any>,
         response: Promise<ToBTCLNPrepareExactInResponseType>
     } {
-        const responseBodyPromise = streamingFetchWithTimeoutPromise(url+"/tobtcln/payInvoice", {
+        const responseBodyPromise = streamingFetchPromise(url+"/tobtcln/payInvoice", {
             exactIn: true,
             ...init.additionalParams,
             pr: init.pr,
@@ -452,7 +454,7 @@ export class IntermediaryAPI {
             msg: FieldTypeEnum.String,
             data: FieldTypeEnum.AnyOptional,
             signDataPrefetch: FieldTypeEnum.AnyOptional
-        }, timeout, abortSignal, true);
+        }, timeout, abortSignal, streamRequest);
 
         return {
             signDataPrefetch: responseBodyPromise.then(responseBody => responseBody.signDataPrefetch),

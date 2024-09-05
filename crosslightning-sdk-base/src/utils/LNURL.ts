@@ -165,7 +165,7 @@ export class LNURL {
                 () => httpGet<LNURLPayParams | LNURLWithdrawParams | LNURLError>(url, timeout, abortSignal);
 
             let response = shouldRetry ?
-                await tryWithRetries(sendRequest, null, e => e instanceof RequestError, abortSignal) :
+                await tryWithRetries(sendRequest, null, RequestError, abortSignal) :
                 await sendRequest();
 
             if(isLNURLError(response)) {
@@ -280,7 +280,7 @@ export class LNURL {
 
         const response = await tryWithRetries(
             () => httpGet<LNURLPayResult | LNURLError>(payRequest.callback+queryParams, timeout, abortSignal),
-            null, e => e instanceof RequestError, abortSignal
+            null, RequestError, abortSignal
         );
 
         if(isLNURLError(response)) throw new RequestError("LNURL callback error: "+response.reason, 200);
@@ -323,7 +323,7 @@ export class LNURL {
 
         const response = await tryWithRetries(
             () => httpGet<LNURLOk | LNURLError>(withdrawRequest.callback+queryParams),
-            null, e => e instanceof RequestError
+            null, RequestError
         );
 
         if(isLNURLError(response)) throw new RequestError("LNURL callback error: " + response.reason, 200);

@@ -42,7 +42,7 @@ export function isFromBTCLNSwapInit<T extends SwapData>(obj: any): obj is FromBT
         (obj.lnurlCallback==null || typeof(obj.lnurlCallback)==="string");
 }
 
-export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCLNSwapState> {
+export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<T, FromBTCLNSwapState, TXType> {
     protected readonly TYPE = SwapType.FROM_BTCLN;
 
     protected readonly COMMIT_STATE = FromBTCLNSwapState.CLAIM_COMMITED;
@@ -59,10 +59,10 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCLN
     lnurlCallback?: string;
     prPosted?: boolean = false;
 
-    constructor(wrapper: FromBTCLNWrapper<T>, init: FromBTCLNSwapInit<T>);
-    constructor(wrapper: FromBTCLNWrapper<T>, obj: any);
+    constructor(wrapper: FromBTCLNWrapper<T, TXType>, init: FromBTCLNSwapInit<T>);
+    constructor(wrapper: FromBTCLNWrapper<T, TXType>, obj: any);
     constructor(
-        wrapper: FromBTCLNWrapper<T>,
+        wrapper: FromBTCLNWrapper<T, TXType>,
         initOrObject: FromBTCLNSwapInit<T> | any
     ) {
         if(isFromBTCLNSwapInit(initOrObject)) initOrObject.url += "/frombtcln";
@@ -277,7 +277,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCLN
             tryWithRetries(
                 () => this.wrapper.contract.isValidInitAuthorization(data, signature.timeout, signature.prefix, signature.signature, this.feeRate),
                 null,
-                (e) => e instanceof SignatureVerificationError
+                SignatureVerificationError
             ),
             tryWithRetries<SwapCommitStatus>(
                 () => this.wrapper.contract.getPaymentHashStatus(data.getHash())
@@ -317,7 +317,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCLN
      * Returns transactions required for claiming the HTLC and finishing the swap by revealing the HTLC secret
      *  (hash preimage)
      */
-    txsClaim(): Promise<any[]> {
+    txsClaim(): Promise<TXType[]> {
         if(this.state!==FromBTCLNSwapState.CLAIM_COMMITED) {
             throw new Error("Must be in CLAIM_COMMITED state!");
         }
@@ -359,7 +359,7 @@ export class FromBTCLNSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCLN
      * @param skipChecks Skip checks like making sure init signature is still valid and swap wasn't commited yet
      *  (this is handled when swap is created (quoted), if you commit right after quoting, you can use skipChecks=true)
      */
-    async txsCommitAndClaim(skipChecks?: boolean): Promise<any[]> {
+    async txsCommitAndClaim(skipChecks?: boolean): Promise<TXType[]> {
         if(this.state===FromBTCLNSwapState.CLAIM_COMMITED) return await this.txsClaim();
         if(this.state!==FromBTCLNSwapState.PR_PAID) throw new Error("Must be in PR_PAID state!");
 

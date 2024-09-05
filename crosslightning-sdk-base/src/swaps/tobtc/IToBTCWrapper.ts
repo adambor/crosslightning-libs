@@ -13,8 +13,9 @@ import {tryWithRetries} from "../../utils/Utils";
 export abstract class IToBTCWrapper<
     T extends SwapData,
     S extends IToBTCSwap<T> = IToBTCSwap<T>,
-    O extends ISwapWrapperOptions = ISwapWrapperOptions
-> extends ISwapWrapper<T, S, O> {
+    O extends ISwapWrapperOptions = ISwapWrapperOptions,
+    TXType = any
+> extends ISwapWrapper<T, S, O, TXType> {
 
     /**
      * Checks the swap's state on-chain and compares it to its internal state, updates/changes it according to on-chain

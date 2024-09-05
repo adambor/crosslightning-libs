@@ -1,4 +1,3 @@
-import {FieldTypeEnum, parseBN, RequestSchema, RequestSchemaResult, verifySchema} from "./SchemaVerifier";
 import {IParamReader} from "./IParamReader";
 import {Buffer} from "buffer";
 
@@ -19,10 +18,12 @@ export class ParamDecoder implements IParamReader {
         }
     } = {};
 
-    constructor() {
-
-    }
-
+    /**
+     * Called when a frame is fully ready such that it can be parsed
+     *
+     * @param data Frame data
+     * @private
+     */
     private onFrameRead(data: Buffer) {
         const obj = JSON.parse(data.toString());
         console.log("Frame read: ", obj);
@@ -43,7 +44,13 @@ export class ParamDecoder implements IParamReader {
         }
     }
 
-    onData(data: Buffer): void {
+    /**
+     * Called when data is read from the underlying source
+     *
+     * @param data Data that has been read from the underlying source
+     * @protected
+     */
+    protected onData(data: Buffer): void {
         let leavesBuffer = data;
         while(leavesBuffer!=null && leavesBuffer.length>0) {
             if(this.frameHeader==null) {
@@ -92,7 +99,11 @@ export class ParamDecoder implements IParamReader {
         }
     }
 
-    onEnd(): void {
+    /**
+     * Called when the underlying source ends/closes/cancels
+     * @protected
+     */
+    protected onEnd(): void {
         for(let key in this.params) {
             if(this.params[key].reject!=null) {
                 this.params[key].reject(new Error("EOF before field seen!"));
@@ -101,7 +112,13 @@ export class ParamDecoder implements IParamReader {
         this.closed = true;
     }
 
-    onError(e: any): void {
+    /**
+     * Called when an error happens with the underlying stream
+     *
+     * @param e Error
+     * @protected
+     */
+    protected onError(e: any): void {
         for(let key in this.params) {
             if(this.params[key].reject!=null) {
                 this.params[key].reject(e);

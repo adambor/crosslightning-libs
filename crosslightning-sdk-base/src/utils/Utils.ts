@@ -1,5 +1,31 @@
 import {RequestError} from "../errors/RequestError";
 
+type Constructor<T = any> = new (...args: any[]) => T;
+
+function isConstructor(fn: any): fn is Constructor {
+    return (
+        typeof fn === 'function' &&
+        fn.prototype != null &&
+        fn.prototype.constructor === fn
+    );
+}
+
+function isConstructorArray(fnArr: any): fnArr is Constructor[] {
+    return Array.isArray(fnArr) && fnArr.every(isConstructor);
+}
+
+/**
+ * Checks whether the passed error is allowed to pass through
+ *
+ * @param e Error in question
+ * @param errorAllowed Allowed errors as defined as a callback function, specific error type, or an array of error types
+ */
+function checkError(e: any, errorAllowed: ((e: any) => boolean) | Constructor<Error> | Constructor<Error>[]) {
+    if(isConstructorArray(errorAllowed)) return errorAllowed.find(error => e instanceof error)!=null;
+    if(isConstructor(errorAllowed)) return e instanceof errorAllowed;
+    return errorAllowed(e);
+}
+
 /**
  * Returns a promise that resolves when any of the passed promises resolves, and rejects if all the underlying
  *  promises fail with an array of errors returned by the respective promises
@@ -36,8 +62,8 @@ export function promiseAny<T>(promises: Promise<T>[]): Promise<T> {
 export function objectMap<InputType, OutputType>(
     obj: {[key: string]: InputType},
     translator: (value: InputType, key: string) => OutputType
-): {[key: string]: OutputType} {
-    const resp: {[key: string]: OutputType} = {};
+): {[key in keyof typeof obj]: OutputType} {
+    const resp: {[key in keyof typeof obj]: OutputType} = {};
     for(let key in obj) {
         resp[key] = translator(obj[key], key);
     }
@@ -59,6 +85,7 @@ export function extendAbortController(abortSignal?: AbortSignal) {
  * Runs the passed function multiple times if it fails
  *
  * @param func A callback for executing the action
+ * @param func.retryCount Count of the current retry, starting from 0 for original request and increasing
  * @param retryPolicy Retry policy
  * @param retryPolicy.maxRetries How many retries to attempt in total
  * @param retryPolicy.delay How long should the delay be
@@ -67,10 +94,9 @@ export function extendAbortController(abortSignal?: AbortSignal) {
  * @param abortSignal
  * @returns Result of the action executing callback
  */
-export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
+export async function tryWithRetries<T>(func: (retryCount?: number) => Promise<T>, retryPolicy?: {
     maxRetries?: number, delay?: number, exponential?: boolean
-}, errorAllowed?: (e: any) => boolean, abortSignal?: AbortSignal): Promise<T> {
-
+}, errorAllowed?: ((e: any) => boolean) | Constructor<Error> | Constructor<Error>[], abortSignal?: AbortSignal): Promise<T> {
     retryPolicy = retryPolicy || {};
     retryPolicy.maxRetries = retryPolicy.maxRetries || 5;
     retryPolicy.delay = retryPolicy.delay || 500;
@@ -80,10 +106,9 @@ export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
 
     for (let i = 0; i < retryPolicy.maxRetries; i++) {
         try {
-            const resp: T = await func();
-            return resp;
+            return await func(i);
         } catch (e) {
-            if (errorAllowed != null && errorAllowed(e)) throw e;
+            if (errorAllowed != null && checkError(e, errorAllowed)) throw e;
             err = e;
             console.error("tryWithRetries: " + i, e);
         }
@@ -94,7 +119,6 @@ export async function tryWithRetries<T>(func: () => Promise<T>, retryPolicy?: {
     }
 
     throw err;
-
 }
 
 /**

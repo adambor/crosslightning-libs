@@ -6,14 +6,8 @@ import {LnForGasWrapper} from "./LnForGasWrapper";
 import {EventEmitter} from "events";
 import {Buffer} from "buffer";
 import {PaymentAuthError} from "../../../errors/PaymentAuthError";
-import {fetchWithTimeout, tryWithRetries} from "../../../utils/Utils";
+import {fetchWithTimeout, timeoutPromise, tryWithRetries} from "../../../utils/Utils";
 import {RequestError} from "../../../errors/RequestError";
-
-const timeoutPromise = (timeoutSeconds) => {
-    return new Promise(resolve => {
-        setTimeout(resolve, timeoutSeconds*1000)
-    });
-};
 
 export enum LnForGasSwapState {
     EXPIRED = -2,
@@ -185,7 +179,7 @@ export class LnForGasSwap<T extends SwapData> implements StorageObject {
                 abortSignal
             );
             if(result.is_paid) return;
-            await timeoutPromise(checkIntervalSeconds || 5);
+            await timeoutPromise((checkIntervalSeconds || 5)*1000);
         }
 
         throw abortSignal.reason;

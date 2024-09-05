@@ -28,14 +28,14 @@ export function isFromBTCSwapInit<T extends SwapData>(obj: any): obj is FromBTCS
         isISwapInit<T>(obj);
 }
 
-export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCSwapState> {
+export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<T, FromBTCSwapState, TXType> {
     protected readonly TYPE = SwapType.FROM_BTC;
 
     protected readonly COMMIT_STATE = FromBTCSwapState.CLAIM_COMMITED;
     protected readonly CLAIM_STATE = FromBTCSwapState.CLAIM_CLAIMED;
     protected readonly FAIL_STATE = FromBTCSwapState.FAILED;
 
-    readonly wrapper: FromBTCWrapper<T>;
+    readonly wrapper: FromBTCWrapper<T, TXType>;
 
     readonly address: string;
     readonly amount: BN;
@@ -43,9 +43,9 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCSwap
     txId?: string;
     vout?: number;
 
-    constructor(wrapper: FromBTCWrapper<T>, init: FromBTCSwapInit<T>);
-    constructor(wrapper: FromBTCWrapper<T>, obj: any);
-    constructor(wrapper: FromBTCWrapper<T>, initOrObject: FromBTCSwapInit<T> | any) {
+    constructor(wrapper: FromBTCWrapper<T, TXType>, init: FromBTCSwapInit<T>);
+    constructor(wrapper: FromBTCWrapper<T, TXType>, obj: any);
+    constructor(wrapper: FromBTCWrapper<T, TXType>, initOrObject: FromBTCSwapInit<T> | any) {
         if(isFromBTCSwapInit(initOrObject)) initOrObject.url += "/frombtc";
         super(wrapper, initOrObject);
         if(!isFromBTCSwapInit(initOrObject)) {
@@ -205,7 +205,7 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCSwap
      * Returns transactions required to claim the swap on-chain (and possibly also sync the bitcoin light client)
      *  after a bitcoin transaction was sent and confirmed
      */
-    async txsClaim(): Promise<any[]> {
+    async txsClaim(): Promise<TXType[]> {
         if(!this.canClaim()) throw new Error("Must be in BTC_TX_CONFIRMED state!");
 
         const tx = await this.wrapper.btcRpc.getTransaction(this.txId);
@@ -215,7 +215,7 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T, FromBTCSwap
             confirmations: this.data.getConfirmations(),
             txid: tx.txid,
             hex: tx.hex
-        }, this.vout, null, (this.wrapper as FromBTCWrapper<T>).synchronizer, true);
+        }, this.vout, null, this.wrapper.synchronizer, true);
     }
 
 

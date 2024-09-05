@@ -5,18 +5,23 @@ import * as BN from "bn.js";
 import {SignatureVerificationError, SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
 import {PriceInfoType} from "../../prices/abstract/ISwapPrice";
 import {tryWithRetries} from "../../utils/Utils";
+import {ISwapWrapperOptions} from "../ISwapWrapper";
 
 
-export abstract class IFromBTCSwap<T extends SwapData, S extends number = number> extends ISwap<T, S> {
+export abstract class IFromBTCSwap<
+    T extends SwapData,
+    S extends number = number,
+    TXType = any
+> extends ISwap<T, S, TXType> {
 
     protected abstract readonly COMMIT_STATE: S;
     protected abstract readonly CLAIM_STATE: S;
     protected abstract readonly FAIL_STATE: S;
 
-    protected constructor(wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S>>, init: ISwapInit<T>);
-    protected constructor(wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S>>, obj: any);
+    protected constructor(wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S, TXType>, ISwapWrapperOptions, TXType>, init: ISwapInit<T>);
+    protected constructor(wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S, TXType>, ISwapWrapperOptions, TXType>, obj: any);
     protected constructor(
-        wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S>>,
+        wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S, TXType>, ISwapWrapperOptions, TXType>,
         initOrObj: ISwapInit<T> | any
     ) {
         super(wrapper, initOrObj);
@@ -73,7 +78,7 @@ export abstract class IFromBTCSwap<T extends SwapData, S extends number = number
                     this.data, this.timeout, this.prefix, this.signature, this.feeRate
                 ),
                 null,
-                e => e instanceof SignatureVerificationError
+                SignatureVerificationError
             );
             return true;
         } catch (e) {
@@ -157,7 +162,7 @@ export abstract class IFromBTCSwap<T extends SwapData, S extends number = number
      * @param skipChecks Skip checks like making sure init signature is still valid and swap wasn't commited yet
      *  (this is handled when swap is created (quoted), if you commit right after quoting, you can use skipChecks=true)
      */
-    async txsCommit(skipChecks?: boolean): Promise<any[]> {
+    async txsCommit(skipChecks?: boolean): Promise<TXType[]> {
         if(!this.canCommit()) throw new Error("Must be in CREATED state!");
 
         await this._save();
@@ -201,7 +206,7 @@ export abstract class IFromBTCSwap<T extends SwapData, S extends number = number
         return result[0];
     }
 
-    abstract txsClaim(): Promise<any[]>;
+    abstract txsClaim(): Promise<TXType[]>;
 
     /**
      * Waits till the swap is successfully claimed

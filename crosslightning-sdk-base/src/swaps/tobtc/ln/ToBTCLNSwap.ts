@@ -36,7 +36,7 @@ export function isToBTCLNSwapInit<T extends SwapData>(obj: any): obj is ToBTCLNS
         isIToBTCSwapInit<T>(obj);
 }
 
-export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
+export class ToBTCLNSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T, TXType> {
     protected readonly TYPE = SwapType.TO_BTCLN;
 
     private readonly confidence: number;
@@ -47,10 +47,10 @@ export class ToBTCLNSwap<T extends SwapData> extends IToBTCSwap<T> {
 
     private secret?: string;
 
-    constructor(wrapper: ToBTCLNWrapper<T>, init: ToBTCLNSwapInit<T>);
-    constructor(wrapper: ToBTCLNWrapper<T>, obj: any);
+    constructor(wrapper: ToBTCLNWrapper<T, TXType>, init: ToBTCLNSwapInit<T>);
+    constructor(wrapper: ToBTCLNWrapper<T, TXType>, obj: any);
 
-    constructor(wrapper: ToBTCLNWrapper<T>, initOrObj: ToBTCLNSwapInit<T> | any) {
+    constructor(wrapper: ToBTCLNWrapper<T, TXType>, initOrObj: ToBTCLNSwapInit<T> | any) {
         super(wrapper, initOrObj);
         if(!isToBTCLNSwapInit(initOrObj)) {
             this.confidence = initOrObj.confidence;

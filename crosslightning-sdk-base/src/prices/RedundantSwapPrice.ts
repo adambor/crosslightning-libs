@@ -141,7 +141,7 @@ export class RedundantSwapPrice extends ICachedSwapPrice {
                 });
             }
             return this.fetchPriceFromMaybeOperationalPriceApis(token, abortSignal);
-        }, null, e => e instanceof RequestError, abortSignal);
+        }, null, RequestError, abortSignal);
     }
 
     protected getDecimals(token: TokenAddress): number | null {

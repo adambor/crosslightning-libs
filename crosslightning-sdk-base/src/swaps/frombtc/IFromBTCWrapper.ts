@@ -10,8 +10,9 @@ import {tryWithRetries} from "../../utils/Utils";
 export abstract class IFromBTCWrapper<
     T extends SwapData,
     S extends IFromBTCSwap<T, any>,
-    O extends ISwapWrapperOptions = ISwapWrapperOptions
-> extends ISwapWrapper<T, S, O> {
+    O extends ISwapWrapperOptions = ISwapWrapperOptions,
+    TXType = any
+> extends ISwapWrapper<T, S, O, TXType> {
 
     /**
      * Returns a random sequence to be used for swaps

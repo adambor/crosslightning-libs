@@ -10,6 +10,7 @@ import {
 } from "../../intermediaries/IntermediaryAPI";
 import {IntermediaryError} from "../../errors/IntermediaryError";
 import {timeoutPromise, tryWithRetries} from "../../utils/Utils";
+import {ISwapWrapperOptions} from "../ISwapWrapper";
 
 export type IToBTCSwapInit<T extends SwapData> = ISwapInit<T> & {
     networkFee: BN,
@@ -22,14 +23,14 @@ export function isIToBTCSwapInit<T extends SwapData>(obj: any): obj is IToBTCSwa
         isISwapInit<T>(obj);
 }
 
-export abstract class IToBTCSwap<T extends SwapData> extends ISwap<T, ToBTCSwapState> {
+export abstract class IToBTCSwap<T extends SwapData, TXType> extends ISwap<T, ToBTCSwapState, TXType> {
     protected readonly networkFee: BN;
     protected networkFeeBtc?: BN;
 
-    protected constructor(wrapper: IToBTCWrapper<T, IToBTCSwap<T>>, serializedObject: any);
-    protected constructor(wrapper: IToBTCWrapper<T, IToBTCSwap<T>>, init: IToBTCSwapInit<T>);
+    protected constructor(wrapper: IToBTCWrapper<T, IToBTCSwap<T, TXType>, ISwapWrapperOptions, TXType>, serializedObject: any);
+    protected constructor(wrapper: IToBTCWrapper<T, IToBTCSwap<T, TXType>, ISwapWrapperOptions, TXType>, init: IToBTCSwapInit<T>);
     protected constructor(
-        wrapper: IToBTCWrapper<T, IToBTCSwap<T>>,
+        wrapper: IToBTCWrapper<T, IToBTCSwap<T, TXType>, ISwapWrapperOptions, TXType>,
         initOrObject: IToBTCSwapInit<T> | any
     ) {
         super(wrapper, initOrObject);
@@ -115,7 +116,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap<T, ToBTCSwapS
                     this.data, this.timeout, this.prefix, this.signature, this.feeRate
                 ),
                 null,
-                e => e instanceof SignatureVerificationError
+                SignatureVerificationError
             );
             return true;
         } catch (e) {
@@ -204,7 +205,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap<T, ToBTCSwapS
      * @param skipChecks Skip checks like making sure init signature is still valid and swap wasn't commited yet
      *  (this is handled on swap creation, if you commit right after quoting, you can use skipChecks=true)
      */
-    async txsCommit(skipChecks?: boolean): Promise<any[]> {
+    async txsCommit(skipChecks?: boolean): Promise<TXType[]> {
         if(!this.canCommit()) throw new Error("Must be in CREATED state!");
 
         await this._save();
@@ -269,7 +270,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap<T, ToBTCSwapS
                         result.data.prefix,
                         result.data.signature
                     ),
-                    null, e => e instanceof SignatureVerificationError
+                    null, SignatureVerificationError, abortSignal
                 );
                 await this._saveAndEmit(ToBTCSwapState.REFUNDABLE);
                 return false;
@@ -320,7 +321,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap<T, ToBTCSwapS
             case RefundAuthorizationResponseCodes.REFUND_DATA:
                 await tryWithRetries(
                     () => this.wrapper.contract.isValidRefundAuthorization(this.data, resp.data.timeout, resp.data.prefix, resp.data.signature),
-                    null, e => e instanceof SignatureVerificationError
+                    null, SignatureVerificationError
                 );
                 this.state = ToBTCSwapState.REFUNDABLE;
                 if(save) await this._saveAndEmit();
@@ -351,7 +352,7 @@ export abstract class IToBTCSwap<T extends SwapData> extends ISwap<T, ToBTCSwapS
     /**
      * Returns transactions for refunding the swap if the swap is in refundable state, you can check so with isRefundable()
      */
-    async txsRefund(): Promise<any[]> {
+    async txsRefund(): Promise<TXType[]> {
         if(!this.isRefundable()) throw new Error("Must be in REFUNDABLE state or expired!");
 
         if(this.wrapper.contract.isExpired(this.data)) {

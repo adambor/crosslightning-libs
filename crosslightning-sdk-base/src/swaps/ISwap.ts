@@ -48,9 +48,13 @@ export type Token = {
     address: TokenAddress
 };
 
-export abstract class ISwap<T extends SwapData, S extends number = number> {
+export abstract class ISwap<
+    T extends SwapData,
+    S extends number = number,
+    TXType = any
+> {
     protected readonly abstract TYPE: SwapType;
-    protected readonly wrapper: ISwapWrapper<T, ISwap<T, S>, ISwapWrapperOptions>;
+    protected readonly wrapper: ISwapWrapper<T, ISwap<T, S, TXType>, ISwapWrapperOptions, TXType>;
     expiry?: number;
     readonly url: string;
 
@@ -343,7 +347,7 @@ export abstract class ISwap<T extends SwapData, S extends number = number> {
     /**
      * Returns transactions required for committing the swap on-chain, locking the tokens in an HTLC or PTLC
      */
-    abstract txsCommit(): Promise<any[]>;
+    abstract txsCommit(): Promise<TXType[]>;
 
     /**
      * Waits till a swap is committed

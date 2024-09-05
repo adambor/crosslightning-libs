@@ -35,10 +35,11 @@ export type ISwapWrapperOptions = {
 export abstract class ISwapWrapper<
     T extends SwapData,
     S extends ISwap<T>,
-    O extends ISwapWrapperOptions = ISwapWrapperOptions
+    O extends ISwapWrapperOptions = ISwapWrapperOptions,
+    TXType = any
 > {
 
-    protected readonly abstract swapDeserializer: new (wrapper: ISwapWrapper<T, S, O>, data: any) => S;
+    protected readonly abstract swapDeserializer: new (wrapper: ISwapWrapper<T, S, O, TXType>, data: any) => S;
 
     readonly storage: SwapWrapperStorage<S>;
     readonly contract: SwapContract<T, any, any, any>;
@@ -169,7 +170,7 @@ export abstract class ISwapWrapper<
                 this.contract.isValidClaimInitAuthorization(data, timeout, prefix, signature, feeRate, preFetchedSignatureData) :
                 this.contract.isValidInitAuthorization(data, timeout, prefix, signature, feeRate, preFetchedSignatureData),
             null,
-            e => e instanceof SignatureVerificationError,
+            SignatureVerificationError,
             abortSignal
         );
         return await tryWithRetries(
@@ -177,7 +178,7 @@ export abstract class ISwapWrapper<
                 this.contract.getClaimInitAuthorizationExpiry(data, timeout, prefix, signature, preFetchedSignatureData) :
                 this.contract.getInitAuthorizationExpiry(data, timeout, prefix, signature, preFetchedSignatureData),
             null,
-            e => e instanceof SignatureVerificationError,
+            SignatureVerificationError,
             abortSignal
         );
     }

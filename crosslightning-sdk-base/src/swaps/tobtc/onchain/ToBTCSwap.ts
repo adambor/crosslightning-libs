@@ -23,10 +23,10 @@ export function isToBTCSwapInit<T extends SwapData>(obj: any): obj is ToBTCSwapI
         isIToBTCSwapInit<T>(obj);
 }
 
-export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
+export class ToBTCSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T, TXType> {
     protected readonly TYPE = SwapType.TO_BTC;
 
-    protected readonly wrapper: ToBTCWrapper<T>;
+    protected readonly wrapper: ToBTCWrapper<T, TXType>;
 
     private readonly address: string;
     private readonly amount: BN;
@@ -35,10 +35,10 @@ export class ToBTCSwap<T extends SwapData> extends IToBTCSwap<T> {
 
     private txId?: string;
 
-    constructor(wrapper: ToBTCWrapper<T>, serializedObject: any);
-    constructor(wrapper: ToBTCWrapper<T>, init: ToBTCSwapInit<T>);
+    constructor(wrapper: ToBTCWrapper<T, TXType>, serializedObject: any);
+    constructor(wrapper: ToBTCWrapper<T, TXType>, init: ToBTCSwapInit<T>);
     constructor(
-        wrapper: ToBTCWrapper<T>,
+        wrapper: ToBTCWrapper<T, TXType>,
         initOrObject: ToBTCSwapInit<T> | any
     ) {
         if(isToBTCSwapInit(initOrObject)) initOrObject.url += "/tobtc";
