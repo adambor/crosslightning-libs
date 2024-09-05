@@ -341,9 +341,9 @@ export class FromBTCWrapper<
         quote: Promise<FromBTCSwap<T, TXType>>,
         intermediary: Intermediary
     }[] {
-        if(options==null) options = {};
-        options.blockSafetyFactor = options.blockSafetyFactor || 2;
-        options.feeSafetyFactor = options.feeSafetyFactor || new BN(2);
+        options ??= {};
+        options.blockSafetyFactor ??= 2;
+        options.feeSafetyFactor ??= new BN(2);
 
         const sequence: BN = this.getRandomSequence();
 

@@ -199,7 +199,7 @@ export abstract class ISwapWrapper<
      * @throws {IntermediaryError} if the calculated fee is too high
      */
     protected async verifyReturnedPrice(
-        lpServiceData: SwapHandlerInfoType,
+        lpServiceData: {swapBaseFee: number, swapFeePPM: number},
         send: boolean,
         amountSats: BN,
         amountToken: BN,
@@ -240,7 +240,7 @@ export abstract class ISwapWrapper<
      * @protected
      * @returns Whether the swap was updated/changed
      */
-    protected abstract processEventInitialize(swap: S, event: InitializeEvent<T>): Promise<boolean>;
+    protected processEventInitialize?(swap: S, event: InitializeEvent<T>): Promise<boolean>;
 
     /**
      * Processes ClaimEvent for a given swap
@@ -249,7 +249,7 @@ export abstract class ISwapWrapper<
      * @protected
      * @returns Whether the swap was updated/changed
      */
-    protected abstract processEventClaim(swap: S, event: ClaimEvent<T>): Promise<boolean>;
+    protected processEventClaim?(swap: S, event: ClaimEvent<T>): Promise<boolean>;
 
     /**
      * Processes RefundEvent for a given swap
@@ -258,7 +258,7 @@ export abstract class ISwapWrapper<
      * @protected
      * @returns Whether the swap was updated/changed
      */
-    protected abstract processEventRefund(swap: S, event: RefundEvent<T>): Promise<boolean>;
+    protected processEventRefund?(swap: S, event: RefundEvent<T>): Promise<boolean>;
 
     /**
      * Checks past swap and syncs its state from the chain, this is called on initialization for all unfinished swaps
@@ -300,14 +300,16 @@ export abstract class ISwapWrapper<
         if(this.isInitialized) return;
         this.swapData = await this.storage.loadSwapData(this, this.swapDeserializer);
 
+        const hasEventListener = this.processEventRefund!=null || this.processEventClaim!=null || this.processEventInitialize!=null;
+
         //Save events received in the meantime into the event queue and process them only after we've checked and
         // processed all the past swaps
         let eventQueue: SwapEvent<T>[] = [];
         const initListener = (events: SwapEvent<T>[]) => {
-            eventQueue.push(...eventQueue);
+            eventQueue.push(...events);
             return Promise.resolve(true);
         }
-        this.chainEvents.registerListener(initListener);
+        if(hasEventListener) this.chainEvents.registerListener(initListener);
 
         //Check past swaps
         const changedSwaps: S[] = [];
@@ -328,12 +330,14 @@ export abstract class ISwapWrapper<
         await this.storage.removeSwapDataArr(removeSwaps);
         await this.storage.saveSwapDataArr(changedSwaps);
 
-        //Process accumulated event queue
-        await this.processEvents(eventQueue);
+        if(hasEventListener) {
+            //Process accumulated event queue
+            await this.processEvents(eventQueue);
 
-        //Register the correct event handler
-        this.chainEvents.unregisterListener(initListener);
-        this.chainEvents.registerListener(this.processEvents);
+            //Register the correct event handler
+            this.chainEvents.unregisterListener(initListener);
+            this.chainEvents.registerListener(this.processEvents);
+        }
 
         this.isInitialized = true;
     }

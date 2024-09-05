@@ -329,35 +329,6 @@ export abstract class ISwap<
 
 
     //////////////////////////////
-    //// Commit
-
-    /**
-     * Returns if the swap can be committed
-     */
-    abstract canCommit(): boolean;
-
-    /**
-     * Commits the swap on-chain, locking the tokens in an HTLC or PTLC
-     *
-     * @param noWaitForConfirmation Do not wait for transaction confirmation
-     * @param abortSignal Abort signal
-     */
-    abstract commit(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
-
-    /**
-     * Returns transactions required for committing the swap on-chain, locking the tokens in an HTLC or PTLC
-     */
-    abstract txsCommit(): Promise<TXType[]>;
-
-    /**
-     * Waits till a swap is committed
-     *
-     * @param abortSignal AbortSignal
-     */
-    abstract waitTillCommited(abortSignal?: AbortSignal): Promise<void>;
-
-
-    //////////////////////////////
     //// Storage
 
     serialize(): any {

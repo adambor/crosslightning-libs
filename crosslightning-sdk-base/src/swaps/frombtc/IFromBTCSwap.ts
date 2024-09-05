@@ -96,6 +96,9 @@ export abstract class IFromBTCSwap<
 
     abstract isClaimable(): boolean;
 
+    /**
+     * Returns if the swap can be committed
+     */
     abstract canCommit(): boolean;
 
 

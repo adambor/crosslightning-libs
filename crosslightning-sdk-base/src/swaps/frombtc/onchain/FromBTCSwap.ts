@@ -48,7 +48,9 @@ export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<
     constructor(wrapper: FromBTCWrapper<T, TXType>, initOrObject: FromBTCSwapInit<T> | any) {
         if(isFromBTCSwapInit(initOrObject)) initOrObject.url += "/frombtc";
         super(wrapper, initOrObject);
-        if(!isFromBTCSwapInit(initOrObject)) {
+        if(isFromBTCSwapInit(initOrObject)) {
+            this.state = FromBTCSwapState.PR_CREATED;
+        } else {
             this.address = initOrObject.address;
             this.amount = new BN(initOrObject.amount);
             this.txId = initOrObject.txId;

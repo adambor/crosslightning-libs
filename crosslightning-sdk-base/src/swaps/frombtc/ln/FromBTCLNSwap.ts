@@ -67,7 +67,9 @@ export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwa
     ) {
         if(isFromBTCLNSwapInit(initOrObject)) initOrObject.url += "/frombtcln";
         super(wrapper, initOrObject);
-        if(!isFromBTCLNSwapInit(initOrObject)) {
+        if(isFromBTCLNSwapInit(initOrObject)) {
+            this.state = FromBTCLNSwapState.PR_CREATED;
+        } else {
             this.pr = initOrObject.pr;
             this.secret = initOrObject.secret;
             this.lnurl = initOrObject.lnurl;

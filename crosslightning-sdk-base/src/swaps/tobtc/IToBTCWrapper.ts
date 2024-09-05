@@ -12,7 +12,7 @@ import {tryWithRetries} from "../../utils/Utils";
 
 export abstract class IToBTCWrapper<
     T extends SwapData,
-    S extends IToBTCSwap<T> = IToBTCSwap<T>,
+    S extends IToBTCSwap<T, TXType> = IToBTCSwap<T, any>,
     O extends ISwapWrapperOptions = ISwapWrapperOptions,
     TXType = any
 > extends ISwapWrapper<T, S, O, TXType> {

@@ -206,7 +206,6 @@ export type FromBTCLNInit = BaseFromBTCSwapInit & {
     descriptionHash?: Buffer
 }
 
-//TODO: Don't use streamRequest=true always, just set it to false when the prior request fails
 export class IntermediaryAPI {
 
     static async getIntermediaryInfo(

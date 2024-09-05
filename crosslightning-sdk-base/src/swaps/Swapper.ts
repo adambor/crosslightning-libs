@@ -1,6 +1,6 @@
 import {BitcoinNetwork} from "../btc/BitcoinNetwork";
 import {ISwapPrice} from "../prices/abstract/ISwapPrice";
-import {ChainEvents, IStorageManager, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
+import {ChainEvents, IStorageManager, SwapContract, SwapData} from "crosslightning-base";
 import {ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";
 import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
 import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
@@ -58,9 +58,6 @@ export type SwapperOptions<T extends SwapData> = {
     defaultTrustedIntermediaryUrl?: string
 };
 
-/**
- * Emits "swapState" event with swap object as a param
- */
 export class Swapper<
     T extends SwapData,
     E extends ChainEvents<T>,
@@ -167,11 +164,16 @@ export class Swapper<
                 bitcoinNetwork: this.bitcoinNetwork
             }
         );
-
         this.lnforgas = new LnForGasWrapper<T>(
             options.storage?.lnForGas || new LocalStorageManager<LnForGasSwap<T>>(storagePrefix + "LnForGas"),
             this.swapContract,
-            options
+            this.chainEvents,
+            options.pricing,
+            swapDataConstructor,
+            {
+                getRequestTimeout: options.getRequestTimeout,
+                postRequestTimeout: options.postRequestTimeout
+            }
         );
 
         if(options.intermediaryUrl!=null) {
@@ -242,14 +244,10 @@ export class Swapper<
      *
      * @param lnpr
      */
-    static getLightningInvoiceValue(lnpr: string): BN {
+    getLightningInvoiceValue(lnpr: string): BN {
         const parsed = bolt11Decode(lnpr);
         if(parsed.millisatoshis!=null) return new BN(parsed.millisatoshis).add(new BN(999)).div(new BN(1000));
         return null;
-    }
-
-    getLightningInvoiceValue(lnpr: string): BN {
-        return Swapper.getLightningInvoiceValue(lnpr);
     }
 
     /**
@@ -265,12 +263,12 @@ export class Swapper<
     /**
      * Returns maximum possible swap amount
      *
-     * @param kind      Type of the swap
+     * @param type      Type of the swap
      * @param token     Token of the swap
      */
-    getMaximum(kind: SwapType, token: TokenAddress): BN {
+    getMaximum(type: SwapType, token: TokenAddressType): BN {
         if(this.intermediaryDiscovery!=null) {
-            const max = this.intermediaryDiscovery.getSwapMaximum(kind, token);
+            const max = this.intermediaryDiscovery.getSwapMaximum(type, token);
             if(max!=null) return new BN(max);
         }
         return new BN(0);
@@ -279,20 +277,19 @@ export class Swapper<
     /**
      * Returns minimum possible swap amount
      *
-     * @param kind      Type of swap
+     * @param type      Type of swap
      * @param token     Token of the swap
      */
-    getMinimum(kind: SwapType, token: TokenAddress): BN {
+    getMinimum(type: SwapType, token: TokenAddressType): BN {
         if(this.intermediaryDiscovery!=null) {
-            const min = this.intermediaryDiscovery.getSwapMinimum(kind, token);
+            const min = this.intermediaryDiscovery.getSwapMinimum(type, token);
             if(min!=null) return new BN(min);
         }
         return new BN(0);
     }
 
     /**
-     * Initializes the swap storage and loads existing swaps
-     * Needs to be called before any other action
+     * Initializes the swap storage and loads existing swaps, needs to be called before any other action
      */
     async init() {
         await this.chainEvents.init();
@@ -322,8 +319,14 @@ export class Swapper<
         await this.tobtc.stop();
         await this.frombtcln.stop();
         await this.frombtc.stop();
+        await this.lnforgas.stop();
     }
 
+    /**
+     * Returns the set of supported tokens by all the intermediaries we know of offering a specific swapType service
+     *
+     * @param swapType Specific swap type for which to obtain supported tokens
+     */
     getSupportedTokens(swapType: SwapType): Set<string> {
         const set = new Set<string>();
         this.intermediaryDiscovery.intermediaries.forEach(lp => {
@@ -333,7 +336,16 @@ export class Swapper<
         return set;
     }
 
-    async createSwap<S extends ISwap<T>>(
+    /**
+     * Creates swap & handles intermediary, quote selection
+     *
+     * @param create Callback to create the
+     * @param amountData Amount data as passed to the function
+     * @param swapType Swap type of the execution
+     * @param maxWaitTimeMS Maximum waiting time after the first intermediary returns the quote
+     * @private
+     */
+    private async createSwap<S extends ISwap<T>>(
         create: (candidates: Intermediary[], abortSignal: AbortSignal) => Promise<{
             quote: Promise<S>,
             intermediary: Intermediary
@@ -466,7 +478,15 @@ export class Swapper<
      * @param exactIn               Whether to use exact in instead of exact out
      * @param additionalParams      Additional parameters sent to the LP when creating the swap
      */
-    createToBTCSwap(tokenAddress: TokenAddressType, address: string, amount: BN, confirmationTarget?: number, confirmations?: number, exactIn?: boolean, additionalParams?: Record<string, any>): Promise<ToBTCSwap<T>> {
+    createToBTCSwap(
+        tokenAddress: TokenAddressType,
+        address: string,
+        amount: BN,
+        confirmationTarget?: number,
+        confirmations?: number,
+        exactIn?: boolean,
+        additionalParams?: Record<string, any>
+    ): Promise<ToBTCSwap<T, TXType>> {
         if(confirmationTarget==null) confirmationTarget = 3;
         if(confirmations==null) confirmations = 2;
         const amountData = {
@@ -483,6 +503,7 @@ export class Swapper<
                     confirmationTarget,
                     confirmations
                 },
+                additionalParams,
                 abortSignal
             )),
             amountData,
@@ -500,14 +521,20 @@ export class Swapper<
      * @param maxRoutingPPM         Maximum routing fee to use - proportional fee in PPM (higher routing fee means higher probability of payment success)
      * @param additionalParams      Additional parameters sent to the LP when creating the swap
      */
-    async createToBTCLNSwap(tokenAddress: TokenAddressType, paymentRequest: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN, additionalParams?: Record<string, any>): Promise<ToBTCLNSwap<T>> {
+    async createToBTCLNSwap(
+        tokenAddress: TokenAddressType,
+        paymentRequest: string,
+        expirySeconds: number = 3*24*3600,
+        maxRoutingBaseFee?: BN,
+        maxRoutingPPM?: BN,
+        additionalParams?: Record<string, any>
+    ): Promise<ToBTCLNSwap<T, TXType>> {
         const parsedPR = bolt11Decode(paymentRequest);
         const amountData = {
             amount: new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000)),
             token: tokenAddress,
             exactIn: false
         };
-        if(expirySeconds==null) expirySeconds = (3*24*3600);
         return this.createSwap<ToBTCLNSwap<T>>(
             (candidates: Intermediary[], abortSignal: AbortSignal) => Promise.resolve(this.tobtcln.create(
                 paymentRequest,
@@ -539,13 +566,22 @@ export class Swapper<
      * @param exactIn               Whether to do an exact in swap instead of exact out
      * @param additionalParams      Additional parameters sent to the LP when creating the swap
      */
-    async createToBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurlPay: string | LNURLPay, amount: BN, comment: string, expirySeconds?: number, maxRoutingBaseFee?: BN, maxRoutingPPM?: BN, exactIn?: boolean, additionalParams?: Record<string, any>): Promise<ToBTCLNSwap<T>> {
+    async createToBTCLNSwapViaLNURL(
+        tokenAddress: TokenAddressType,
+        lnurlPay: string | LNURLPay,
+        amount: BN,
+        comment: string,
+        expirySeconds: number = 3*24*3600,
+        maxRoutingBaseFee?: BN,
+        maxRoutingPPM?: BN,
+        exactIn?: boolean,
+        additionalParams?: Record<string, any>
+    ): Promise<ToBTCLNSwap<T, TXType>> {
         const amountData = {
             amount,
             token: tokenAddress,
             exactIn
         };
-        if(expirySeconds==null) expirySeconds = (3*24*3600);
         return this.createSwap<ToBTCLNSwap<T>>(
             (candidates: Intermediary[], abortSignal: AbortSignal) => this.tobtcln.createViaLNURL(
                 typeof(lnurlPay)==="string" ? lnurlPay : lnurlPay.params,
@@ -573,13 +609,17 @@ export class Swapper<
      * @param exactOut              Whether to use a exact out instead of exact in
      * @param additionalParams      Additional parameters sent to the LP when creating the swap
      */
-    async createFromBTCSwap(tokenAddress: TokenAddressType, amount: BN, exactOut?: boolean, additionalParams?: Record<string, any>): Promise<FromBTCSwap<T>> {
+    async createFromBTCSwap(
+        tokenAddress: TokenAddressType,
+        amount: BN,
+        exactOut?: boolean,
+        additionalParams?: Record<string, any>
+    ): Promise<FromBTCSwap<T, TXType>> {
         const amountData = {
             amount,
             token: tokenAddress,
             exactIn: !exactOut
         };
-
         return this.createSwap<FromBTCSwap<T>>(
             (candidates: Intermediary[], abortSignal: AbortSignal) => Promise.resolve(this.frombtc.create(
                 amountData,
@@ -602,13 +642,18 @@ export class Swapper<
      * @param descriptionHash   Description hash for ln invoice
      * @param additionalParams  Additional parameters sent to the LP when creating the swap
      */
-    async createFromBTCLNSwap(tokenAddress: TokenAddressType, amount: BN, exactOut?: boolean, descriptionHash?: Buffer, additionalParams?: Record<string, any>): Promise<FromBTCLNSwap<T>> {
+    async createFromBTCLNSwap(
+        tokenAddress: TokenAddressType,
+        amount: BN,
+        exactOut?: boolean,
+        descriptionHash?: Buffer,
+        additionalParams?: Record<string, any>
+    ): Promise<FromBTCLNSwap<T, TXType>> {
         const amountData = {
             amount,
             token: tokenAddress,
             exactIn: !exactOut
         };
-
         return this.createSwap<FromBTCLNSwap<T>>(
             (candidates: Intermediary[], abortSignal: AbortSignal) => Promise.resolve(this.frombtcln.create(
                 amountData,
@@ -632,13 +677,17 @@ export class Swapper<
      * @param amount            Amount to receive, in satoshis (bitcoin's smallest denomination)
      * @param additionalParams  Additional parameters sent to the LP when creating the swap
      */
-    async createFromBTCLNSwapViaLNURL(tokenAddress: TokenAddressType, lnurl: string | LNURLWithdraw, amount: BN, additionalParams?: Record<string, any>): Promise<FromBTCLNSwap<T>> {
+    async createFromBTCLNSwapViaLNURL(
+        tokenAddress: TokenAddressType,
+        lnurl: string | LNURLWithdraw,
+        amount: BN,
+        additionalParams?: Record<string, any>
+    ): Promise<FromBTCLNSwap<T, TXType>> {
         const amountData = {
             amount,
             token: tokenAddress,
             exactIn: true
         };
-
         return this.createSwap<FromBTCLNSwap<T>>(
             (candidates: Intermediary[], abortSignal: AbortSignal) => this.frombtcln.createViaLNURL(
                 typeof(lnurl)==="string" ? lnurl : lnurl.params,
@@ -691,7 +740,7 @@ export class Swapper<
     /**
      * Returns swaps that are refundable and that were initiated with the current provider's public key
      */
-    async getRefundableSwaps(): Promise<IToBTCSwap<T>[]> {
+    async getRefundableSwaps(): Promise<IToBTCSwap<T, TXType>[]> {
         return [].concat(
             await this.tobtcln.getRefundableSwaps(),
             await this.tobtc.getRefundableSwaps()
@@ -711,7 +760,7 @@ export class Swapper<
     /**
      * Returns the token balance of the wallet
      */
-    getBalance(token: TokenAddress): Promise<BN> {
+    getBalance(token: TokenAddressType): Promise<BN> {
         return this.swapContract.getBalance(token, false);
     }
 
