@@ -1,7 +1,7 @@
 import {IToBTCWrapper} from "./IToBTCWrapper";
 import {Fee, isISwapInit, ISwap, ISwapInit, Token} from "../ISwap";
 import * as BN from "bn.js";
-import {SignatureVerificationError, SwapCommitStatus, SwapData} from "crosslightning-base";
+import {SignatureVerificationError, SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
 import {PriceInfoType} from "../../prices/abstract/ISwapPrice";
 import {
     IntermediaryAPI,
@@ -23,7 +23,7 @@ export function isIToBTCSwapInit<T extends SwapData>(obj: any): obj is IToBTCSwa
         isISwapInit<T>(obj);
 }
 
-export abstract class IToBTCSwap<T extends SwapData, TXType> extends ISwap<T, ToBTCSwapState, TXType> {
+export abstract class IToBTCSwap<T extends SwapData, TXType = any> extends ISwap<T, ToBTCSwapState, TXType> {
     protected readonly networkFee: BN;
     protected networkFeeBtc?: BN;
 
@@ -51,7 +51,7 @@ export abstract class IToBTCSwap<T extends SwapData, TXType> extends ISwap<T, To
             this.swapFeeBtc = this.swapFee.mul(this.getOutAmount()).div(this.getInAmountWithoutFee());
         }
         if(this.networkFeeBtc==null) {
-            this.networkFeeBtc = this.swapFee.mul(this.getOutAmount()).div(this.getInAmountWithoutFee());
+            this.networkFeeBtc = this.networkFee.mul(this.getOutAmount()).div(this.getInAmountWithoutFee());
         }
     }
 
@@ -84,11 +84,18 @@ export abstract class IToBTCSwap<T extends SwapData, TXType> extends ISwap<T, To
         return 100000000000000/this.pricingInfo.realPriceUSatPerToken.toNumber();
     }
 
+    getRealSwapFeePercentagePPM(): BN {
+        const feeWithoutBaseFee = this.swapFeeBtc.sub(this.pricingInfo.satsBaseFee);
+        return feeWithoutBaseFee.mul(new BN(1000000)).div(this.getOutAmount());
+    }
+
 
     //////////////////////////////
     //// Getters & utils
 
-    getInToken(): Token {
+    abstract getOutToken(): {chain: "BTC", lightning: boolean};
+
+    getInToken(): {chain: "SC", address: TokenAddress} {
         return {
             chain: "SC",
             address: this.data.getToken()

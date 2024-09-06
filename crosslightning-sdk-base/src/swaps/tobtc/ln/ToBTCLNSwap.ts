@@ -5,8 +5,7 @@ import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
 import {Buffer} from "buffer";
-import {Token} from "../../ISwap";
-import createHash from "create-hash";
+import * as createHash from "create-hash";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {LNURL, LNURLDecodedSuccessAction, LNURLPaySuccessAction} from "../../../utils/LNURL";
 
@@ -51,6 +50,7 @@ export class ToBTCLNSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T,
     constructor(wrapper: ToBTCLNWrapper<T, TXType>, obj: any);
 
     constructor(wrapper: ToBTCLNWrapper<T, TXType>, initOrObj: ToBTCLNSwapInit<T> | any) {
+        if(isToBTCLNSwapInit(initOrObj)) initOrObj.url += "/tobtcln";
         super(wrapper, initOrObj);
         if(!isToBTCLNSwapInit(initOrObj)) {
             this.confidence = initOrObj.confidence;
@@ -85,7 +85,7 @@ export class ToBTCLNSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T,
         return new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
     }
 
-    getOutToken(): Token {
+    getOutToken(): {chain: "BTC", lightning: true} {
         return {
             chain: "BTC",
             lightning: true
@@ -119,6 +119,7 @@ export class ToBTCLNSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T,
     }
 
     getPaymentHash(): Buffer {
+        if(this.pr==null) return null;
         const parsed = bolt11Decode(this.pr);
         return Buffer.from(parsed.tagsObject.payment_hash, "hex");
     }

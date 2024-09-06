@@ -7,7 +7,7 @@ import {
 } from "../utils/paramcoders/SchemaVerifier";
 import {streamingFetchPromise} from "../utils/paramcoders/client/StreamingFetchPromise";
 import {httpGet, httpPost, tryWithRetries} from "../utils/Utils";
-import randomBytes from "randombytes";
+import * as randomBytes from "randombytes";
 
 export type InfoHandlerResponse = {
     address: string,

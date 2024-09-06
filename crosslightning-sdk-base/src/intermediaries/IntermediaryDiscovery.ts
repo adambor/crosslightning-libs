@@ -195,7 +195,7 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter<{
      * @param abortSignal
      */
     init(abortSignal?: AbortSignal): Promise<void> {
-        logger.info("init(): Initializing with registryUrl: "+this.registryUrl+" intermediary array: "+this.overrideNodeUrls.join());
+        logger.info("init(): Initializing with registryUrl: "+this.registryUrl+" intermediary array: "+(this.overrideNodeUrls || []).join());
         return this.reloadIntermediaries(abortSignal);
     }
 

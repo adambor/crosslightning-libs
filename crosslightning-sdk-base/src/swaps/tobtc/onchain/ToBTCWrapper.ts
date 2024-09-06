@@ -1,4 +1,4 @@
-import {ToBTCSwap} from "./ToBTCSwap";
+import {ToBTCSwap, ToBTCSwapInit} from "./ToBTCSwap";
 import {IToBTCWrapper} from "../IToBTCWrapper";
 import {
     ChainEvents,
@@ -16,7 +16,7 @@ import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
 import {Network, networks, address} from "bitcoinjs-lib";
 import * as BN from "bn.js";
 import {Buffer} from "buffer";
-import randomBytes from "randombytes";
+import * as randomBytes from "randombytes";
 import {UserError} from "../../../errors/UserError";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {SwapType} from "../../SwapType";
@@ -238,7 +238,7 @@ export class ToBTCWrapper<T extends SwapData, TXType = any> extends IToBTCWrappe
                         const [pricingInfo, signatureExpiry, reputation] = await Promise.all([
                             this.verifyReturnedPrice(
                                 lp.services[SwapType.TO_BTC], true, resp.amount, data.getAmount(),
-                                data.getToken(), resp, pricePreFetchPromise, abortController.signal
+                                amountData.token, resp, pricePreFetchPromise, abortController.signal
                             ),
                             this.verifyReturnedSignature(data, resp, feeRatePromise, signDataPromise, abortController.signal),
                             reputationPromise
@@ -261,8 +261,8 @@ export class ToBTCWrapper<T extends SwapData, TXType = any> extends IToBTCWrappe
                             address,
                             amount: resp.amount,
                             confirmationTarget: options.confirmationTarget,
-                            satsPerVByte: resp.satsPervByte
-                        });
+                            satsPerVByte: resp.satsPervByte.toNumber()
+                        } as ToBTCSwapInit<T>);
                     } catch (e) {
                         abortController.abort(e);
                         throw e;

@@ -2,7 +2,7 @@ import {IFromBTCSwap} from "./IFromBTCSwap";
 import {SwapData, TokenAddress} from "crosslightning-base";
 import {AmountData, ISwapWrapper, ISwapWrapperOptions} from "../ISwapWrapper";
 import * as BN from "bn.js";
-import randomBytes from "randombytes";
+import * as randomBytes from "randombytes";
 import {Intermediary} from "../../intermediaries/Intermediary";
 import {IntermediaryError} from "../../errors/IntermediaryError";
 import {tryWithRetries} from "../../utils/Utils";

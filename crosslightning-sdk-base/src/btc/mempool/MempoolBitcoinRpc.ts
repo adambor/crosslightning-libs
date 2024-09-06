@@ -2,7 +2,7 @@ import {BtcBlockWithTxs, BtcSyncInfo, BtcTx} from "crosslightning-base";
 import {MempoolBitcoinBlock} from "./MempoolBitcoinBlock";
 import {BitcoinTransaction, MempoolApi, TxVout} from "./MempoolApi";
 import {Buffer} from "buffer";
-import createHash from "create-hash";
+import * as createHash from "create-hash";
 import * as BN from "bn.js";
 import {BitcoinRpcWithTxoListener, BtcTxWithBlockheight} from "../BitcoinRpcWithTxoListener";
 import {LightningNetworkApi, LNNodeLiquidity} from "../LightningNetworkApi";

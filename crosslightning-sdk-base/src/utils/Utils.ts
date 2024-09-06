@@ -110,7 +110,10 @@ export function mapToArray<K, V, Output>(map: Map<K, V>, translator: (key: K, va
  */
 export function extendAbortController(abortSignal?: AbortSignal) {
     const _abortController = new AbortController();
-    if(abortSignal!=null) abortSignal.onabort = () => _abortController.abort(abortSignal.reason);
+    if(abortSignal!=null) {
+        abortSignal.throwIfAborted();
+        abortSignal.onabort = () => _abortController.abort(abortSignal.reason);
+    }
     return _abortController;
 }
 

@@ -1,5 +1,5 @@
 import {IFromBTCWrapper} from "../IFromBTCWrapper";
-import {FromBTCSwap, FromBTCSwapState} from "./FromBTCSwap";
+import {FromBTCSwap, FromBTCSwapInit, FromBTCSwapState} from "./FromBTCSwap";
 import * as BN from "bn.js";
 import {
     ChainEvents, ChainSwapType,
@@ -45,7 +45,7 @@ export class FromBTCWrapper<
     protected readonly swapDeserializer = FromBTCSwap;
 
     readonly synchronizer: RelaySynchronizer<any,any,any>;
-    readonly btcRelay: BtcRelay<any, T, any>;
+    readonly btcRelay: BtcRelay<any, TXType, any>;
     readonly btcRpc: BitcoinRpcWithTxoListener<any>;
 
     /**
@@ -66,7 +66,7 @@ export class FromBTCWrapper<
         chainEvents: ChainEvents<T>,
         prices: ISwapPrice,
         swapDataDeserializer: new (data: any) => T,
-        btcRelay: BtcRelay<any, T, any>,
+        btcRelay: BtcRelay<any, TXType, any>,
         synchronizer: RelaySynchronizer<any,any,any>,
         btcRpc: BitcoinRpcWithTxoListener<any>,
         options?: FromBTCWrapperOptions,
@@ -380,7 +380,7 @@ export class FromBTCWrapper<
                             //Get intermediary's liquidity
                             this.verifyReturnedPrice(
                                 lp.services[SwapType.FROM_BTC], false, resp.amount, resp.total,
-                                data.getAmount(), resp, pricePrefetchPromise, abortController.signal
+                                amountData.token, resp, pricePrefetchPromise, abortController.signal
                             ),
                             this.verifyReturnedSignature(data, resp, feeRatePromise, signDataPromise, abortController.signal),
                             this.verifyIntermediaryLiquidity(lp, data.getAmount(), data.getToken(), liquidityPromise),
@@ -398,7 +398,7 @@ export class FromBTCWrapper<
                             data,
                             address: resp.address,
                             amount: resp.amount
-                        });
+                        } as FromBTCSwapInit<T>);
                     } catch (e) {
                         abortController.abort(e);
                         throw e;

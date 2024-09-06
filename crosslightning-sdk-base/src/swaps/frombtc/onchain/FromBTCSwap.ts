@@ -1,7 +1,7 @@
 import {IFromBTCSwap} from "../IFromBTCSwap";
 import {SwapType} from "../../SwapType";
 import {address} from "bitcoinjs-lib";
-import createHash from "create-hash";
+import * as createHash from "create-hash";
 import {FromBTCWrapper} from "./FromBTCWrapper";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
@@ -64,7 +64,7 @@ export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<
     //////////////////////////////
     //// Getters & utils
 
-    getInToken(): Token {
+    getInToken(): {chain: "BTC", lightning: false} {
         return {
             chain: "BTC",
             lightning: false

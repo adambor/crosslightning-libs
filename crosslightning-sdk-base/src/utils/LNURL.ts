@@ -1,7 +1,7 @@
 import {RequestError} from "../errors/RequestError";
 import * as BN from "bn.js";
 import {decode as bolt11Decode, PaymentRequestObject, TagsObject} from "bolt11";
-import createHash from "create-hash";
+import * as createHash from "create-hash";
 import {UserError} from "../errors/UserError";
 import {httpGet, tryWithRetries} from "./Utils";
 import {bech32} from "bech32";
@@ -161,7 +161,7 @@ export class LNURL {
      * @param str
      */
     static isLNURL(str: string): boolean {
-        return LNURL.isBech32LNURL(str)!=null || LNURL.isLightningAddress(str) || LNURL.isBareLNURL(str);
+        return LNURL.isBech32LNURL(str) || LNURL.isLightningAddress(str) || LNURL.isBareLNURL(str);
     }
 
     /**

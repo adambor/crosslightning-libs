@@ -21,6 +21,7 @@ import {extendAbortController, tryWithRetries} from "../../../utils/Utils";
 import {IntermediaryAPI, ToBTCLNResponseType} from "../../../intermediaries/IntermediaryAPI";
 import {RequestError} from "../../../errors/RequestError";
 import {LNURL, LNURLPayParamsWithUrl} from "../../../utils/LNURL";
+import {IToBTCSwapInit} from "../IToBTCSwap";
 
 export type AbortControllerTyped<T> = AbortController & {
     abort: (reason: T) => void,
@@ -226,7 +227,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
                 networkFeeBtc: resp.routingFeeSats,
                 confidence: resp.confidence,
                 pr
-            });
+            } as IToBTCSwapInit<T>);
         } catch (e) {
             abortController.abort(e);
             throw e;
@@ -413,7 +414,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
                 pr: invoice,
                 lnurl: payRequest.url,
                 successAction
-            });
+            } as IToBTCSwapInit<T>);
         } catch (e) {
             abortController.abort(e);
             throw e;

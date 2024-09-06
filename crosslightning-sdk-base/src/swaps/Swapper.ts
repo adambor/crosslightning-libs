@@ -22,7 +22,6 @@ import {MempoolApi} from "../btc/mempool/MempoolApi";
 import {MempoolBitcoinRpc} from "../btc/mempool/MempoolBitcoinRpc";
 import {BtcRelay, RelaySynchronizer} from "crosslightning-base/dist";
 import {MempoolBtcRelaySynchronizer} from "../btc/mempool/synchronizer/MempoolBtcRelaySynchronizer";
-import {OutOfBoundsError} from "../errors/OutOfBoundsError";
 import {LnForGasWrapper} from "./swapforgas/ln/LnForGasWrapper";
 import {LnForGasSwap} from "./swapforgas/ln/LnForGasSwap";
 import {EventEmitter} from "events";
@@ -34,6 +33,7 @@ import {Intermediary} from "../intermediaries/Intermediary";
 import {LNURL, LNURLPay, LNURLWithdraw} from "../utils/LNURL";
 import {AmountData} from "./ISwapWrapper";
 import {getLogger} from "../utils/Utils";
+import {OutOfBoundsError} from "../errors/RequestError";
 
 export type SwapperOptions<T extends SwapData> = {
     intermediaryUrl?: string | string[],
@@ -62,11 +62,11 @@ export type SwapperOptions<T extends SwapData> = {
 
 
 export class Swapper<
-    T extends SwapData,
-    E extends ChainEvents<T>,
-    P extends SwapContract<T, TXType, any, any>,
-    TokenAddressType,
-    TXType
+    T extends SwapData = SwapData,
+    E extends ChainEvents<T> = ChainEvents<T>,
+    P extends SwapContract<T, TXType, any, any> = SwapContract<T, any, any, any>,
+    TokenAddressType = any,
+    TXType = any
 > extends EventEmitter {
 
     protected readonly logger = getLogger(this.constructor.name+": ");
@@ -87,11 +87,11 @@ export class Swapper<
 
     readonly bitcoinRpc: MempoolBitcoinRpc;
     readonly bitcoinNetwork: Network;
-    readonly btcRelay: BtcRelay<any, T, MempoolBitcoinBlock>;
-    readonly synchronizer: RelaySynchronizer<any, T, MempoolBitcoinBlock>
+    readonly btcRelay: BtcRelay<any, TXType, MempoolBitcoinBlock>;
+    readonly synchronizer: RelaySynchronizer<any, TXType, MempoolBitcoinBlock>
 
     constructor(
-        btcRelay: BtcRelay<any, T, MempoolBitcoinBlock>,
+        btcRelay: BtcRelay<any, TXType, MempoolBitcoinBlock>,
         bitcoinRpc: MempoolBitcoinRpc,
         swapContract: P,
         chainEvents: E,
@@ -297,6 +297,8 @@ export class Swapper<
      * Initializes the swap storage and loads existing swaps, needs to be called before any other action
      */
     async init() {
+        this.logger.info("init(): Intializing swapper: ", this);
+
         await this.chainEvents.init();
 
         this.logger.info("init(): Initializing To BTCLN");

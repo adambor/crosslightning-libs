@@ -4,7 +4,7 @@ import {IFromBTCSwap} from "../IFromBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SignatureVerificationError, SwapCommitStatus, SwapData} from "crosslightning-base";
-import {ISwapInit, Token} from "../../ISwap";
+import {isISwapInit, ISwapInit, Token} from "../../ISwap";
 import {Buffer} from "buffer";
 import {LNURL, LNURLWithdraw, LNURLWithdrawParamsWithUrl} from "../../../utils/LNURL";
 import {UserError} from "../../../errors/UserError";
@@ -39,7 +39,8 @@ export function isFromBTCLNSwapInit<T extends SwapData>(obj: any): obj is FromBT
         typeof obj.secret==="string" &&
         (obj.lnurl==null || typeof(obj.lnurl)==="string") &&
         (obj.lnurlK1==null || typeof(obj.lnurlK1)==="string") &&
-        (obj.lnurlCallback==null || typeof(obj.lnurlCallback)==="string");
+        (obj.lnurlCallback==null || typeof(obj.lnurlCallback)==="string") &&
+        isISwapInit(obj);
 }
 
 export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<T, FromBTCLNSwapState, TXType> {
@@ -86,7 +87,7 @@ export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwa
     //////////////////////////////
     //// Getters & utils
 
-    getInToken(): Token {
+    getInToken(): {chain: "BTC", lightning: true} {
         return {
             chain: "BTC",
             lightning: true
@@ -204,7 +205,7 @@ export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwa
         let resp: PaymentAuthorizationResponse = {code: PaymentAuthorizationResponseCodes.PENDING, msg: ""};
         while(!abortController.signal.aborted && resp.code===PaymentAuthorizationResponseCodes.PENDING) {
             resp = await IntermediaryAPI.getPaymentAuthorization(this.url, this.data.getHash());
-            if(resp.code!==PaymentAuthorizationResponseCodes.PENDING)
+            if(resp.code===PaymentAuthorizationResponseCodes.PENDING)
                 await timeoutPromise(checkIntervalSeconds*1000, abortController.signal);
         }
         this.lnurlFailSignal.signal.removeEventListener("abort", lnurlFailListener);

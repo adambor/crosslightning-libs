@@ -5,7 +5,7 @@ import {Buffer} from "buffer";
 import {ISwapWrapper, ISwapWrapperOptions} from "./ISwapWrapper";
 import {SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
 import {isPriceInfoType, PriceInfoType} from "../prices/abstract/ISwapPrice";
-import {getLogger, timeoutPromise} from "../utils/Utils";
+import {getLogger, LoggerType, timeoutPromise} from "../utils/Utils";
 
 export type ISwapInit<T extends SwapData> = {
     pricingInfo: PriceInfoType,
@@ -49,11 +49,11 @@ export type Token = {
 };
 
 export abstract class ISwap<
-    T extends SwapData,
+    T extends SwapData = SwapData,
     S extends number = number,
     TXType = any
 > {
-    protected logger = getLogger(this.constructor.name+"("+this.getPaymentHashString()+"): ");
+    protected logger: LoggerType;
     protected readonly abstract TYPE: SwapType;
     protected readonly wrapper: ISwapWrapper<T, ISwap<T, S, TXType>, ISwapWrapperOptions, TXType>;
     expiry?: number;
@@ -122,6 +122,7 @@ export abstract class ISwap<
             this.claimTxId = swapInitOrObj.claimTxId;
             this.refundTxId = swapInitOrObj.refundTxId;
         }
+        this.logger = getLogger(this.constructor.name+"("+this.getPaymentHashString()+"): ");
     }
 
     /**
@@ -232,6 +233,10 @@ export abstract class ISwap<
      */
     abstract getMarketPrice(): number;
 
+    /**
+     * Returns the real swap fee percentage as PPM (parts per million)
+     */
+    abstract getRealSwapFeePercentagePPM(): BN;
 
     //////////////////////////////
     //// Getters & utils
@@ -246,6 +251,7 @@ export abstract class ISwap<
      * Returns payment hash identifier of the swap
      */
     getPaymentHash(): Buffer {
+        if(this.data==null) return null;
         return Buffer.from(this.data.getHash(), "hex");
     }
 

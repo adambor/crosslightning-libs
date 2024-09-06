@@ -220,9 +220,9 @@ export abstract class ISwapWrapper<
 
         const isValidAmount = await (
             send ?
-                this.prices.isValidAmountSend :
-                this.prices.isValidAmountReceive
-        )(amountSats, swapBaseFee, swapFeePPM, amountToken, token, abortSignal, await pricePrefetchPromise);
+                this.prices.isValidAmountSend(amountSats, swapBaseFee, swapFeePPM, amountToken, token, abortSignal, await pricePrefetchPromise) :
+                this.prices.isValidAmountReceive(amountSats, swapBaseFee, swapFeePPM, amountToken, token, abortSignal, await pricePrefetchPromise)
+        );
         if(!isValidAmount.isValid) throw new IntermediaryError("Fee too high");
 
         return isValidAmount;
@@ -295,6 +295,7 @@ export abstract class ISwapWrapper<
         }
         return true;
     }
+    private boundProcessEvents = this.processEvents.bind(this);
 
     /**
      * Initializes the swap wrapper, needs to be called before any other action can be taken
@@ -340,7 +341,7 @@ export abstract class ISwapWrapper<
 
             //Register the correct event handler
             this.chainEvents.unregisterListener(initListener);
-            this.chainEvents.registerListener(this.processEvents);
+            this.chainEvents.registerListener(this.boundProcessEvents);
         }
 
         this.logger.info("init(): Swap wrapper initialized, num swaps: "+this.swapData.size);
@@ -354,7 +355,7 @@ export abstract class ISwapWrapper<
     public async stop() {
         this.swapData = null;
         this.isInitialized = false;
-        this.chainEvents.unregisterListener(this.processEvents);
+        this.chainEvents.unregisterListener(this.boundProcessEvents);
         this.logger.info("stop(): Swap wrapper stopped");
     }
 
@@ -371,7 +372,7 @@ export abstract class ISwapWrapper<
     public getAllSwapsSync(): S[] {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        return mapToArray(this.swapData, (key, value: S) => value).filter(this.isOurSwap);
+        return mapToArray(this.swapData, (key, value: S) => value).filter(this.isOurSwap.bind(this));
     }
 
 }

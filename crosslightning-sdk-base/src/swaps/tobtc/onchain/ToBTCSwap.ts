@@ -79,7 +79,7 @@ export class ToBTCSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T, T
         return this.amount
     }
 
-    getOutToken(): Token {
+    getOutToken(): {chain: "BTC", lightning: false} {
         return {
             chain: "BTC",
             lightning: false

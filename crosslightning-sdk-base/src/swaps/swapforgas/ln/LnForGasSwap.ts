@@ -1,7 +1,7 @@
 import {decode as bolt11Decode} from "bolt11";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
-import {SwapData} from "crosslightning-base";
+import {SwapData, TokenAddress} from "crosslightning-base";
 import {LnForGasWrapper} from "./LnForGasWrapper";
 import {Buffer} from "buffer";
 import {PaymentAuthError} from "../../../errors/PaymentAuthError";
@@ -131,14 +131,14 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
         return (decoded.timeExpireDate*1000);
     }
 
-    getInToken(): Token {
+    getInToken(): { chain: "BTC", lightning: true } {
         return {
             chain: "BTC",
             lightning: true
         }
     }
 
-    getOutToken(): Token {
+    getOutToken(): {chain: "SC", address: TokenAddress} {
         return {
             chain: "SC",
             address: this.wrapper.contract.getNativeCurrencyAddress()
@@ -191,6 +191,11 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
             amountInSrcToken: this.swapFeeBtc,
             amountInDstToken: this.swapFee
         };
+    }
+
+    getRealSwapFeePercentagePPM(): BN {
+        const feeWithoutBaseFee = this.swapFeeBtc.sub(this.pricingInfo.satsBaseFee);
+        return feeWithoutBaseFee.mul(new BN(1000000)).div(this.getInAmountWithoutFee());
     }
 
 

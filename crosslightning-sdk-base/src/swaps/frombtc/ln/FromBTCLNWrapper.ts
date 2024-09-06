@@ -1,4 +1,4 @@
-import {FromBTCLNSwap, FromBTCLNSwapState} from "./FromBTCLNSwap";
+import {FromBTCLNSwap, FromBTCLNSwapInit, FromBTCLNSwapState} from "./FromBTCLNSwap";
 import {IFromBTCWrapper} from "../IFromBTCWrapper";
 import * as BN from "bn.js";
 import {decode as bolt11Decode, PaymentRequestObject, TagsObject} from "bolt11";
@@ -15,8 +15,8 @@ import {
 import {Intermediary} from "../../../intermediaries/Intermediary";
 import {Buffer} from "buffer";
 import {UserError} from "../../../errors/UserError";
-import randomBytes from "randombytes";
-import createHash from "create-hash";
+import * as randomBytes from "randombytes";
+import * as createHash from "create-hash";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {SwapType} from "../../SwapType";
 import {extendAbortController, tryWithRetries} from "../../../utils/Utils";
@@ -327,8 +327,8 @@ export class FromBTCLNWrapper<
                                 resp.securityDeposit, new BN(0)
                             ),
                             pr: resp.pr,
-                            secret: secret
-                        });
+                            secret: secret.toString("hex")
+                        } as FromBTCLNSwapInit<T>);
                     } catch (e) {
                         abortController.abort(e);
                         throw e;

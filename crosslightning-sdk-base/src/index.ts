@@ -11,7 +11,6 @@ export * from "./btc/BitcoinRpcWithTxoListener";
 export * from "./btc/LightningNetworkApi";
 
 export * from "./errors/IntermediaryError";
-export * from "./errors/OutOfBoundsError";
 export * from "./errors/PaymentAuthError";
 export * from "./errors/RequestError";
 export * from "./errors/UserError";
@@ -50,3 +49,7 @@ export * from "./swaps/frombtc/ln/FromBTCLNSwap";
 export * from "./swaps/frombtc/ln/FromBTCLNWrapper";
 export * from "./swaps/frombtc/onchain/FromBTCSwap";
 export * from "./swaps/frombtc/onchain/FromBTCWrapper";
+export * from "./swaps/swapforgas/ln/LnForGasSwap";
+export * from "./swaps/swapforgas/ln/LnForGasWrapper";
+
+export * from "./utils/LNURL";

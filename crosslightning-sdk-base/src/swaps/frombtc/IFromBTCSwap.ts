@@ -62,10 +62,18 @@ export abstract class IFromBTCSwap<
         return this.pricingInfo.realPriceUSatPerToken.toNumber()/100000000000000;
     }
 
+    getRealSwapFeePercentagePPM(): BN {
+        const feeWithoutBaseFee = this.swapFeeBtc.sub(this.pricingInfo.satsBaseFee);
+        return feeWithoutBaseFee.mul(new BN(1000000)).div(this.getInAmountWithoutFee());
+    }
+
+
     //////////////////////////////
     //// Getters & utils
 
-    getOutToken(): Token {
+    abstract getInToken(): {chain: "BTC", lightning: boolean};
+
+    getOutToken(): {chain: "SC", address: TokenAddress} {
         return {
             chain: "SC",
             address: this.data.getToken()
