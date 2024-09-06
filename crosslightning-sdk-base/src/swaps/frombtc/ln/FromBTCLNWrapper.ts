@@ -71,33 +71,29 @@ export class FromBTCLNWrapper<
                 return true;
             }
 
-            const result = await swap.checkLPPaymentReceived(false);
+            const result = await swap.checkIntermediaryPaymentReceived(false);
             if(result!==null) return true;
         }
 
         if(swap.state===FromBTCLNSwapState.PR_PAID) {
             //Check if it's already committed
-            try {
-                const status = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
-                switch(status) {
-                    case SwapCommitStatus.PAID:
-                        swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
-                        return true;
-                    case SwapCommitStatus.EXPIRED:
-                    case SwapCommitStatus.REFUNDABLE:
-                        swap.state = FromBTCLNSwapState.FAILED;
-                        return true;
-                    case SwapCommitStatus.COMMITED:
-                        swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
-                        return true;
-                }
-
-                if(!await swap.isQuoteValid()) {
+            const status = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
+            switch(status) {
+                case SwapCommitStatus.PAID:
+                    swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
+                    return true;
+                case SwapCommitStatus.EXPIRED:
+                case SwapCommitStatus.REFUNDABLE:
                     swap.state = FromBTCLNSwapState.FAILED;
                     return true;
-                }
-            } catch (e) {
-                console.error(e);
+                case SwapCommitStatus.COMMITED:
+                    swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
+                    return true;
+            }
+
+            if(!await swap.isQuoteValid()) {
+                swap.state = FromBTCLNSwapState.FAILED;
+                return true;
             }
 
             return false;
@@ -105,19 +101,17 @@ export class FromBTCLNWrapper<
 
         if(swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
             //Check if it's already successfully paid
-            try {
-                const commitStatus = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
-                if(commitStatus===SwapCommitStatus.PAID) {
-                    swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
-                    return true;
-                }
-                if(commitStatus===SwapCommitStatus.NOT_COMMITED || commitStatus===SwapCommitStatus.EXPIRED || commitStatus===SwapCommitStatus.REFUNDABLE) {
-                    swap.state = FromBTCLNSwapState.FAILED;
-                    return true;
-                }
-            } catch (e) {
-                console.error(e);
+            const commitStatus = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
+            if(commitStatus===SwapCommitStatus.PAID) {
+                swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
+                return true;
             }
+
+            if(commitStatus===SwapCommitStatus.NOT_COMMITED || commitStatus===SwapCommitStatus.EXPIRED || commitStatus===SwapCommitStatus.REFUNDABLE) {
+                swap.state = FromBTCLNSwapState.FAILED;
+                return true;
+            }
+
             return false;
         }
     }
@@ -173,7 +167,7 @@ export class FromBTCLNWrapper<
             if(pubkey==null) return null;
             return this.lnApi.getLNNodeLiquidity(pubkey)
         }).catch(e => {
-            console.error(e);
+            this.logger.error("preFetchLnCapacity(): Error: ", e);
             return null;
         })
     }
@@ -232,6 +226,7 @@ export class FromBTCLNWrapper<
     ): Promise<void> {
         let result: LNNodeLiquidity = await lnCapacityPrefetchPromise;
         if(result==null) result = await this.lnApi.getLNNodeLiquidity(decodedPr.payeeNodeKey);
+        if(abortSignal!=null) abortSignal.throwIfAborted();
 
         if(result===null) throw new IntermediaryError("LP's lightning node not found in the lightning network graph!");
 
@@ -327,20 +322,9 @@ export class FromBTCLNWrapper<
                             swapFee: resp.swapFee,
                             feeRate: await preFetches.feeRatePromise,
                             data: await this.contract.createSwapData(
-                                ChainSwapType.HTLC,
-                                lp.address,
-                                this.contract.getAddress(),
-                                amountData.token,
-                                resp.total,
-                                paymentHash.toString("hex"),
-                                null,
-                                null,
-                                null,
-                                null,
-                                false,
-                                true,
-                                resp.securityDeposit,
-                                new BN(0)
+                                ChainSwapType.HTLC, lp.address, this.contract.getAddress(), amountData.token,
+                                resp.total, paymentHash.toString("hex"), null, null, null, null, false, true,
+                                resp.securityDeposit, new BN(0)
                             ),
                             pr: resp.pr,
                             secret: secret

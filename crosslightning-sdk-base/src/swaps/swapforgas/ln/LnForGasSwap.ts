@@ -5,7 +5,7 @@ import {SwapData} from "crosslightning-base";
 import {LnForGasWrapper} from "./LnForGasWrapper";
 import {Buffer} from "buffer";
 import {PaymentAuthError} from "../../../errors/PaymentAuthError";
-import {timeoutPromise} from "../../../utils/Utils";
+import {getLogger, timeoutPromise} from "../../../utils/Utils";
 import {Fee, isISwapInit, ISwap, ISwapInit, Token} from "../../ISwap";
 import {PriceInfoType} from "../../../prices/abstract/ISwapPrice";
 import {
@@ -61,6 +61,7 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
             this.scTxId = initOrObj.scTxId;
         }
         this.tryCalculateSwapFee();
+        this.logger = getLogger(this.constructor.name+"("+this.getPaymentHashString()+"): ");
     }
 
     /**
@@ -105,6 +106,7 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
     }
 
     getPaymentHash(): Buffer {
+        if(this.pr==null) return null;
         const decodedPR = bolt11Decode(this.pr);
         return Buffer.from(decodedPR.tagsObject.payment_hash, "hex");
     }

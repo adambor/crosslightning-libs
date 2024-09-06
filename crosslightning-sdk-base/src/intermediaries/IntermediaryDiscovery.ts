@@ -1,13 +1,11 @@
 import {Intermediary, ServicesType} from "./Intermediary";
-import randomBytes from "randombytes";
 import {SwapType} from "../swaps/SwapType";
 import * as BN from "bn.js";
 import {SwapData, TokenAddress} from "crosslightning-base";
 import {SwapContract} from "crosslightning-base/dist";
 import {EventEmitter} from "events";
 import {Buffer} from "buffer";
-import {httpGet, tryWithRetries} from "../utils/Utils";
-import {RequestError} from "../errors/RequestError";
+import {getLogger, httpGet, tryWithRetries} from "../utils/Utils";
 import {IntermediaryAPI} from "./IntermediaryAPI";
 
 export enum SwapHandlerType {
@@ -89,9 +87,14 @@ function getIntermediaryComparator(swapType: SwapType, tokenAddress: TokenAddres
 
 }
 
+const logger = getLogger("IntermediaryDiscovery: ");
+
 const REGISTRY_URL = "https://api.github.com/repos/adambor/SolLightning-registry/contents/registry.json?ref=main";
 
-export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
+export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter<{
+    added: [Intermediary[]],
+    removed: [Intermediary[]]
+}> {
 
     intermediaries: Intermediary[];
 
@@ -120,10 +123,7 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
             return this.overrideNodeUrls;
         }
 
-        const response = await tryWithRetries(
-            () => httpGet<{content: string}>(this.registryUrl, this.httpRequestTimeout, abortSignal),
-            null, RequestError, abortSignal
-        );
+        const response = await httpGet<{content: string}>(this.registryUrl, this.httpRequestTimeout, abortSignal);
 
         const content = response.content.replace(new RegExp("\\n", "g"), "");
 
@@ -158,6 +158,8 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
     private async fetchIntermediaries(abortSignal?: AbortSignal): Promise<Intermediary[]> {
         const urls = await this.getIntermediaryUrls(abortSignal);
 
+        logger.debug("fetchIntermediaries(): Pinging intermediaries: ", urls.join());
+
         const promises: Promise<Intermediary | null>[] = urls.map(url => this.getNodeInfo(url, abortSignal).then((node) => {
             const services: ServicesType = {};
             for(let key in node.info.services) {
@@ -165,7 +167,7 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
             }
             return new Intermediary(url, node.address, services);
         }).catch(e => {
-            console.error(e);
+            logger.error("fetchIntermediaries(): Error contacting intermediary "+url+": ", e);
             return null;
         }));
 
@@ -184,7 +186,7 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
         this.intermediaries = fetchedIntermediaries;
         this.emit("added", fetchedIntermediaries);
 
-        console.log("Loaded intermediaries: ", this.intermediaries);
+        logger.info("reloadIntermediaries(): Using active intermediaries: ", fetchedIntermediaries.map(lp => lp.url).join());
     }
 
     /**
@@ -193,6 +195,7 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
      * @param abortSignal
      */
     init(abortSignal?: AbortSignal): Promise<void> {
+        logger.info("init(): Initializing with registryUrl: "+this.registryUrl+" intermediary array: "+this.overrideNodeUrls.join());
         return this.reloadIntermediaries(abortSignal);
     }
 
@@ -297,6 +300,7 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
     removeIntermediary(intermediary: Intermediary): boolean {
         const index = this.intermediaries.indexOf(intermediary);
         if(index>=0) {
+            logger.info("removeIntermediary(): Removing intermediary: "+intermediary.url);
             this.intermediaries.splice(index, 1);
             this.emit("removed", [intermediary]);
             return true;

@@ -31,6 +31,7 @@ export function isFromBTCSwapInit<T extends SwapData>(obj: any): obj is FromBTCS
 export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<T, FromBTCSwapState, TXType> {
     protected readonly TYPE = SwapType.FROM_BTC;
 
+    protected readonly PRE_COMMIT_STATE = FromBTCSwapState.PR_CREATED;
     protected readonly COMMIT_STATE = FromBTCSwapState.CLAIM_COMMITED;
     protected readonly CLAIM_STATE = FromBTCSwapState.CLAIM_CLAIMED;
     protected readonly FAIL_STATE = FromBTCSwapState.FAILED;
@@ -106,6 +107,14 @@ export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<
 
     isClaimable(): boolean {
         return this.state===FromBTCSwapState.BTC_TX_CONFIRMED || (this.state===FromBTCSwapState.CLAIM_COMMITED && !this.wrapper.contract.isExpired(this.data) && this.getTimeoutTime()>Date.now());
+    }
+
+    isSuccessful(): boolean {
+        return this.state===FromBTCSwapState.CLAIM_CLAIMED;
+    }
+
+    isFailed(): boolean {
+        return this.state===FromBTCSwapState.FAILED;
     }
 
     isQuoteExpired(): boolean {

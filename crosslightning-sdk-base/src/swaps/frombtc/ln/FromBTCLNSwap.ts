@@ -15,7 +15,7 @@ import {
 } from "../../../intermediaries/IntermediaryAPI";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {PaymentAuthError} from "../../../errors/PaymentAuthError";
-import {timeoutPromise, tryWithRetries} from "../../../utils/Utils";
+import {getLogger, timeoutPromise, tryWithRetries} from "../../../utils/Utils";
 
 export enum FromBTCLNSwapState {
     QUOTE_EXPIRED = -2,
@@ -45,6 +45,7 @@ export function isFromBTCLNSwapInit<T extends SwapData>(obj: any): obj is FromBT
 export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<T, FromBTCLNSwapState, TXType> {
     protected readonly TYPE = SwapType.FROM_BTCLN;
 
+    protected readonly PRE_COMMIT_STATE = FromBTCLNSwapState.PR_PAID;
     protected readonly COMMIT_STATE = FromBTCLNSwapState.CLAIM_COMMITED;
     protected readonly CLAIM_STATE = FromBTCLNSwapState.CLAIM_CLAIMED;
     protected readonly FAIL_STATE = FromBTCLNSwapState.FAILED;
@@ -78,6 +79,7 @@ export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwa
             this.prPosted = initOrObject.prPosted;
         }
         this.tryCalculateSwapFee();
+        this.logger = getLogger(this.constructor.name+"("+this.getPaymentHashString()+"): ");
     }
 
 
@@ -92,6 +94,7 @@ export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwa
     }
 
     getPaymentHash(): Buffer {
+        if(this.pr==null) return null;
         const decodedPR = bolt11Decode(this.pr);
         return Buffer.from(decodedPR.tagsObject.payment_hash, "hex");
     }
@@ -122,6 +125,14 @@ export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwa
 
     isClaimable(): boolean {
         return this.state===FromBTCLNSwapState.PR_PAID || this.state===FromBTCLNSwapState.CLAIM_COMMITED;
+    }
+
+    isSuccessful(): boolean {
+        return this.state===FromBTCLNSwapState.CLAIM_CLAIMED;
+    }
+
+    isFailed(): boolean {
+        return this.state===FromBTCLNSwapState.FAILED;
     }
 
     isQuoteExpired(): boolean {
@@ -224,7 +235,7 @@ export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwa
      *
      * @param save If the new swap state should be saved
      */
-    async checkLPPaymentReceived(save: boolean = true): Promise<boolean | null> {
+    async checkIntermediaryPaymentReceived(save: boolean = true): Promise<boolean | null> {
         if(
             this.state===FromBTCLNSwapState.PR_PAID ||
             this.state===FromBTCLNSwapState.CLAIM_COMMITED ||

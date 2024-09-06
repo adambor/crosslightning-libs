@@ -4,7 +4,7 @@ import {Fee, ISwap, ISwapInit, Token} from "../ISwap";
 import * as BN from "bn.js";
 import {SignatureVerificationError, SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
 import {PriceInfoType} from "../../prices/abstract/ISwapPrice";
-import {tryWithRetries} from "../../utils/Utils";
+import {extendAbortController, tryWithRetries} from "../../utils/Utils";
 import {ISwapWrapperOptions} from "../ISwapWrapper";
 
 
@@ -14,6 +14,7 @@ export abstract class IFromBTCSwap<
     TXType = any
 > extends ISwap<T, S, TXType> {
 
+    protected abstract readonly PRE_COMMIT_STATE: S;
     protected abstract readonly COMMIT_STATE: S;
     protected abstract readonly CLAIM_STATE: S;
     protected abstract readonly FAIL_STATE: S;
@@ -179,13 +180,16 @@ export abstract class IFromBTCSwap<
 
     async waitTillCommited(abortSignal?: AbortSignal): Promise<void> {
         if(this.state===this.COMMIT_STATE || this.state===this.CLAIM_STATE) return Promise.resolve();
+        if(this.state!==this.PRE_COMMIT_STATE) throw new Error("Invalid state");
 
-        const abortController = new AbortController();
-        if(abortSignal!=null) abortSignal.addEventListener("abort", () => abortController.abort(abortSignal.reason));
-        await Promise.race([
-            this.watchdogWaitTillCommited(abortController.signal),
-            this.waitTillState(this.COMMIT_STATE, "gte", abortController.signal)
+        const abortController = extendAbortController(abortSignal);
+        const result = await Promise.race([
+            this.watchdogWaitTillCommited(abortController.signal).then(() => 0),
+            this.waitTillState(this.COMMIT_STATE, "gte", abortController.signal).then(() => 1)
         ]);
+
+        if(result===0) this.logger.debug("waitTillCommited(): Resolved from watchdog");
+        if(result===1) this.logger.debug("waitTillCommited(): Resolved from state changed");
 
         if(this.state<this.COMMIT_STATE) await this._saveAndEmit(this.COMMIT_STATE);
     }
@@ -215,10 +219,12 @@ export abstract class IFromBTCSwap<
     /**
      * Waits till the swap is successfully claimed
      *
-     * @param abortSignal   AbortSignal
+     * @param abortSignal AbortSignal
+     * @throws {Error} If swap is in invalid state (must be COMMIT)
      */
     async waitTillClaimed(abortSignal?: AbortSignal): Promise<void> {
         if(this.state===this.CLAIM_STATE) return Promise.resolve();
+        if(this.state!==this.COMMIT_STATE) throw new Error("Invalid state (not COMMIT)");
 
         const abortController = new AbortController();
         if(abortSignal!=null) abortSignal.addEventListener("abort", () => abortController.abort(abortSignal.reason));
@@ -226,6 +232,12 @@ export abstract class IFromBTCSwap<
             this.watchdogWaitTillResult(abortController.signal),
             this.waitTillState(this.CLAIM_STATE, "eq", abortController.signal)
         ]);
+
+        if(res==null) {
+            this.logger.debug("waitTillClaimed(): Resolved from state change");
+        } else {
+            this.logger.debug("waitTillClaimed(): Resolved from watchdog");
+        }
 
         if(res===SwapCommitStatus.PAID) {
             if(this.state<this.CLAIM_STATE) await this._saveAndEmit(this.CLAIM_STATE);

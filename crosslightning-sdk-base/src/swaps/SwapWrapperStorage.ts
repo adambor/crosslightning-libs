@@ -81,15 +81,13 @@ export class SwapWrapperStorage<T extends ISwap<any>> {
      * @param wrapper Swap wrapper
      * @param type Constructor for the swap
      */
-    async loadSwapData(wrapper: ISwapWrapper<any, T>, type: new(wrapper: ISwapWrapper<any, T>, data: any) => T): Promise<{
-        [paymentHash: string]: T
-    }> {
+    async loadSwapData(
+        wrapper: ISwapWrapper<any, T>,
+        type: new(wrapper: ISwapWrapper<any, T>, data: any) => T
+    ): Promise<Map<string, T>> {
         const res = await this.storage.loadData(type.bind(null, wrapper));
-        const obj: {
-            [paymentHash: string]: T
-        } = {};
-        res.forEach(swap => obj[swap.getPaymentHash().toString("hex")] = swap);
-        return obj;
+
+        return new Map<string, T>(res.map(value => [value.getPaymentHashString(), value]));
     }
 
 }

@@ -1,10 +1,12 @@
 import {StorageObject, IStorageManager} from "crosslightning-base";
 import * as fs from "fs/promises";
+import {getLogger, LoggerType} from "../utils/Utils";
 
 /**
  * StorageManager using local filesystem to persists data, creates a new file for every save object
  */
 export class FileSystemStorageManager<T extends StorageObject> implements IStorageManager<T> {
+    protected readonly logger: LoggerType;
 
     private readonly directory: string;
     data: {
@@ -13,11 +15,12 @@ export class FileSystemStorageManager<T extends StorageObject> implements IStora
 
     constructor(directory: string) {
         this.directory = directory;
+        this.logger = getLogger("FileSystemStorageManager("+directory+"): ");
     }
 
     async init(): Promise<void> {
         try {
-            await fs.mkdir(this.directory)
+            await fs.mkdir(this.directory);
         } catch (e) {}
     }
 
@@ -41,7 +44,7 @@ export class FileSystemStorageManager<T extends StorageObject> implements IStora
             if(this.data[paymentHash]!=null) delete this.data[paymentHash];
             await fs.rm(this.directory+"/"+paymentHash+".json");
         } catch (e) {
-            console.error(e);
+            this.logger.error("removeData(): Error: ", e);
         }
     }
 
@@ -50,7 +53,7 @@ export class FileSystemStorageManager<T extends StorageObject> implements IStora
         try {
             files = await fs.readdir(this.directory);
         } catch (e) {
-            console.error(e);
+            this.logger.error("loadData(): Error: ", e);
             return [];
         }
 

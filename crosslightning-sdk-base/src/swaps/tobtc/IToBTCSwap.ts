@@ -9,7 +9,7 @@ import {
     RefundAuthorizationResponseCodes
 } from "../../intermediaries/IntermediaryAPI";
 import {IntermediaryError} from "../../errors/IntermediaryError";
-import {timeoutPromise, tryWithRetries} from "../../utils/Utils";
+import {extendAbortController, timeoutPromise, tryWithRetries} from "../../utils/Utils";
 import {ISwapWrapperOptions} from "../ISwapWrapper";
 
 export type IToBTCSwapInit<T extends SwapData> = ISwapInit<T> & {
@@ -108,6 +108,14 @@ export abstract class IToBTCSwap<T extends SwapData, TXType> extends ISwap<T, To
 
     isQuoteExpired(): boolean {
         return this.state===ToBTCSwapState.QUOTE_EXPIRED;
+    }
+
+    isSuccessful(): boolean {
+        return this.state===ToBTCSwapState.CLAIMED;
+    }
+
+    isFailed(): boolean {
+        return this.state===ToBTCSwapState.REFUNDED;
     }
 
     async isQuoteValid(): Promise<boolean> {
@@ -222,16 +230,21 @@ export abstract class IToBTCSwap<T extends SwapData, TXType> extends ISwap<T, To
      * Waits till a swap is committed, should be called after sending the commit transactions manually
      *
      * @param abortSignal   AbortSignal
+     * @throws {Error} If swap is not in the correct state (must be CREATED)
      */
     async waitTillCommited(abortSignal?: AbortSignal): Promise<void> {
-        if(this.state===ToBTCSwapState.COMMITED) return Promise.resolve();
+        if(this.state===ToBTCSwapState.COMMITED || this.state===ToBTCSwapState.CLAIMED) return Promise.resolve();
+        if(this.state!==ToBTCSwapState.CREATED) throw new Error("Invalid state (not CREATED)");
 
-        const abortController = new AbortController();
-        if(abortSignal!=null) abortSignal.addEventListener("abort", () => abortController.abort(abortSignal.reason));
-        await Promise.race([
-            this.watchdogWaitTillCommited(abortController.signal),
-            this.waitTillState(ToBTCSwapState.COMMITED, "gte", abortController.signal)
+        const abortController = extendAbortController(abortSignal);
+        const result = await Promise.race([
+            this.watchdogWaitTillCommited(abortController.signal).then(() => 0),
+            this.waitTillState(ToBTCSwapState.COMMITED, "gte", abortController.signal).then(() => 1)
         ]);
+        abortController.abort();
+
+        if(result===0) this.logger.debug("waitTillCommited(): Resolved from watchdog");
+        if(result===1) this.logger.debug("waitTillCommited(): Resolved from state change");
 
         if(this.state<ToBTCSwapState.COMMITED) await this._saveAndEmit(ToBTCSwapState.COMMITED);
     }
@@ -251,19 +264,24 @@ export abstract class IToBTCSwap<T extends SwapData, TXType> extends ISwap<T, To
      * @throws {IntermediaryError} If a swap is determined expired by the intermediary, but it is actually still valid
      * @throws {SignatureVerificationError} If the swap should be cooperatively refundable but the intermediary returned
      *  invalid refund signature
-     * @throws {Error} When swap expires
+     * @throws {Error} When swap expires or if the swap has invalid state (must be COMMITED)
      */
     async waitForPayment(abortSignal?: AbortSignal, checkIntervalSeconds?: number): Promise<boolean> {
         if(this.state===ToBTCSwapState.CLAIMED) return Promise.resolve(true);
+        if(this.state!==ToBTCSwapState.COMMITED) throw new Error("Invalid state (not COMMITED)");
 
-        const abortController = new AbortController();
-        if(abortSignal!=null) abortSignal.addEventListener("abort", () => abortController.abort(abortSignal.reason));
+        const abortController = extendAbortController(abortSignal);
         const result = await Promise.race([
             this.waitTillState(ToBTCSwapState.CLAIMED, "eq", abortController.signal) as Promise<null>,
-            this.waitTillIntermediarySwapProcessed(abortSignal, checkIntervalSeconds)
+            this.waitTillIntermediarySwapProcessed(abortController.signal, checkIntervalSeconds)
         ]);
+        abortController.abort();
 
-        if(typeof result !== "object") return true;
+        if(typeof result !== "object") {
+            this.logger.debug("waitTillRefunded(): Resolved from state change");
+            return true;
+        }
+        this.logger.debug("waitTillRefunded(): Resolved from intermediary response");
 
         switch(result.code) {
             case RefundAuthorizationResponseCodes.PAID:
@@ -388,9 +406,11 @@ export abstract class IToBTCSwap<T extends SwapData, TXType> extends ISwap<T, To
      * Waits till a swap is refunded, should be called after sending the refund transactions manually
      *
      * @param abortSignal   AbortSignal
+     * @throws {Error} When swap is not in a valid state (must be COMMITED)
      */
     async waitTillRefunded(abortSignal?: AbortSignal): Promise<void> {
         if(this.state===ToBTCSwapState.REFUNDED) return Promise.resolve();
+        if(this.state!==ToBTCSwapState.COMMITED) throw new Error("Invalid state (not COMMITED)");
 
         const abortController = new AbortController();
         if(abortSignal!=null) abortSignal.addEventListener("abort", () => abortController.abort(abortSignal.reason));
@@ -399,6 +419,12 @@ export abstract class IToBTCSwap<T extends SwapData, TXType> extends ISwap<T, To
             this.waitTillState(ToBTCSwapState.REFUNDED, "eq", abortController.signal)
         ]);
         abortController.abort();
+
+        if(res==null) {
+            this.logger.debug("waitTillRefunded(): Resolved from state change");
+        } else {
+            this.logger.debug("waitTillRefunded(): Resolved from watchdog");
+        }
 
         if(res===SwapCommitStatus.PAID) {
             await this._saveAndEmit(ToBTCSwapState.CLAIMED);

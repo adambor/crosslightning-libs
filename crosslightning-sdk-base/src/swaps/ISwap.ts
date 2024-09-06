@@ -5,7 +5,7 @@ import {Buffer} from "buffer";
 import {ISwapWrapper, ISwapWrapperOptions} from "./ISwapWrapper";
 import {SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
 import {isPriceInfoType, PriceInfoType} from "../prices/abstract/ISwapPrice";
-import {timeoutPromise} from "../utils/Utils";
+import {getLogger, timeoutPromise} from "../utils/Utils";
 
 export type ISwapInit<T extends SwapData> = {
     pricingInfo: PriceInfoType,
@@ -53,6 +53,7 @@ export abstract class ISwap<
     S extends number = number,
     TXType = any
 > {
+    protected logger = getLogger(this.constructor.name+"("+this.getPaymentHashString()+"): ");
     protected readonly abstract TYPE: SwapType;
     protected readonly wrapper: ISwapWrapper<T, ISwap<T, S, TXType>, ISwapWrapperOptions, TXType>;
     expiry?: number;
@@ -85,10 +86,10 @@ export abstract class ISwap<
         swapState: [ISwap<T>]
     }> = new EventEmitter<{swapState: [ISwap<T>]}>();
 
-    protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>, ISwapWrapperOptions>, obj: any);
-    protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>, ISwapWrapperOptions>, swapInit: ISwapInit<T>);
+    protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>>, obj: any);
+    protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>>, swapInit: ISwapInit<T>);
     protected constructor(
-        wrapper: ISwapWrapper<T, ISwap<T, S>, ISwapWrapperOptions>,
+        wrapper: ISwapWrapper<T, ISwap<T, S>>,
         swapInitOrObj: ISwapInit<T> | any,
     ) {
         this.wrapper = wrapper;
@@ -137,7 +138,7 @@ export abstract class ISwap<
             try {
                 status = await this.wrapper.contract.getCommitStatus(this.data);
             } catch (e) {
-                console.error(e);
+                this.logger.error("watchdogWaitTillCommited(): Error when fetching commit status: ", e);
             }
         }
         if(abortSignal!=null) abortSignal.throwIfAborted();
@@ -159,7 +160,7 @@ export abstract class ISwap<
             try {
                 status = await this.wrapper.contract.getCommitStatus(this.data);
             } catch (e) {
-                console.error(e);
+                this.logger.error("watchdogWaitTillResult(): Error when fetching commit status: ", e);
             }
         }
         if(abortSignal!=null) abortSignal.throwIfAborted();
@@ -235,6 +236,12 @@ export abstract class ISwap<
     //////////////////////////////
     //// Getters & utils
 
+    getPaymentHashString(): string {
+        const paymentHash = this.getPaymentHash();
+        if(paymentHash==null) return null;
+        return paymentHash.toString("hex");
+    }
+
     /**
      * Returns payment hash identifier of the swap
      */
@@ -279,9 +286,19 @@ export abstract class ISwap<
     abstract isFinished(): boolean;
 
     /**
-     * Checks whether the swap's quote has expired and cannot be committed anymore
+     * Checks whether the swap's quote has expired and cannot be committed anymore, we can remove such swap
      */
     abstract isQuoteExpired(): boolean;
+
+    /**
+     * Returns whether the swap finished successful
+     */
+    abstract isSuccessful(): boolean;
+
+    /**
+     * Returns whether the swap failed (e.g. was refunded)
+     */
+    abstract isFailed(): boolean;
 
     /**
      * Checks if the swap's quote is still valid
@@ -357,7 +374,7 @@ export abstract class ISwap<
     }
 
     _save(): Promise<void> {
-        this.wrapper.swapData[this.getPaymentHash().toString("hex")] = this;
+        this.wrapper.swapData.set(this.getPaymentHashString(), this);
         return this.wrapper.storage.saveSwapData(this);
     }
 

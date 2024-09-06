@@ -5,7 +5,7 @@ import {BinancePriceProvider} from "./providers/BinancePriceProvider";
 import {OKXPriceProvider} from "./providers/OKXPriceProvider";
 import {CoinGeckoPriceProvider} from "./providers/CoinGeckoPriceProvider";
 import {CoinPaprikaPriceProvider} from "./providers/CoinPaprikaPriceProvider";
-import {promiseAny, objectMap, tryWithRetries} from "../utils/Utils";
+import {promiseAny, objectMap, tryWithRetries, getLogger} from "../utils/Utils";
 import {ICachedSwapPrice} from "./abstract/ICachedSwapPrice";
 import {RequestError} from "../errors/RequestError";
 
@@ -18,6 +18,8 @@ export type RedundantSwapPriceAssets = {
         decimals: number
     }
 };
+
+const logger = getLogger("RedundantSwapPrice: ");
 
 /**
  * Swap price API using multiple price sources, handles errors on the APIs and automatically switches between them, such
@@ -108,7 +110,7 @@ export class RedundantSwapPrice extends ICachedSwapPrice {
         try {
             return await promiseAny<BN>(this.getMaybeOperationalPriceApis().map(
                 obj => obj.priceApi.getPrice(token, abortSignal).then(price => {
-                    console.log("Price from: "+obj.priceApi.constructor.name+": ", price.toString(10));
+                    logger.debug("fetchPrice(): Price from "+obj.priceApi.constructor.name+": ", price.toString(10));
                     obj.operational = true;
                     return price;
                 }).catch(e => {

@@ -26,6 +26,24 @@ function checkError(e: any, errorAllowed: ((e: any) => boolean) | Constructor<Er
     return errorAllowed(e);
 }
 
+export type LoggerType = {
+    debug: (msg: string, ...args: any[]) => void,
+    info: (msg: string, ...args: any[]) => void,
+    warn: (msg: string, ...args: any[]) => void,
+    error: (msg: string, ...args: any[]) => void
+};
+
+export function getLogger(prefix: string): LoggerType {
+    return {
+        debug: (msg, ...args) => console.debug(prefix+msg, ...args),
+        info: (msg, ...args) => console.info(prefix+msg, ...args),
+        warn: (msg, ...args) => console.warn(prefix+msg, ...args),
+        error: (msg, ...args) => console.error(prefix+msg, ...args)
+    };
+}
+
+const logger = getLogger("Utils: ");
+
 /**
  * Returns a promise that resolves when any of the passed promises resolves, and rejects if all the underlying
  *  promises fail with an array of errors returned by the respective promises
@@ -71,6 +89,21 @@ export function objectMap<InputType, OutputType>(
 }
 
 /**
+ * Maps the entries from the map to the array using the translator function
+ *
+ * @param map
+ * @param translator
+ */
+export function mapToArray<K, V, Output>(map: Map<K, V>, translator: (key: K, value: V) => Output): Output[] {
+    const arr: Output[] = Array(map.size);
+    let pointer = 0;
+    for(let entry of map.entries()) {
+        arr[pointer++] = translator(entry[0], entry[1]);
+    }
+    return arr;
+}
+
+/**
  * Creates a new abort controller that will abort if the passed abort signal aborts
  *
  * @param abortSignal
@@ -110,7 +143,7 @@ export async function tryWithRetries<T>(func: (retryCount?: number) => Promise<T
         } catch (e) {
             if (errorAllowed != null && checkError(e, errorAllowed)) throw e;
             err = e;
-            console.error("tryWithRetries: " + i, e);
+            logger.warn("tryWithRetries(): Error on try number: " + i, e);
         }
         if (abortSignal != null && abortSignal.aborted) throw (abortSignal.reason || new Error("Aborted"));
         if (i !== retryPolicy.maxRetries - 1) {

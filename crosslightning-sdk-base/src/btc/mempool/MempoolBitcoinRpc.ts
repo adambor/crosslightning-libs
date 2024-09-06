@@ -230,9 +230,7 @@ export class MempoolBitcoinRpc implements BitcoinRpcWithTxoListener<MempoolBitco
         tx: BtcTxWithBlockheight,
         vout: number
     }> {
-        if(abortSignal!=null && abortSignal.aborted) {
-            throw new Error("Aborted");
-        }
+        if(abortSignal!=null) abortSignal.throwIfAborted();
 
         while(abortSignal==null || !abortSignal.aborted) {
             await timeoutPromise((intervalSeconds || 5)*1000, abortSignal);
@@ -253,7 +251,7 @@ export class MempoolBitcoinRpc implements BitcoinRpcWithTxoListener<MempoolBitco
             if(confirmationDelay===0) return result;
         }
 
-        throw new Error("Aborted");
+        abortSignal.throwIfAborted();
     }
 
     async getLNNodeLiquidity(pubkey: string): Promise<LNNodeLiquidity> {

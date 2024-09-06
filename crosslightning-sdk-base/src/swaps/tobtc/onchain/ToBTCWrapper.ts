@@ -150,7 +150,6 @@ export class ToBTCWrapper<T extends SwapData, TXType = any> extends IToBTCWrappe
         const maxAllowedExpiryTimestamp: BN = currentTimestamp.add(maxAllowedExpiryDelta);
 
         if(data.getExpiry().gt(maxAllowedExpiryTimestamp)) {
-            console.error("Expiry time returned: "+data.getExpiry()+" maxAllowed: "+maxAllowedExpiryTimestamp);
             throw new IntermediaryError("Expiry time returned too high!");
         }
 

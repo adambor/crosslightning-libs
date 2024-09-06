@@ -19,7 +19,7 @@ import * as BN from "bn.js";
 import {Intermediary} from "../intermediaries/Intermediary";
 import {IntermediaryError} from "../errors/IntermediaryError";
 import {SwapHandlerInfoType} from "../intermediaries/IntermediaryDiscovery";
-import {tryWithRetries} from "../utils/Utils";
+import {getLogger, mapToArray, objectMap, tryWithRetries} from "../utils/Utils";
 
 export type AmountData = {
     amount: BN,
@@ -38,6 +38,7 @@ export abstract class ISwapWrapper<
     O extends ISwapWrapperOptions = ISwapWrapperOptions,
     TXType = any
 > {
+    protected readonly logger = getLogger(this.constructor.name+": ");
 
     protected readonly abstract swapDeserializer: new (wrapper: ISwapWrapper<T, S, O, TXType>, data: any) => S;
 
@@ -51,7 +52,7 @@ export abstract class ISwapWrapper<
     }>;
     readonly options: O;
 
-    swapData: {[paymentHash: string]: S};
+    swapData: Map<string, S>;
     isInitialized: boolean = false;
 
     /**
@@ -91,7 +92,7 @@ export abstract class ISwapWrapper<
      */
     protected preFetchPrice(amountData: Omit<AmountData, "amount">, abortSignal?: AbortSignal): Promise<BN | null> {
         return this.prices.preFetchPrice(amountData.token, abortSignal).catch(e => {
-            console.error(e);
+            this.logger.error("preFetchPrice(): Error: ", e);
             return null;
         });
     }
@@ -118,7 +119,7 @@ export abstract class ISwapWrapper<
             if(res==null) throw new IntermediaryError("Invalid data returned - invalid LP vault");
             return res;
         }).catch(e => {
-            console.error(e);
+            this.logger.error("preFetchIntermediaryReputation(): Error: ", e);
             abortController.abort(e);
             return null;
         });
@@ -137,7 +138,7 @@ export abstract class ISwapWrapper<
             if(obj==null) return null;
             return this.contract.preFetchForInitSignatureVerification(obj);
         }).catch(e => {
-            console.error(e);
+            this.logger.error("preFetchSignData(): Error: ", e);
             return null;
         });
     }
@@ -277,13 +278,15 @@ export abstract class ISwapWrapper<
     private async processEvents(events: SwapEvent<T>[]): Promise<boolean> {
         for(let event of events) {
             const paymentHash = event.paymentHash;
-            const swap: S = this.swapData[paymentHash];
+            const swap: S = this.swapData.get(paymentHash);
             if(swap==null) continue;
 
             let swapChanged: boolean = false;
             if(event instanceof InitializeEvent) swapChanged = await this.processEventInitialize(swap, event);
             if(event instanceof ClaimEvent) swapChanged = await this.processEventClaim(swap, event);
             if(event instanceof RefundEvent) swapChanged = await this.processEventRefund(swap, event);
+
+            this.logger.info("processEvents(): "+event.constructor.name+" processed for "+swap.getPaymentHashString()+" swap: ", swap);
 
             if(swapChanged) {
                 await (swap.isQuoteExpired() ? this.storage.removeSwapData(swap) : swap._save());
@@ -317,15 +320,15 @@ export abstract class ISwapWrapper<
         const removeSwaps: S[] = [];
 
         await Promise.all(
-            Object.keys(this.swapData)
-                .map(paymentHash => this.swapData[paymentHash])
-                .map(swap => this.checkPastSwap(swap).then(changed => {
+            mapToArray(this.swapData, (key: string, swap: S) =>
+                this.checkPastSwap(swap).then(changed => {
                     if(swap.isQuoteExpired()) {
                         removeSwaps.push(swap);
                     } else {
                         if(changed) changedSwaps.push(swap);
                     }
-                }).catch(e => console.error(e)))
+                }).catch(e => this.logger.error("init(): Error when checking swap "+swap.getPaymentHashString()+": ", e))
+            )
         );
 
         await this.storage.removeSwapDataArr(removeSwaps);
@@ -340,6 +343,8 @@ export abstract class ISwapWrapper<
             this.chainEvents.registerListener(this.processEvents);
         }
 
+        this.logger.info("init(): Swap wrapper initialized, num swaps: "+this.swapData.size);
+
         this.isInitialized = true;
     }
 
@@ -350,6 +355,7 @@ export abstract class ISwapWrapper<
         this.swapData = null;
         this.isInitialized = false;
         this.chainEvents.unregisterListener(this.processEvents);
+        this.logger.info("stop(): Swap wrapper stopped");
     }
 
     /**
@@ -365,9 +371,7 @@ export abstract class ISwapWrapper<
     public getAllSwapsSync(): S[] {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        return Object.keys(this.swapData)
-            .map(paymentHash => this.swapData[paymentHash])
-            .filter(this.isOurSwap);
+        return mapToArray(this.swapData, (key, value: S) => value).filter(this.isOurSwap);
     }
 
 }

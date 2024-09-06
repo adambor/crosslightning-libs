@@ -1,18 +1,14 @@
 import {ParamDecoder} from "../ParamDecoder";
 import {Buffer} from "buffer";
-import {RequestSchema, RequestSchemaResultPromise, verifyField} from "../SchemaVerifier";
-import {objectMap} from "../../Utils";
 
-export class ResponseParamDecoder<T extends RequestSchema> extends ParamDecoder {
+export class ResponseParamDecoder extends ParamDecoder {
 
     private readonly reader?: ReadableStreamDefaultReader<Uint8Array>;
     private readonly abortSignal?: AbortSignal;
-    private readonly schema: T;
 
-    constructor(resp: Response, schema: T, abortSignal?: AbortSignal) {
+    constructor(resp: Response, abortSignal?: AbortSignal) {
         super();
 
-        this.schema = schema;
         this.abortSignal = abortSignal;
 
         try {
@@ -53,19 +49,4 @@ export class ResponseParamDecoder<T extends RequestSchema> extends ParamDecoder 
             super.onData(Buffer.from(readResp.value));
         }
     }
-
-    /**
-     * Returns the promises of the params as defined by the schema
-     */
-    public getParams(): RequestSchemaResultPromise<T> {
-        return objectMap(this.schema, (schemaValue, key) => super.getParam(key).then(value => {
-            const result = verifyField(schemaValue, value);
-            if(result===undefined) {
-                return Promise.reject(new Error("Invalid field value"));
-            } else {
-                return result;
-            }
-        })) as any;
-    }
-
 }

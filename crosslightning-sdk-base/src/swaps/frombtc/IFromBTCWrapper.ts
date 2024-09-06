@@ -42,7 +42,7 @@ export abstract class IFromBTCWrapper<
             () => this.contract.getInitFeeRate(null, this.contract.getAddress(), amountData.token, hash),
             null, null, abortController.signal
         ).catch(e => {
-            console.error(e);
+            this.logger.error("preFetchFeeRate(): Error: ", e);
             abortController.abort(e);
             return null;
         });
@@ -61,6 +61,7 @@ export abstract class IFromBTCWrapper<
             () => this.contract.getIntermediaryBalance(lp.address, amountData.token),
             null, null, abortController.signal
         ).catch(e => {
+            this.logger.error("preFetchIntermediaryLiquidity(): Error: ", e);
             abortController.abort(e);
             return null;
         })

@@ -67,7 +67,7 @@ export abstract class IToBTCWrapper<
             () => this.contract.getInitPayInFeeRate(this.contract.getAddress(), null, amountData.token, hash),
             null, null, abortController.signal
         ).catch(e => {
-            console.error(e);
+            this.logger.error("preFetchFeeRate(): Error: ", e);
             abortController.abort(e);
             return null;
         });

@@ -87,57 +87,49 @@ export class FromBTCWrapper<
 
     protected async checkPastSwap(swap: FromBTCSwap<T, TXType>): Promise<boolean> {
         if(swap.state===FromBTCSwapState.PR_CREATED) {
-            try {
-                const status = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
-                switch(status) {
-                    case SwapCommitStatus.COMMITED:
-                        swap.state = FromBTCSwapState.CLAIM_COMMITED;
-                        return true;
-                    case SwapCommitStatus.REFUNDABLE:
-                        swap.state = FromBTCSwapState.FAILED;
-                        return true;
-                    case SwapCommitStatus.EXPIRED:
-                        swap.state = FromBTCSwapState.QUOTE_EXPIRED;
-                        return true;
-                    case SwapCommitStatus.PAID:
-                        swap.state = FromBTCSwapState.CLAIM_CLAIMED;
-                        return true;
-                }
-
-                if(!await swap.isQuoteValid()) {
+            const status = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
+            switch(status) {
+                case SwapCommitStatus.COMMITED:
+                    swap.state = FromBTCSwapState.CLAIM_COMMITED;
+                    return true;
+                case SwapCommitStatus.REFUNDABLE:
+                    swap.state = FromBTCSwapState.FAILED;
+                    return true;
+                case SwapCommitStatus.EXPIRED:
                     swap.state = FromBTCSwapState.QUOTE_EXPIRED;
                     return true;
-                }
-            } catch (e) {
-                console.error(e);
+                case SwapCommitStatus.PAID:
+                    swap.state = FromBTCSwapState.CLAIM_CLAIMED;
+                    return true;
+            }
+
+            if(!await swap.isQuoteValid()) {
+                swap.state = FromBTCSwapState.QUOTE_EXPIRED;
+                return true;
             }
 
             return false;
         }
 
         if(swap.state===FromBTCSwapState.CLAIM_COMMITED || swap.state===FromBTCSwapState.BTC_TX_CONFIRMED) {
-            try {
-                const status = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
-                switch(status) {
-                    case SwapCommitStatus.PAID:
-                        swap.state = FromBTCSwapState.CLAIM_CLAIMED;
+            const status = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
+            switch(status) {
+                case SwapCommitStatus.PAID:
+                    swap.state = FromBTCSwapState.CLAIM_CLAIMED;
+                    return true;
+                case SwapCommitStatus.NOT_COMMITED:
+                case SwapCommitStatus.EXPIRED:
+                    swap.state = FromBTCSwapState.FAILED;
+                    return true;
+                case SwapCommitStatus.COMMITED:
+                    const res = await swap.getBitcoinPayment();
+                    if(res!=null && res.confirmations>=swap.data.getConfirmations()) {
+                        swap.txId = res.txId;
+                        swap.vout = res.vout;
+                        swap.state = FromBTCSwapState.BTC_TX_CONFIRMED;
                         return true;
-                    case SwapCommitStatus.NOT_COMMITED:
-                    case SwapCommitStatus.EXPIRED:
-                        swap.state = FromBTCSwapState.FAILED;
-                        return true;
-                    case SwapCommitStatus.COMMITED:
-                        const res = await swap.getBitcoinPayment();
-                        if(res!=null && res.confirmations>=swap.data.getConfirmations()) {
-                            swap.txId = res.txId;
-                            swap.vout = res.vout;
-                            swap.state = FromBTCSwapState.BTC_TX_CONFIRMED;
-                            return true;
-                        }
-                        break;
-                }
-            } catch (e) {
-                console.error(e);
+                    }
+                    break;
             }
         }
     }

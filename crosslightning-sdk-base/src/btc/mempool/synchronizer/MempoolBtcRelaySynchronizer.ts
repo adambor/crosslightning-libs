@@ -2,8 +2,9 @@ import {BtcRelay, BtcStoredHeader, RelaySynchronizer} from "crosslightning-base/
 import {MempoolBitcoinBlock} from "../MempoolBitcoinBlock";
 import {MempoolBitcoinRpc} from "../MempoolBitcoinRpc";
 
-import {timeoutPromise} from "../../../utils/Utils";
+import {getLogger, timeoutPromise} from "../../../utils/Utils";
 
+const logger = getLogger("MempoolBtcRelaySynchronizer: ")
 
 export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> implements RelaySynchronizer<B, TX, MempoolBitcoinBlock > {
 
@@ -45,8 +46,8 @@ export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> imp
         let spvTipBlockHeader = resultBitcoinHeader;
         const btcRelayTipBlockHash = spvTipBlockHeader.getHash();
 
-        console.log("Retrieved stored header with commitment: ", cacheData.lastStoredHeader);
-        console.log("SPV tip header: ", spvTipBlockHeader);
+        logger.debug("Retrieved stored header with commitment: ", cacheData.lastStoredHeader);
+        logger.debug("SPV tip bitcoin RPC block header: ", spvTipBlockHeader);
 
         let spvTipBlockHeight = spvTipBlockHeader.height;
 
@@ -62,7 +63,6 @@ export class MempoolBtcRelaySynchronizer<B extends BtcStoredHeader<any>, TX> imp
         let forkFee: string;
         let mainFee: string;
         const saveHeaders = async (headerCache: MempoolBitcoinBlock[]) => {
-            console.log("Header cache: ", headerCache);
             if(cacheData.forkId===-1) {
                 if(mainFee==null) mainFee = await this.btcRelay.getMainFeeRate();
                 cacheData = await this.btcRelay.saveNewForkHeaders(headerCache, cacheData.lastStoredHeader, tipData.chainWork, mainFee);

@@ -1,12 +1,15 @@
 import {RequestSchema, RequestSchemaResultPromise, verifyField} from "../SchemaVerifier";
 import {RequestError} from "../../../errors/RequestError";
-import {extendAbortController, objectMap, timeoutSignal} from "../../Utils";
+import {extendAbortController, getLogger, objectMap, timeoutSignal} from "../../Utils";
 import {StreamParamEncoder} from "./StreamParamEncoder";
 import {ResponseParamDecoder} from "./ResponseParamDecoder";
+
 
 export type RequestBody = {
     [key: string]: Promise<any> | any
 }
+
+const logger = getLogger("StreamingFetch: ");
 
 //https://developer.chrome.com/docs/capabilities/web-apis/fetch-streaming-requests#feature_detection
 const supportsRequestStreams: boolean = (() => {
@@ -29,6 +32,8 @@ const supportsRequestStreams: boolean = (() => {
         return false;
     }
 })();
+
+logger.info("Environment supports request stream: "+supportsRequestStreams);
 
 /**
  * Sends a POST request to the specified URL in a streaming request/response mode
@@ -57,6 +62,8 @@ export async function streamingFetchPromise<T extends RequestSchema>(
         headers: {}
     };
 
+    const startTime = Date.now();
+
     const immediateValues: any = {};
     const promises: Promise<any>[] = [];
 
@@ -80,6 +87,7 @@ export async function streamingFetchPromise<T extends RequestSchema>(
 
         if(signal!=null) signal.throwIfAborted();
 
+        logger.debug(url+": Sending request ("+(Date.now()-startTime)+"ms) (non-streaming): ", immediateValues);
         init.body = JSON.stringify(immediateValues);
         init.headers['content-type'] = "application/json";
     } else {
@@ -89,6 +97,7 @@ export async function streamingFetchPromise<T extends RequestSchema>(
         for(let key in body) {
             if(body[key] instanceof Promise) {
                 promises.push(body[key].then((val) => {
+                    logger.debug(url+": Send param ("+(Date.now()-startTime)+"ms) (streaming): ", {[key]: val});
                     return outputStream.writeParams({
                         [key]: val
                     });
@@ -104,6 +113,7 @@ export async function streamingFetchPromise<T extends RequestSchema>(
             init.headers['content-type'] = "application/x-multiple-json";
             (init as any).duplex = "half";
 
+            logger.debug(url+": Sending request ("+(Date.now()-startTime)+"ms) (streaming): ", immediateValues);
             promises.push(outputStream.writeParams(immediateValues));
 
             const abortController = extendAbortController(signal);
@@ -116,6 +126,7 @@ export async function streamingFetchPromise<T extends RequestSchema>(
 
             signal.addEventListener("abort", () => outputStream.end());
         } else {
+            logger.debug(url+": Sending request ("+(Date.now()-startTime)+"ms) (non-streaming): ", immediateValues);
             init.body = JSON.stringify(immediateValues);
             init.headers['content-type'] = "application/json";
         }
@@ -133,6 +144,8 @@ export async function streamingFetchPromise<T extends RequestSchema>(
         }
     });
 
+    logger.debug(url+": Response status ("+(Date.now()-startTime)+"ms) "+(streamRequest ? "(streaming)" : "(non streaming)")+": ", resp.status);
+
     if(resp.status!==200) {
         let respTxt: string;
         try {
@@ -145,6 +158,8 @@ export async function streamingFetchPromise<T extends RequestSchema>(
 
     if(resp.headers.get("content-type")!=="application/x-multiple-json") {
         const respBody = await resp.json();
+
+        logger.debug(url+": Response read ("+(Date.now()-startTime)+"ms) (non streaming): ", respBody);
 
         return objectMap<any, Promise<any>>(schema, (schemaValue, key) => {
             const value = respBody[key];
@@ -161,7 +176,16 @@ export async function streamingFetchPromise<T extends RequestSchema>(
             }
         }) as any;
     } else {
-        const decoder = new ResponseParamDecoder<T>(resp, schema, init.signal);
-        return decoder.getParams();
+        const decoder = new ResponseParamDecoder(resp, init.signal);
+
+        return objectMap(schema, (schemaValue, key) => decoder.getParam(key).then(value => {
+            logger.debug(url+": Response frame read ("+(Date.now()-startTime)+"ms) (streaming): ", {[key]: value});
+            const result = verifyField(schemaValue, value);
+            if(result===undefined) {
+                return Promise.reject(new Error("Invalid field value"));
+            } else {
+                return result;
+            }
+        })) as any;
     }
 }

@@ -81,8 +81,6 @@ export abstract class ISwapPrice {
         const calculatedAmtInToken = await this.getFromBtcSwapAmount(totalSats, token, abortSignal, preFetchedPrice);
         const realPriceUSatPerToken = totalUSats.mul(new BN(10).pow(new BN(this.getDecimals(token)))).div(calculatedAmtInToken);
 
-        console.log("Calculated amount in token: ", calculatedAmtInToken.toString(10));
-
         const difference = paidToken.sub(calculatedAmtInToken); //Will be >0 if we need to pay more than we should've
         const differencePPM = difference.mul(new BN(1000000)).div(calculatedAmtInToken);
 
@@ -130,11 +128,8 @@ export abstract class ISwapPrice {
             swapPriceUSatPerToken
         };
 
-
         const calculatedAmtInToken = await this.getFromBtcSwapAmount(totalSats, token, abortSignal, preFetchedPrice);
         const realPriceUSatPerToken = totalUSats.mul(new BN(10).pow(new BN(this.getDecimals(token)))).div(calculatedAmtInToken);
-
-        console.log("Calculated amount in token: ", calculatedAmtInToken.toString(10));
 
         const difference = calculatedAmtInToken.sub(receiveToken); //Will be >0 if we receive less than we should've
         const differencePPM = difference.mul(new BN(1000000)).div(calculatedAmtInToken);

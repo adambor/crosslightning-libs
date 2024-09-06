@@ -1,4 +1,5 @@
 import {IStorageManager, StorageObject} from "crosslightning-base";
+import {getLogger, LoggerType} from "../utils/Utils";
 
 /**
  * StorageManager using browser's IndexedDB storage, also migrates the data from prior LocalStorage API, if that was
@@ -6,12 +7,15 @@ import {IStorageManager, StorageObject} from "crosslightning-base";
  */
 export class IndexedDBStorageManager<T extends StorageObject> implements IStorageManager<T> {
 
+    protected readonly logger: LoggerType;
+
     storageKey: string;
     db: IDBDatabase;
     data: { [p: string]: T } = {};
 
     constructor(storageKey: string) {
         this.storageKey = storageKey;
+        this.logger = getLogger("IndexedDBStorageManager("+this.storageKey+"): ");
     }
 
     private executeTransaction<T>(cbk: (tx: IDBObjectStore) => IDBRequest<T>, readonly: boolean): Promise<T> {
@@ -45,15 +49,16 @@ export class IndexedDBStorageManager<T extends StorageObject> implements IStorag
         try {
             data = JSON.parse(txt);
         } catch (e) {
-            console.error(e);
+            this.logger.error("tryMigrate(): Tried to migrate the database, but cannot parse old local storage!");
             return false;
         }
 
         await this.executeTransactionArr<IDBValidKey>(store => Object.keys(data).map(id => {
             return store.put({id, data: data[id]});
         }), false);
-
         window.localStorage.removeItem(this.storageKey);
+
+        this.logger.info("tryMigrate(): Database successfully migrated from localStorage to indexedDB!");
 
         return true;
     }
