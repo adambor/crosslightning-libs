@@ -4,11 +4,11 @@ import {isIToBTCSwapInit, IToBTCSwap, IToBTCSwapInit} from "../IToBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
-import {decipherAES, LNURLPaySuccessAction} from "js-lnurl/lib";
 import {Buffer} from "buffer";
 import {Token} from "../../ISwap";
 import createHash from "create-hash";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
+import {LNURL, LNURLDecodedSuccessAction, LNURLPaySuccessAction} from "../../../utils/LNURL";
 
 function isLNURLPaySuccessAction(obj: any): obj is LNURLPaySuccessAction {
     return obj != null &&
@@ -151,32 +151,8 @@ export class ToBTCLNSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T,
     /**
      * Returns the success action after a successful payment, else null
      */
-    getSuccessAction(): {
-        description: string,
-        text?: string,
-        url?: string
-    } | null {
-        if(this.secret==null) {
-            return null;
-        }
-        if(this.successAction.tag==="message") {
-            return {
-                description: this.successAction.message
-            };
-        }
-        if(this.successAction.tag==="url") {
-            return {
-                description: this.successAction.description,
-                url: this.successAction.url
-            };
-        }
-        if(this.successAction.tag==="aes") {
-            const deciphered = decipherAES(this.successAction, this.secret);
-            return {
-                description: this.successAction.description,
-                text: deciphered
-            };
-        }
+    getSuccessAction(): LNURLDecodedSuccessAction | null {
+        return LNURL.decodeSuccessAction(this.successAction, this.secret);
     }
 
 

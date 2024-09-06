@@ -1,11 +1,56 @@
 import {RequestError} from "../errors/RequestError";
-import {findlnurl, getParams, LNURLPayParams, LNURLWithdrawParams, LNURLPaySuccessAction} from "js-lnurl";
 import * as BN from "bn.js";
 import {decode as bolt11Decode, PaymentRequestObject, TagsObject} from "bolt11";
 import createHash from "create-hash";
-import {LNURLPayResult} from "js-lnurl/lib/types";
 import {UserError} from "../errors/UserError";
 import {httpGet, tryWithRetries} from "./Utils";
+import {bech32} from "bech32";
+import {ModeOfOperation} from "aes-js";
+
+export type LNURLWithdrawParams = {
+    tag: "withdrawRequest";
+    k1: string;
+    callback: string;
+    domain: string;
+    minWithdrawable: number;
+    maxWithdrawable: number;
+    defaultDescription: string;
+    balanceCheck?: string;
+    payLink?: string;
+}
+
+export type LNURLPayParams = {
+    tag: "payRequest";
+    callback: string;
+    domain: string;
+    minSendable: number;
+    maxSendable: number;
+    metadata: string;
+    decodedMetadata: string[][];
+    commentAllowed: number;
+}
+
+export type LNURLPayResult = {
+    pr: string;
+    successAction: LNURLPaySuccessAction | null;
+    disposable: boolean | null;
+    routes: [];
+}
+
+export type LNURLPaySuccessAction = {
+    tag: string;
+    description: string | null;
+    url: string | null;
+    message: string | null;
+    ciphertext: string | null;
+    iv: string | null;
+};
+
+export type LNURLDecodedSuccessAction = {
+    description: string,
+    text?: string,
+    url?: string
+};
 
 export type LNURLWithdrawParamsWithUrl = LNURLWithdrawParams & {url: string};
 export type LNURLPayParamsWithUrl = LNURLPayParams & {url: string};
@@ -80,6 +125,16 @@ export const MAIL_REGEX = /(?:[A-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-z0-9!#$%&'*+/=
 
 export class LNURL {
 
+    private static findBech32LNURL(str: string) {
+        const arr = /,*?((lnurl)([0-9]{1,}[a-z0-9]+){1})/.exec(str.toLowerCase());
+        if(arr==null) return null;
+        return arr[1];
+    }
+
+    private static isBech32LNURL(str: string): boolean {
+        return this.findBech32LNURL(str)!=null;
+    }
+
     /**
      * Checks whether a provided string is bare (non bech32 encoded) lnurl
      * @param str
@@ -106,7 +161,7 @@ export class LNURL {
      * @param str
      */
     static isLNURL(str: string): boolean {
-        return findlnurl(str)!=null || LNURL.isLightningAddress(str) || LNURL.isBareLNURL(str);
+        return LNURL.isBech32LNURL(str)!=null || LNURL.isLightningAddress(str) || LNURL.isBareLNURL(str);
     }
 
     /**
@@ -138,6 +193,15 @@ export class LNURL {
             }
 
             return scheme+"://"+data;
+        } else {
+            const lnurl = LNURL.findBech32LNURL(str);
+
+            if(lnurl!=null) {
+                let { prefix: hrp, words: dataPart } = bech32.decode(lnurl, 2000);
+                let requestByteArray = bech32.fromWords(dataPart);
+
+                return Buffer.from(requestByteArray).toString();
+            }
         }
         return null;
     }
@@ -180,11 +244,6 @@ export class LNURL {
                 }
             }
 
-            res = response;
-        } else {
-            const lnurl = findlnurl(str);
-            if(lnurl==null) return null;
-            const response = await getParams(lnurl);
             if(!isLNURLPayParams(response) || !isLNURLWithdrawParams(response)) return null;
 
             res = response;
@@ -352,6 +411,32 @@ export class LNURL {
         if(amount.gt(max)) throw new UserError("Invoice amount more than maximum LNURL-withdraw limit");
 
         return await LNURL.postInvoiceToLNURLWithdraw(withdrawRequest, lnpr);
+    }
+
+    static decodeSuccessAction(successAction: LNURLPaySuccessAction, secret: string): LNURLDecodedSuccessAction | null {
+        if(secret==null) return null;
+        if(successAction.tag==="message") {
+            return {
+                description: successAction.message
+            };
+        }
+        if(successAction.tag==="url") {
+            return {
+                description: successAction.description,
+                url: successAction.url
+            };
+        }
+        if(successAction.tag==="aes") {
+            const CBC = new ModeOfOperation.cbc(Buffer.from(secret, "hex"), Buffer.from(successAction.iv, "hex"));
+            let plaintext = CBC.decrypt(Buffer.from(successAction.ciphertext, "base64"));
+            // remove padding
+            const size = plaintext.length;
+            const pad = plaintext[size - 1];
+            return {
+                description: successAction.description,
+                text: Buffer.from(plaintext).toString("utf8", 0, size - pad)
+            };
+        }
     }
 
 }
