@@ -157,6 +157,10 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
         return this.state===LnForGasSwapState.FAILED;
     }
 
+    isSuccessful(): boolean {
+        return this.state===LnForGasSwapState.FINISHED;
+    }
+
     isQuoteValid(): Promise<boolean> {
         return Promise.resolve(this.getTimeoutTime()>Date.now());
     }
@@ -264,4 +268,5 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
             scTxId: this.scTxId
         };
     }
+
 }

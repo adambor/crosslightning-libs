@@ -33,6 +33,7 @@ import {LocalStorageManager} from "../storage/LocalStorageManager";
 import {Intermediary} from "../intermediaries/Intermediary";
 import {LNURL, LNURLPay, LNURLWithdraw} from "../utils/LNURL";
 import {AmountData} from "./ISwapWrapper";
+import {getLogger} from "../utils/Utils";
 
 export type SwapperOptions<T extends SwapData> = {
     intermediaryUrl?: string | string[],
@@ -59,6 +60,7 @@ export type SwapperOptions<T extends SwapData> = {
     defaultAdditionalParameters?: {[key: string]: any}
 };
 
+
 export class Swapper<
     T extends SwapData,
     E extends ChainEvents<T>,
@@ -66,6 +68,8 @@ export class Swapper<
     TokenAddressType,
     TXType
 > extends EventEmitter {
+
+    protected readonly logger = getLogger(this.constructor.name+": ");
 
     readonly tobtcln: ToBTCLNWrapper<T>;
     readonly tobtc: ToBTCWrapper<T>;
@@ -295,21 +299,20 @@ export class Swapper<
     async init() {
         await this.chainEvents.init();
 
-        console.log("Initializing To BTCLN");
+        this.logger.info("init(): Initializing To BTCLN");
         await this.tobtcln.init();
-        console.log("Initializing To BTC");
+        this.logger.info("init(): Initializing To BTC");
         await this.tobtc.init();
-        console.log("Initializing From BTCLN");
+        this.logger.info("init(): Initializing From BTCLN");
         await this.frombtcln.init();
-        console.log("Initializing From BTC");
+        this.logger.info("init(): Initializing From BTC");
         await this.frombtc.init();
 
-        console.log("Initializing LN for Gas");
+        this.logger.info("init(): Initializing To LN for gas");
         await this.lnforgas.init();
 
-        if(this.intermediaryDiscovery!=null) {
-            await this.intermediaryDiscovery.init();
-        }
+        this.logger.info("init(): Initializing intermediary discovery");
+        await this.intermediaryDiscovery.init();
     }
 
     /**
@@ -368,9 +371,8 @@ export class Swapper<
         }
 
         if(candidates.length===0)  {
-            console.log("No valid intermediary found, reloading intermediary database...");
+            this.logger.warn("createSwap(): No valid intermediary found, reloading intermediary database...");
             await this.intermediaryDiscovery.reloadIntermediaries();
-            console.log("Intermediaries loaded!");
 
             if(!inBtc) {
                 //Get candidates not based on the amount
@@ -384,7 +386,7 @@ export class Swapper<
 
 
         const abortController = new AbortController();
-        console.log("[Swapper] Swap candidates: ", candidates);
+        this.logger.debug("createSwap() Swap candidates: ", candidates.map(lp => lp.url).join());
         const quotePromises: {quote: Promise<S>, intermediary: Intermediary}[] = await create(candidates, abortController.signal);
 
         const quotes = await new Promise<{
@@ -434,7 +436,7 @@ export class Swapper<
                             max = BN.max(max, e.max);
                         }
                     }
-                    console.error(data.intermediary.url+" error: ", e);
+                    this.logger.error("createSwap(): Intermediary "+data.intermediary.url+" error: ", e);
                     error = e;
 
                     if(numResolved===quotePromises.length) {
@@ -464,7 +466,7 @@ export class Swapper<
             }
         });
 
-        console.log("Sorted quotes, best price to worst", quotes)
+        this.logger.debug("createSwap(): Sorted quotes, best price to worst: ", quotes)
 
         return quotes[0].quote;
     }
