@@ -259,6 +259,7 @@ export class LNURL {
      * @param comment Optional comment for the payment request
      * @param timeout Request timeout in milliseconds
      * @param abortSignal
+     * @throws {RequestError} If the response is non-200, status: ERROR, or invalid format
      */
     static async useLNURLPay(
         payRequest: LNURLPayParamsWithUrl,
@@ -310,6 +311,7 @@ export class LNURL {
      * @param withdrawRequest.k1 K1 parameter
      * @param withdrawRequest.callback A URL to call
      * @param lnpr bolt11 lightning network invoice to submit to the withdrawal endpoint
+     * @throws {RequestError} If the response is non-200 or status: ERROR
      */
     static async postInvoiceToLNURLWithdraw(
         withdrawRequest: {k1: string, callback: string},
@@ -334,6 +336,8 @@ export class LNURL {
      *
      * @param withdrawRequest Withdrawal request as returned from getLNURL call
      * @param lnpr bolt11 lightning network invoice to submit to the withdrawal endpoint
+     * @throws {UserError} In case the provided bolt11 lightning invoice has an amount that is out of bounds for
+     *  the specified LNURL-withdraw request
      */
     static async useLNURLWithdraw(
         withdrawRequest: LNURLWithdrawParamsWithUrl,

@@ -33,6 +33,7 @@ export abstract class IPriceProvider {
      *
      * @param token
      * @param abortSignal
+     * @throws {Error} if token is not found
      */
     getPrice(token: TokenAddress, abortSignal?: AbortSignal): Promise<BN> {
         let tokenAddress: string = token.toString();
@@ -54,6 +55,7 @@ export abstract class IPriceProvider {
      *
      * @param token
      * @protected
+     * @throws {Error} If token is not found
      */
     getDecimals(token: TokenAddress): number {
         const coin = this.coinsMap[token.toString()];

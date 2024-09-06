@@ -149,6 +149,7 @@ export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<
      * @param abortSignal Abort signal
      * @param checkIntervalSeconds How often to check the bitcoin transaction
      * @param updateCallback Callback called when txId is found, and also called with subsequent confirmations
+     * @throws {Error} if in invalid state (must be CLAIM_COMMITED)
      */
     async waitForBitcoinTransaction(
         abortSignal?: AbortSignal,
@@ -168,7 +169,7 @@ export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<
             checkIntervalSeconds
         );
 
-        if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
+        if(abortSignal!=null) abortSignal.throwIfAborted();
 
         this.txId = result.tx.txid;
         this.vout = result.vout;
@@ -206,6 +207,7 @@ export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<
     /**
      * Returns transactions required to claim the swap on-chain (and possibly also sync the bitcoin light client)
      *  after a bitcoin transaction was sent and confirmed
+     * @throws {Error} If the swap is in invalid state (must be BTC_TX_CONFIRMED)
      */
     async txsClaim(): Promise<TXType[]> {
         if(!this.canClaim()) throw new Error("Must be in BTC_TX_CONFIRMED state!");

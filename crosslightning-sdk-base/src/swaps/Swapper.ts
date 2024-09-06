@@ -55,7 +55,8 @@ export type SwapperOptions<T extends SwapData> = {
 
     getRequestTimeout?: number,
     postRequestTimeout?: number,
-    defaultTrustedIntermediaryUrl?: string
+    defaultTrustedIntermediaryUrl?: string,
+    defaultAdditionalParameters?: {[key: string]: any}
 };
 
 export class Swapper<
@@ -344,6 +345,7 @@ export class Swapper<
      * @param swapType Swap type of the execution
      * @param maxWaitTimeMS Maximum waiting time after the first intermediary returns the quote
      * @private
+     * @throws {Error} when no intermediary was found
      */
     private async createSwap<S extends ISwap<T>>(
         create: (candidates: Intermediary[], abortSignal: AbortSignal) => Promise<{
@@ -485,7 +487,7 @@ export class Swapper<
         confirmationTarget?: number,
         confirmations?: number,
         exactIn?: boolean,
-        additionalParams?: Record<string, any>
+        additionalParams: Record<string, any> = this.options.defaultAdditionalParameters
     ): Promise<ToBTCSwap<T, TXType>> {
         if(confirmationTarget==null) confirmationTarget = 3;
         if(confirmations==null) confirmations = 2;
@@ -527,7 +529,7 @@ export class Swapper<
         expirySeconds: number = 3*24*3600,
         maxRoutingBaseFee?: BN,
         maxRoutingPPM?: BN,
-        additionalParams?: Record<string, any>
+        additionalParams: Record<string, any> = this.options.defaultAdditionalParameters
     ): Promise<ToBTCLNSwap<T, TXType>> {
         const parsedPR = bolt11Decode(paymentRequest);
         const amountData = {
@@ -575,7 +577,7 @@ export class Swapper<
         maxRoutingBaseFee?: BN,
         maxRoutingPPM?: BN,
         exactIn?: boolean,
-        additionalParams?: Record<string, any>
+        additionalParams: Record<string, any>  = this.options.defaultAdditionalParameters
     ): Promise<ToBTCLNSwap<T, TXType>> {
         const amountData = {
             amount,
@@ -613,7 +615,7 @@ export class Swapper<
         tokenAddress: TokenAddressType,
         amount: BN,
         exactOut?: boolean,
-        additionalParams?: Record<string, any>
+        additionalParams: Record<string, any> = this.options.defaultAdditionalParameters
     ): Promise<FromBTCSwap<T, TXType>> {
         const amountData = {
             amount,
@@ -647,7 +649,7 @@ export class Swapper<
         amount: BN,
         exactOut?: boolean,
         descriptionHash?: Buffer,
-        additionalParams?: Record<string, any>
+        additionalParams: Record<string, any> = this.options.defaultAdditionalParameters
     ): Promise<FromBTCLNSwap<T, TXType>> {
         const amountData = {
             amount,
@@ -681,7 +683,7 @@ export class Swapper<
         tokenAddress: TokenAddressType,
         lnurl: string | LNURLWithdraw,
         amount: BN,
-        additionalParams?: Record<string, any>
+        additionalParams: Record<string, any> = this.options.defaultAdditionalParameters
     ): Promise<FromBTCLNSwap<T, TXType>> {
         const amountData = {
             amount,
@@ -706,11 +708,12 @@ export class Swapper<
      *
      * @param amount                    Amount of native token to receive, in base units
      * @param trustedIntermediaryUrl    URL of the trusted intermediary to use, otherwise uses default
+     * @throws {Error} If no trusted intermediary specified
      */
     createTrustedLNForGasSwap(amount: BN, trustedIntermediaryUrl?: string): Promise<LnForGasSwap<T>> {
         const useUrl = trustedIntermediaryUrl || this.options.defaultTrustedIntermediaryUrl;
         if(useUrl==null) throw new Error("No trusted intermediary URL specified!");
-        return this.lnforgas.create(amount, useUrl+"/lnforgas");
+        return this.lnforgas.create(amount, useUrl);
     }
 
     /**

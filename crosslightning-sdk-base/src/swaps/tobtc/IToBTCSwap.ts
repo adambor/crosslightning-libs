@@ -61,6 +61,7 @@ export abstract class IToBTCSwap<T extends SwapData, TXType> extends ISwap<T, To
      * @param result Result returned by the LP
      * @param check Whether to check the passed result
      * @returns true if check passed, false if check failed with a soft error (e.g. tx not yet found in the mempool)
+     * @throws {IntermediaryError} When the data returned by the intermediary isn't valid
      */
     abstract _setPaymentResult(result: {secret?: string, txId?: string}, check?: boolean): Promise<boolean>;
 
@@ -204,6 +205,8 @@ export abstract class IToBTCSwap<T extends SwapData, TXType> extends ISwap<T, To
      *
      * @param skipChecks Skip checks like making sure init signature is still valid and swap wasn't commited yet
      *  (this is handled on swap creation, if you commit right after quoting, you can use skipChecks=true)
+     *
+     * @throws {Error} When in invalid state (not PR_CREATED)
      */
     async txsCommit(skipChecks?: boolean): Promise<TXType[]> {
         if(!this.canCommit()) throw new Error("Must be in CREATED state!");
@@ -245,6 +248,10 @@ export abstract class IToBTCSwap<T extends SwapData, TXType> extends ISwap<T, To
      * @param checkIntervalSeconds  How often to poll the intermediary for answer
      *
      * @returns {Promise<boolean>}  Was the payment successful? If not we can refund.
+     * @throws {IntermediaryError} If a swap is determined expired by the intermediary, but it is actually still valid
+     * @throws {SignatureVerificationError} If the swap should be cooperatively refundable but the intermediary returned
+     *  invalid refund signature
+     * @throws {Error} When swap expires
      */
     async waitForPayment(abortSignal?: AbortSignal, checkIntervalSeconds?: number): Promise<boolean> {
         if(this.state===ToBTCSwapState.CLAIMED) return Promise.resolve(true);
@@ -351,6 +358,10 @@ export abstract class IToBTCSwap<T extends SwapData, TXType> extends ISwap<T, To
 
     /**
      * Returns transactions for refunding the swap if the swap is in refundable state, you can check so with isRefundable()
+     *
+     * @throws {IntermediaryError} If intermediary returns invalid response in case cooperative refund should be used
+     * @throws {SignatureVerificationError} If intermediary returned invalid cooperative refund signature
+     * @throws {Error} When state is not refundable
      */
     async txsRefund(): Promise<TXType[]> {
         if(!this.isRefundable()) throw new Error("Must be in REFUNDABLE state or expired!");

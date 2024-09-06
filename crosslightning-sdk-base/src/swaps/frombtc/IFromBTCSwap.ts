@@ -164,6 +164,7 @@ export abstract class IFromBTCSwap<
      *
      * @param skipChecks Skip checks like making sure init signature is still valid and swap wasn't commited yet
      *  (this is handled when swap is created (quoted), if you commit right after quoting, you can use skipChecks=true)
+     * @throws {Error} When in invalid state to commit the swap
      */
     async txsCommit(skipChecks?: boolean): Promise<TXType[]> {
         if(!this.canCommit()) throw new Error("Must be in CREATED state!");

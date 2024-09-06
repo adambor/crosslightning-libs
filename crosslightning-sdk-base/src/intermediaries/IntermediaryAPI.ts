@@ -208,14 +208,24 @@ export type FromBTCLNInit = BaseFromBTCSwapInit & {
 
 export class IntermediaryAPI {
 
+    /**
+     * Returns the information about a specific intermediary
+     *
+     * @param baseUrl Base URL of the intermediary
+     * @param timeout Timeout in milliseconds for the HTTP request
+     * @param abortSignal
+     *
+     * @throws {RequestError} If non-200 http response code is returned
+     * @throws {Error} If the supplied nonce doesn't match the response
+     */
     static async getIntermediaryInfo(
-        url: string,
+        baseUrl: string,
         timeout?: number,
         abortSignal?: AbortSignal
     ): Promise<InfoHandlerResponse> {
         const nonce = randomBytes(32).toString("hex");
 
-        const response = await httpPost<InfoHandlerResponse>(url+"/info", {
+        const response = await httpPost<InfoHandlerResponse>(baseUrl+"/info", {
             nonce,
         }, timeout, abortSignal);
 
@@ -225,6 +235,17 @@ export class IntermediaryAPI {
         return response;
     }
 
+    /**
+     * Returns the information about an outcome of the To BTC swap
+     *
+     * @param url URL of the intermediary
+     * @param paymentHash Payment hash of the swap
+     * @param sequence Swap's sequence number
+     * @param timeout Timeout in milliseconds for the HTTP request
+     * @param abortSignal
+     *
+     * @throws {RequestError} If non-200 http response code is returned
+     */
     static async getRefundAuthorization(
         url: string,
         paymentHash: string,
@@ -241,6 +262,16 @@ export class IntermediaryAPI {
         ), null, RequestError, abortSignal);
     }
 
+    /**
+     * Returns the information about the payment of the From BTCLN swaps
+     *
+     * @param url URL of the intermediary
+     * @param paymentHash Payment hash of the swap
+     * @param timeout Timeout in milliseconds for the HTTP request
+     * @param abortSignal
+     *
+     * @throws {RequestError} If non-200 http response code is returned
+     */
     static async getPaymentAuthorization(
         url: string,
         paymentHash: string,
@@ -255,11 +286,22 @@ export class IntermediaryAPI {
         ), null, RequestError, abortSignal);
     }
 
-    static initToBTC(url: string, init: ToBTCInit, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): {
+    /**
+     * Initiate To BTC swap with an intermediary
+     *
+     * @param baseUrl Base URL of the intermediary
+     * @param init Swap initialization parameters
+     * @param timeout Timeout in milliseconds for the HTTP request
+     * @param abortSignal
+     * @param streamRequest Whether to force streaming (or not streaming) the request, default is autodetect
+     *
+     * @throws {RequestError} If non-200 http response code is returned
+     */
+    static initToBTC(baseUrl: string, init: ToBTCInit, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): {
         signDataPrefetch: Promise<any>,
         response: Promise<ToBTCResponseType>
     } {
-        const responseBodyPromise = streamingFetchPromise(url+"/tobtc/payInvoice", {
+        const responseBodyPromise = streamingFetchPromise(baseUrl+"/tobtc/payInvoice", {
             ...init.additionalParams,
             address: init.btcAddress,
             amount: init.amount.toString(10),
@@ -292,11 +334,22 @@ export class IntermediaryAPI {
         };
     }
 
-    static initFromBTC(url: string, init: FromBTCInit, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): {
+    /**
+     * Initiate From BTC swap with an intermediary
+     *
+     * @param baseUrl Base URL of the intermediary
+     * @param init Swap initialization parameters
+     * @param timeout Timeout in milliseconds for the HTTP request
+     * @param abortSignal
+     * @param streamRequest Whether to force streaming (or not streaming) the request, default is autodetect
+     *
+     * @throws {RequestError} If non-200 http response code is returned
+     */
+    static initFromBTC(baseUrl: string, init: FromBTCInit, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): {
         signDataPrefetch: Promise<any>,
         response: Promise<FromBTCResponseType>
     } {
-        const responseBodyPromise = streamingFetchPromise(url+"/frombtc/getAddress", {
+        const responseBodyPromise = streamingFetchPromise(baseUrl+"/frombtc/getAddress", {
             ...init.additionalParams,
             address: init.claimer,
             amount: init.amount.toString(10),
@@ -337,11 +390,22 @@ export class IntermediaryAPI {
         };
     }
 
-    static initFromBTCLN(url: string, init: FromBTCLNInit, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): {
+    /**
+     * Initiate From BTCLN swap with an intermediary
+     *
+     * @param baseUrl Base URL of the intermediary
+     * @param init Swap initialization parameters
+     * @param timeout Timeout in milliseconds for the HTTP request
+     * @param abortSignal
+     * @param streamRequest Whether to force streaming (or not streaming) the request, default is autodetect
+     *
+     * @throws {RequestError} If non-200 http response code is returned
+     */
+    static initFromBTCLN(baseUrl: string, init: FromBTCLNInit, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): {
         lnPublicKey: Promise<string>,
         response: Promise<FromBTCLNResponseType>
     } {
-        const responseBodyPromise = streamingFetchPromise(url+"/frombtcln/createInvoice", {
+        const responseBodyPromise = streamingFetchPromise(baseUrl+"/frombtcln/createInvoice", {
             ...init.additionalParams,
             paymentHash: init.paymentHash.toString("hex"),
             amount: init.amount.toString(),
@@ -372,11 +436,22 @@ export class IntermediaryAPI {
         };
     }
 
-    static initToBTCLN(url: string, init: ToBTCLNInit, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): {
+    /**
+     * Initiate To BTCLN swap with an intermediary
+     *
+     * @param baseUrl Base URL of the intermediary
+     * @param init Swap initialization parameters
+     * @param timeout Timeout in milliseconds for the HTTP request
+     * @param abortSignal
+     * @param streamRequest Whether to force streaming (or not streaming) the request, default is autodetect
+     *
+     * @throws {RequestError} If non-200 http response code is returned
+     */
+    static initToBTCLN(baseUrl: string, init: ToBTCLNInit, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): {
         signDataPrefetch: Promise<any>,
         response: Promise<ToBTCLNResponseType>
     } {
-        const responseBodyPromise = streamingFetchPromise(url+"/tobtcln/payInvoice", {
+        const responseBodyPromise = streamingFetchPromise(baseUrl+"/tobtcln/payInvoice", {
             exactIn: false,
             ...init.additionalParams,
             pr: init.pr,
@@ -407,8 +482,19 @@ export class IntermediaryAPI {
         };
     }
 
-    static async initToBTCLNExactIn(url: string, init: ToBTCLNInitExactIn, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): Promise<ToBTCLNResponseType> {
-        const responseBody = await streamingFetchPromise(url+"/tobtcln/payInvoiceExactIn", {
+    /**
+     * Initiate To BTCLN exact in swap with an intermediary
+     *
+     * @param baseUrl Base URL of the intermediary
+     * @param init Swap initialization parameters
+     * @param timeout Timeout in milliseconds for the HTTP request
+     * @param abortSignal
+     * @param streamRequest Whether to force streaming (or not streaming) the request, default is autodetect
+     *
+     * @throws {RequestError} If non-200 http response code is returned
+     */
+    static async initToBTCLNExactIn(baseUrl: string, init: ToBTCLNInitExactIn, timeout?: number, abortSignal?: AbortSignal, streamRequest?: boolean): Promise<ToBTCLNResponseType> {
+        const responseBody = await streamingFetchPromise(baseUrl+"/tobtcln/payInvoiceExactIn", {
             ...init.additionalParams,
             pr: init.pr,
             reqId: init.reqId,
@@ -429,8 +515,19 @@ export class IntermediaryAPI {
         return verifySchema(data, ToBTCLNResponseSchema);
     }
 
+    /**
+     * Prepare To BTCLN exact in swap with an intermediary
+     *
+     * @param baseUrl Base URL of the intermediary
+     * @param init Swap initialization parameters
+     * @param timeout Timeout in milliseconds for the HTTP request
+     * @param abortSignal
+     * @param streamRequest Whether to force streaming (or not streaming) the request, default is autodetect
+     *
+     * @throws {RequestError} If non-200 http response code is returned
+     */
     static prepareToBTCLNExactIn(
-        url: string,
+        baseUrl: string,
         init: ToBTCLNPrepareExactIn,
         timeout?: number,
         abortSignal?: AbortSignal,
@@ -439,7 +536,7 @@ export class IntermediaryAPI {
         signDataPrefetch: Promise<any>,
         response: Promise<ToBTCLNPrepareExactInResponseType>
     } {
-        const responseBodyPromise = streamingFetchPromise(url+"/tobtcln/payInvoice", {
+        const responseBodyPromise = streamingFetchPromise(baseUrl+"/tobtcln/payInvoice", {
             exactIn: true,
             ...init.additionalParams,
             pr: init.pr,

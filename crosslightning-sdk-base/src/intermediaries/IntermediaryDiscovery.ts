@@ -90,7 +90,6 @@ function getIntermediaryComparator(swapType: SwapType, tokenAddress: TokenAddres
 }
 
 const REGISTRY_URL = "https://api.github.com/repos/adambor/SolLightning-registry/contents/registry.json?ref=main";
-const BATCH_SIZE = 20;
 
 export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
 
@@ -103,10 +102,10 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
 
     private overrideNodeUrls?: string[];
 
-    constructor(swapContract: SwapContract<T, any, any, any>, registryUrl?: string, nodeUrls?: string[], httpRequestTimeout?: number) {
+    constructor(swapContract: SwapContract<T, any, any, any>, registryUrl: string = REGISTRY_URL, nodeUrls?: string[], httpRequestTimeout?: number) {
         super();
         this.swapContract = swapContract;
-        this.registryUrl = registryUrl || REGISTRY_URL;
+        this.registryUrl = registryUrl;
         this.overrideNodeUrls = nodeUrls;
         this.httpRequestTimeout = httpRequestTimeout;
     }
@@ -128,9 +127,7 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
 
         const content = response.content.replace(new RegExp("\\n", "g"), "");
 
-        const urls: string[] = JSON.parse(Buffer.from(content, "base64").toString());
-
-        return urls;
+        return JSON.parse(Buffer.from(content, "base64").toString()) as string[];
     }
 
     /**
@@ -156,28 +153,23 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
      *
      * @param abortSignal
      * @private
+     * @throws {Error} When no online intermediary was found
      */
     private async fetchIntermediaries(abortSignal?: AbortSignal): Promise<Intermediary[]> {
         const urls = await this.getIntermediaryUrls(abortSignal);
 
-        const activeNodes: Intermediary[] = [];
-        let promises: Promise<void>[] = [];
-        for(let url of urls) {
-            promises.push(this.getNodeInfo(url, abortSignal).then((node) => {
-                const services: ServicesType = {};
-                for(let key in node.info.services) {
-                    services[swapHandlerTypeToSwapType(key as SwapHandlerType)] = node.info.services[key];
-                }
-                activeNodes.push(new Intermediary(url, node.address, services));
-            }).catch(e => console.error(e)));
-            if(promises.length>=BATCH_SIZE) {
-                await Promise.all(promises);
-                promises = [];
+        const promises: Promise<Intermediary | null>[] = urls.map(url => this.getNodeInfo(url, abortSignal).then((node) => {
+            const services: ServicesType = {};
+            for(let key in node.info.services) {
+                services[swapHandlerTypeToSwapType(key as SwapHandlerType)] = node.info.services[key];
             }
-        }
+            return new Intermediary(url, node.address, services);
+        }).catch(e => {
+            console.error(e);
+            return null;
+        }));
 
-        if(promises.length>0) await Promise.all(promises);
-
+        const activeNodes: Intermediary[] = (await Promise.all(promises)).filter(intermediary => intermediary!=null);
         if(activeNodes.length===0) throw new Error("No online intermediary found!");
 
         return activeNodes;
@@ -243,15 +235,13 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
      * @param token
      */
     getSwapMinimum(swapType: SwapType, token: TokenAddress): number {
-        let min: number;
         const tokenStr = token.toString();
-        this.intermediaries.forEach(intermediary => {
+        return this.intermediaries.reduce<number>((prevMin, intermediary) => {
             const swapService = intermediary.services[swapType];
-            if(swapService!=null && swapService.tokens.includes(tokenStr)) {
-                min==null ? min = swapService.min : min = Math.min(min, swapService.min);
-            }
-        });
-        return min;
+            if(swapService!=null && swapService.tokens.includes(tokenStr))
+                return prevMin==null ? swapService.min : Math.min(prevMin, swapService.min);
+            return prevMin;
+        }, null);
     }
 
     /**
@@ -262,15 +252,13 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
      * @param token
      */
     getSwapMaximum(swapType: SwapType, token: TokenAddress): number {
-        let max: number;
         const tokenStr = token.toString();
-        this.intermediaries.forEach(intermediary => {
+        return this.intermediaries.reduce<number>((prevMax, intermediary) => {
             const swapService = intermediary.services[swapType];
-            if(swapService!=null && swapService.tokens.includes(tokenStr)) {
-                max==null ? max = swapService.max : max = Math.max(max, swapService.max);
-            }
-        });
-        return max;
+            if(swapService!=null && swapService.tokens.includes(tokenStr))
+                return prevMax==null ? swapService.max : Math.max(prevMax, swapService.max);
+            return prevMax;
+        }, null);
     }
 
     /**

@@ -104,6 +104,7 @@ export abstract class ISwapWrapper<
      * @param abortController
      * @protected
      * @returns Intermediary's reputation or null if failed
+     * @throws {IntermediaryError} If the intermediary vault doesn't exist
      */
     protected preFetchIntermediaryReputation(
         amountData: Omit<AmountData, "amount">,

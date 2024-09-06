@@ -202,7 +202,7 @@ export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwa
         if(resp.code===PaymentAuthorizationResponseCodes.AUTH_DATA) {
             const sigData = resp.data;
             const swapData = new this.wrapper.swapDataDeserializer(resp.data.data);
-            await this.checkLPReturnedAuthData(swapData, sigData);
+            await this.checkIntermediaryReturnedAuthData(swapData, sigData);
             this.expiry = await tryWithRetries(() => this.wrapper.contract.getInitAuthorizationExpiry(
                 swapData,
                 sigData.timeout,
@@ -237,7 +237,7 @@ export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwa
             case PaymentAuthorizationResponseCodes.AUTH_DATA:
                 const data = new this.wrapper.swapDataDeserializer(resp.data.data);
                 try {
-                    await this.checkLPReturnedAuthData(data, resp.data);
+                    await this.checkIntermediaryReturnedAuthData(data, resp.data);
                     this.expiry = await tryWithRetries(() => this.wrapper.contract.getInitAuthorizationExpiry(
                         data,
                         resp.data.timeout,
@@ -262,7 +262,17 @@ export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwa
         }
     }
 
-    protected async checkLPReturnedAuthData(data: T, signature: {
+    /**
+     * Checks the data returned by the intermediary in the payment auth request
+     *
+     * @param data Parsed swap data as returned by the intermediary
+     * @param signature Signature data as returned by the intermediary
+     * @protected
+     * @throws {IntermediaryError} If the returned are not valid
+     * @throws {SignatureVerificationError} If the returned signature is not valid
+     * @throws {Error} If the swap is already committed on-chain
+     */
+    protected async checkIntermediaryReturnedAuthData(data: T, signature: {
         prefix: string,
         timeout: string,
         signature: string
@@ -318,11 +328,11 @@ export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwa
     /**
      * Returns transactions required for claiming the HTLC and finishing the swap by revealing the HTLC secret
      *  (hash preimage)
+     *
+     * @throws {Error} If in invalid state (must be CLAIM_COMMITED)
      */
     txsClaim(): Promise<TXType[]> {
-        if(this.state!==FromBTCLNSwapState.CLAIM_COMMITED) {
-            throw new Error("Must be in CLAIM_COMMITED state!");
-        }
+        if(this.state!==FromBTCLNSwapState.CLAIM_COMMITED) throw new Error("Must be in CLAIM_COMMITED state!");
         return this.wrapper.contract.txsClaimWithSecret(this.data, this.secret, true, true);
     }
 
@@ -337,6 +347,7 @@ export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwa
      * @param abortSignal Abort signal to stop waiting for the transaction confirmation and abort
      * @param skipChecks Skip checks like making sure init signature is still valid and swap wasn't commited yet
      *  (this is handled when swap is created (quoted), if you commit right after quoting, you can use skipChecks=true)
+     * @throws {Error} If in invalid state (must be PR_PAID or CLAIM_COMMITED)
      */
     async commitAndClaim(abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string[]> {
         if(this.state===FromBTCLNSwapState.CLAIM_COMMITED) return [null, await this.claim(false, null)];
@@ -360,6 +371,8 @@ export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwa
      *
      * @param skipChecks Skip checks like making sure init signature is still valid and swap wasn't commited yet
      *  (this is handled when swap is created (quoted), if you commit right after quoting, you can use skipChecks=true)
+     *
+     * @throws {Error} If in invalid state (must be PR_PAID or CLAIM_COMMITED)
      */
     async txsCommitAndClaim(skipChecks?: boolean): Promise<TXType[]> {
         if(this.state===FromBTCLNSwapState.CLAIM_COMMITED) return await this.txsClaim();

@@ -112,12 +112,13 @@ export class RedundantSwapPrice extends ICachedSwapPrice {
                     obj.operational = true;
                     return price;
                 }).catch(e => {
-                    if(abortSignal!=null && abortSignal.aborted) throw e;
+                    if(abortSignal!=null) abortSignal.throwIfAborted();
                     obj.operational = false;
                     throw e;
                 })
             ))
         } catch (e) {
+            if(abortSignal!=null) abortSignal.throwIfAborted();
             throw e.find(err => !(err instanceof RequestError)) || e[0];
         }
     }
@@ -135,7 +136,7 @@ export class RedundantSwapPrice extends ICachedSwapPrice {
             const operationalPriceApi = this.getOperationalPriceApi();
             if(operationalPriceApi!=null) {
                 return operationalPriceApi.priceApi.getPrice(token, abortSignal).catch(err => {
-                    if(abortSignal!=null && abortSignal.aborted) throw err;
+                    if(abortSignal!=null) abortSignal.throwIfAborted();
                     operationalPriceApi.operational = false;
                     return this.fetchPriceFromMaybeOperationalPriceApis(token, abortSignal);
                 });

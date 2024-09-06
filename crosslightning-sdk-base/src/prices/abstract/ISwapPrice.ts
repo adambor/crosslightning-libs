@@ -160,6 +160,7 @@ export abstract class ISwapPrice {
      * @param toToken           Token
      * @param abortSignal
      * @param preFetchedPrice
+     * @throws {Error} when token is not found
      */
     public async getFromBtcSwapAmount(fromAmount: BN, toToken: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<BN> {
         if(this.getDecimals(toToken.toString())==null) throw new Error("Token not found!");
@@ -179,6 +180,7 @@ export abstract class ISwapPrice {
      * @param fromToken Token
      * @param abortSignal
      * @param preFetchedPrice Pre-fetched swap price if available
+     * @throws {Error} when token is not found
      */
     public async getToBtcSwapAmount(fromAmount: BN, fromToken: TokenAddress, abortSignal?: AbortSignal, preFetchedPrice?: BN): Promise<BN> {
         if(this.getDecimals(fromToken.toString())==null) throw new Error("Token not found");
@@ -194,6 +196,7 @@ export abstract class ISwapPrice {
     /**
      * Returns whether the token should be ignored and pricing for it not calculated
      * @param tokenAddress
+     * @throws {Error} if token is not found
      */
     public shouldIgnore(tokenAddress: TokenAddress): boolean {
         const coin = this.getDecimals(tokenAddress.toString());

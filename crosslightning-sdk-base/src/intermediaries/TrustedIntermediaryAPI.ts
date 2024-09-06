@@ -37,6 +37,15 @@ export type TrustedFromBTCLNResponseType = RequestSchemaResult<typeof TrustedFro
 
 export class TrustedIntermediaryAPI {
 
+    /**
+     * Fetches the invoice status from the intermediary node
+     *
+     * @param url Url of the trusted intermediary
+     * @param paymentHash Payment hash of the lightning invoice
+     * @param timeout Timeout in milliseconds
+     * @param abortSignal
+     * @throws {RequestError} if non-200 http response is returned
+     */
     static async getInvoiceStatus(
         url: string,
         paymentHash: string,
@@ -49,15 +58,24 @@ export class TrustedIntermediaryAPI {
         ), null, RequestError, abortSignal);
     }
 
+    /**
+     * Initiate a trusted swap from BTCLN to SC native currency, retries!
+     *
+     * @param baseUrl Base url of the trusted swap intermediary
+     * @param init Initialization parameters
+     * @param timeout Timeout in milliseconds for the request
+     * @param abortSignal
+     * @throws {RequestError} If the response is non-200
+     */
     static async initTrustedFromBTCLN(
-        url: string,
+        baseUrl: string,
         init: TrustedFromBTCLNInit,
         timeout?: number,
         abortSignal?: AbortSignal
     ): Promise<TrustedFromBTCLNResponseType> {
         const resp = await tryWithRetries(
             () => httpGet<{code: number, msg: string, data?: any}>(
-                url+"/createInvoice" +
+                baseUrl+"/lnforgas/createInvoice" +
                     "?address="+encodeURIComponent(init.address)+"" +
                     "&amount="+encodeURIComponent(init.amount.toString(10)),
                 timeout,
