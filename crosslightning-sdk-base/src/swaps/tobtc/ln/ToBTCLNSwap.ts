@@ -63,6 +63,7 @@ export class ToBTCLNSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T,
     }
 
     _setPaymentResult(result: { secret?: string; txId?: string }, check: boolean = false): Promise<boolean> {
+        if(result==null) return Promise.resolve(false);
         if(result.secret==null) throw new IntermediaryError("No payment secret returned!");
         if(check) {
             const secretBuffer = Buffer.from(result.secret, "hex");

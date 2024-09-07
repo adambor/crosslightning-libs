@@ -396,7 +396,7 @@ export class FromBTCWrapper<
                             timeout: resp.timeout,
                             signature: resp.signature,
                             data,
-                            address: resp.address,
+                            address: resp.btcAddress,
                             amount: resp.amount
                         } as FromBTCSwapInit<T>);
                     } catch (e) {

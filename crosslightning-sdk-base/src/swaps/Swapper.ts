@@ -297,6 +297,7 @@ export class Swapper<
      * Initializes the swap storage and loads existing swaps, needs to be called before any other action
      */
     async init() {
+        await this.swapContract.start();
         this.logger.info("init(): Intializing swapper: ", this);
 
         await this.chainEvents.init();

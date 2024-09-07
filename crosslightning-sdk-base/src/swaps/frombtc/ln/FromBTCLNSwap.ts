@@ -391,7 +391,7 @@ export class FromBTCLNSwap<T extends SwapData, TXType = any> extends IFromBTCSwa
         if(this.state!==FromBTCLNSwapState.PR_PAID) throw new Error("Must be in PR_PAID state!");
 
         const initTxs = await this.txsCommit(skipChecks);
-        const claimTxs = await this.wrapper.contract.txsClaimWithSecret(this.data, this.secret, true, true);
+        const claimTxs = await (this.wrapper.contract as any).txsClaimWithSecret(this.data, this.secret, true, true, null, true);
 
         return initTxs.concat(claimTxs);
     }

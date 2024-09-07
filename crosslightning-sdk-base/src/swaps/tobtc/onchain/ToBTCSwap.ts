@@ -54,6 +54,7 @@ export class ToBTCSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T, T
     }
 
     async _setPaymentResult(result: { secret?: string; txId?: string }, check: boolean = false): Promise<boolean> {
+        if(result==null) return false;
         if(result.txId==null) throw new IntermediaryError("No btc txId returned!");
         if(check) {
             const btcTx = await this.wrapper.btcRpc.getTransaction(result.txId);
