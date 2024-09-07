@@ -64,7 +64,7 @@ export class SwapWrapperStorage<T extends ISwap<any>> {
     async saveSwapDataArr(arr: T[]): Promise<void> {
         if((this.storage as any).saveDataArr!=null) {
             await (this.storage as any).saveDataArr(arr.map(swap => {
-                return {id: swap.getPaymentHash().toString("hex"), object: swap.serialize()}
+                return {id: swap.getPaymentHash().toString("hex"), object: swap}
             }));
             return;
         }
