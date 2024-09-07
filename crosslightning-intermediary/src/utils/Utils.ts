@@ -35,13 +35,14 @@ export function expressHandlerWrapper(func: (
             } catch (e) {
                 console.error(e);
                 let statusCode = 500;
-                const obj = {
+                const obj: {code: number, msg: string, data?: any} = {
                     code: 0,
                     msg: "Internal server error"
                 };
                 if(isDefinedRuntimeError(e)) {
                     obj.msg = e.msg;
                     obj.code = e.code;
+                    obj.data = e.data;
                     statusCode = 400;
                     if(e._httpStatus!=null) statusCode = e._httpStatus;
                 }
