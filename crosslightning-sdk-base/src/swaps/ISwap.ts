@@ -40,13 +40,17 @@ export type Fee = {
     amountInDstToken: BN;
 }
 
-export type Token = {
+export type BtcToken<L = boolean> = {
     chain: "BTC",
-    lightning: boolean
-} | {
-    chain: "SC",
-    address: TokenAddress
+    lightning: L
 };
+
+export type SCToken<T = TokenAddress> = {
+    chain: "SC",
+    address: T
+}
+
+export type Token = BtcToken | SCToken;
 
 export abstract class ISwap<
     T extends SwapData = SwapData,

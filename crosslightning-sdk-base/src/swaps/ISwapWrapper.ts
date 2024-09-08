@@ -21,9 +21,9 @@ import {IntermediaryError} from "../errors/IntermediaryError";
 import {SwapHandlerInfoType} from "../intermediaries/IntermediaryDiscovery";
 import {getLogger, mapToArray, objectMap, tryWithRetries} from "../utils/Utils";
 
-export type AmountData = {
+export type AmountData<T = TokenAddress> = {
     amount: BN,
-    token: TokenAddress,
+    token: T,
     exactIn?: boolean
 }
 

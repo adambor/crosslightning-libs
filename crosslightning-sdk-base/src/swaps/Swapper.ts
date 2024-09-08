@@ -1,17 +1,17 @@
 import {BitcoinNetwork} from "../btc/BitcoinNetwork";
 import {ISwapPrice} from "../prices/abstract/ISwapPrice";
 import {ChainEvents, IStorageManager, SwapContract, SwapData} from "crosslightning-base";
-import {ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";
-import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
-import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
-import {FromBTCWrapper} from "./frombtc/onchain/FromBTCWrapper";
+import {ToBTCLNOptions, ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";
+import {ToBTCOptions, ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
+import {FromBTCLNOptions, FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
+import {FromBTCOptions, FromBTCWrapper} from "./frombtc/onchain/FromBTCWrapper";
 import {IntermediaryDiscovery, SwapBounds} from "../intermediaries/IntermediaryDiscovery";
 import {Network, address} from "bitcoinjs-lib";
 import {decode as bolt11Decode} from "bolt11";
 import * as BN from "bn.js";
 import {IFromBTCSwap} from "./frombtc/IFromBTCSwap";
 import {IToBTCSwap} from "./tobtc/IToBTCSwap";
-import {ISwap} from "./ISwap";
+import {BtcToken, ISwap, SCToken, Token} from "./ISwap";
 import {IntermediaryError} from "../errors/IntermediaryError";
 import {SwapType} from "./SwapType";
 import {FromBTCLNSwap} from "./frombtc/ln/FromBTCLNSwap";
@@ -71,10 +71,10 @@ export class Swapper<
 
     protected readonly logger = getLogger(this.constructor.name+": ");
 
-    readonly tobtcln: ToBTCLNWrapper<T>;
-    readonly tobtc: ToBTCWrapper<T>;
-    readonly frombtcln: FromBTCLNWrapper<T>;
-    readonly frombtc: FromBTCWrapper<T>;
+    readonly tobtcln: ToBTCLNWrapper<T, TXType>;
+    readonly tobtc: ToBTCWrapper<T, TXType>;
+    readonly frombtcln: FromBTCLNWrapper<T, TXType>;
+    readonly frombtc: FromBTCWrapper<T, TXType>;
 
     readonly lnforgas: LnForGasWrapper<T>;
 
@@ -186,6 +186,18 @@ export class Swapper<
         this.options = options;
     }
 
+    /**
+     * Returns true if string is a valid BOLT11 bitcoin lightning invoice
+     *
+     * @param lnpr
+     */
+    private isLightningInvoice(lnpr: string): boolean {
+        try {
+            bolt11Decode(lnpr);
+            return true;
+        } catch (e) {}
+        return false;
+    }
 
     /**
      * Returns true if string is a valid bitcoin address
@@ -519,7 +531,7 @@ export class Swapper<
     async createToBTCLNSwap(
         tokenAddress: TokenAddressType,
         paymentRequest: string,
-        expirySeconds: number = 3*24*3600,
+        expirySeconds?: number,
         maxRoutingBaseFee?: BN,
         maxRoutingPPM?: BN,
         additionalParams: Record<string, any> = this.options.defaultAdditionalParameters
@@ -530,6 +542,7 @@ export class Swapper<
             token: tokenAddress,
             exactIn: false
         };
+        expirySeconds ??= 4*24*3600;
         return this.createSwap<ToBTCLNSwap<T>>(
             (candidates: Intermediary[], abortSignal: AbortSignal) => Promise.resolve(this.tobtcln.create(
                 paymentRequest,
@@ -566,7 +579,7 @@ export class Swapper<
         lnurlPay: string | LNURLPay,
         amount: BN,
         comment: string,
-        expirySeconds: number = 3*24*3600,
+        expirySeconds?: number,
         maxRoutingBaseFee?: BN,
         maxRoutingPPM?: BN,
         exactIn?: boolean,
@@ -577,6 +590,7 @@ export class Swapper<
             token: tokenAddress,
             exactIn
         };
+        expirySeconds ??= 4*24*3600;
         return this.createSwap<ToBTCLNSwap<T>>(
             (candidates: Intermediary[], abortSignal: AbortSignal) => this.tobtcln.createViaLNURL(
                 typeof(lnurlPay)==="string" ? lnurlPay : lnurlPay.params,
@@ -670,18 +684,20 @@ export class Swapper<
      * @param tokenAddress      Token address to receive
      * @param lnurl             LNURL-withdraw to pull the funds from
      * @param amount            Amount to receive, in satoshis (bitcoin's smallest denomination)
+     * @param exactOut          Whether to use exact out instead of exact in
      * @param additionalParams  Additional parameters sent to the LP when creating the swap
      */
     async createFromBTCLNSwapViaLNURL(
         tokenAddress: TokenAddressType,
         lnurl: string | LNURLWithdraw,
         amount: BN,
+        exactOut?: boolean,
         additionalParams: Record<string, any> = this.options.defaultAdditionalParameters
     ): Promise<FromBTCLNSwap<T, TXType>> {
         const amountData = {
             amount,
             token: tokenAddress,
-            exactIn: true
+            exactIn: !exactOut
         };
         return this.createSwap<FromBTCLNSwap<T>>(
             (candidates: Intermediary[], abortSignal: AbortSignal) => this.frombtcln.createViaLNURL(
@@ -694,6 +710,61 @@ export class Swapper<
             amountData,
             SwapType.FROM_BTCLN
         );
+    }
+
+    create(srcToken: BtcToken<true>, dstToken: SCToken<TokenAddressType>, amount: BN, exactIn: boolean, lnurlWithdraw?: string): Promise<FromBTCLNSwap<T, TXType>>;
+    create(srcToken: BtcToken<false>, dstToken: SCToken<TokenAddressType>, amount: BN, exactIn: boolean): Promise<FromBTCSwap<T, TXType>>;
+    create(srcToken: SCToken<TokenAddressType>, dstToken: BtcToken<false>, amount: BN, exactIn: boolean, address: string): Promise<ToBTCSwap<T, TXType>>;
+    create(srcToken: SCToken<TokenAddressType>, dstToken: BtcToken<true>, amount: BN, exactIn: boolean, lnurlPay: string): Promise<ToBTCLNSwap<T, TXType>>;
+    create(srcToken: SCToken<TokenAddressType>, dstToken: BtcToken<true>, amount: BN, exactIn: false, lightningInvoice: string): Promise<ToBTCLNSwap<T, TXType>>;
+    /**
+     * Creates a swap from srcToken to dstToken, of a specific token amount, either specifying input amount (exactIn=true)
+     *  or output amount (exactIn=false), NOTE: For regular -> BTC-LN (lightning) swaps the passed amount is ignored and
+     *  invoice's pre-set amount is used instead.
+     *
+     * @param srcToken Source token of the swap, user pays this token
+     * @param dstToken Destination token of the swap, user receives this token
+     * @param amount Amount of the swap
+     * @param exactIn Whether the amount specified is an input amount (exactIn=true) or an output amount (exactIn=false)
+     * @param addressLnurlLightningInvoice Bitcoin on-chain address, lightning invoice, LNURL-pay to pay or
+     *  LNURL-withdrawal to withdraw money from
+     */
+    create(srcToken: Token, dstToken: Token, amount: BN, exactIn: boolean, addressLnurlLightningInvoice?: string): Promise<ISwap<T, number, TXType>> {
+        if(srcToken.chain==="BTC") {
+            if(dstToken.chain==="SC") {
+                if(srcToken.lightning) {
+                    if(addressLnurlLightningInvoice!=null) {
+                        if(typeof(addressLnurlLightningInvoice)!=="string") throw new Error("LNURL must be a string!");
+                        return this.createFromBTCLNSwapViaLNURL(dstToken.address, addressLnurlLightningInvoice, amount, !exactIn);
+                    } else {
+                        return this.createFromBTCLNSwap(dstToken.address, amount, !exactIn);
+                    }
+                } else {
+                    return this.createFromBTCSwap(dstToken.address, amount, !exactIn);
+                }
+            }
+        } else {
+            if(dstToken.chain==="BTC") {
+                if(dstToken.lightning) {
+                    if(typeof(addressLnurlLightningInvoice)!=="string") throw new Error("Destination LNURL link/lightning invoice must be a string!");
+                    if(this.isValidLNURL(addressLnurlLightningInvoice)) {
+                        return this.createToBTCLNSwapViaLNURL(srcToken.address, addressLnurlLightningInvoice, amount, null, null, null, null, exactIn);
+                    } else if(this.isLightningInvoice(addressLnurlLightningInvoice)) {
+                        if(!this.isValidLightningInvoice(addressLnurlLightningInvoice))
+                            throw new Error("Invalid lightning invoice specified, lightning invoice MUST contain pre-set amount!");
+                        if(exactIn)
+                            throw new Error("Only exact out swaps are possible with lightning invoices, use LNURL links for exact in lightning swaps!");
+                        return this.createToBTCLNSwap(srcToken.address, addressLnurlLightningInvoice);
+                    } else {
+                        throw new Error("Supplied parameter is not LNURL link nor lightning invoice (bolt11)!");
+                    }
+                } else {
+                    if(typeof(addressLnurlLightningInvoice)!=="string") throw new Error("Destination bitcoin address must be a string!");
+                    return this.createToBTCSwap(srcToken.address, addressLnurlLightningInvoice, amount, null, null, exactIn);
+                }
+            }
+        }
+        throw new Error("Unsupported swap type");
     }
 
     /**

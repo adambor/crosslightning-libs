@@ -25,8 +25,8 @@ import {IntermediaryAPI, ToBTCResponseType} from "../../../intermediaries/Interm
 import {RequestError} from "../../../errors/RequestError";
 
 export type ToBTCOptions = {
-    confirmationTarget: number,
-    confirmations: number
+    confirmationTarget?: number,
+    confirmations?: number
 }
 
 export type ToBTCWrapperOptions = ISwapWrapperOptions & {
@@ -181,7 +181,7 @@ export class ToBTCWrapper<T extends SwapData, TXType = any> extends IToBTCWrappe
         address: string,
         amountData: AmountData,
         lps: Intermediary[],
-        options: ToBTCOptions,
+        options?: ToBTCOptions,
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
     ): {
@@ -189,6 +189,9 @@ export class ToBTCWrapper<T extends SwapData, TXType = any> extends IToBTCWrappe
         intermediary: Intermediary
     }[] {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
+        options ??= {};
+        options.confirmationTarget = 3;
+        options.confirmations = 2;
 
         const nonce: BN = this.getRandomNonce();
         const outputScript: Buffer = this.btcAddressToOutputScript(address);
