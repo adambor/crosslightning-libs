@@ -281,10 +281,29 @@ export abstract class ISwapWrapper<
             const swap: S = this.swapData.get(paymentHash);
             if(swap==null) continue;
 
+            const eventMeta: {blockTime: number, txId: string} | null = (event as any).meta;
             let swapChanged: boolean = false;
-            if(event instanceof InitializeEvent) swapChanged = await this.processEventInitialize(swap, event);
-            if(event instanceof ClaimEvent) swapChanged = await this.processEventClaim(swap, event);
-            if(event instanceof RefundEvent) swapChanged = await this.processEventRefund(swap, event);
+            if(event instanceof InitializeEvent) {
+                swapChanged = await this.processEventInitialize(swap, event);
+                if(eventMeta?.txId!=null && swap.commitTxId!==eventMeta.txId) {
+                    swap.commitTxId = eventMeta.txId;
+                    swapChanged ||= true;
+                }
+            }
+            if(event instanceof ClaimEvent) {
+                swapChanged = await this.processEventClaim(swap, event);
+                if(eventMeta?.txId!=null && swap.claimTxId!==eventMeta.txId) {
+                    swap.claimTxId = eventMeta.txId;
+                    swapChanged ||= true;
+                }
+            }
+            if(event instanceof RefundEvent) {
+                swapChanged = await this.processEventRefund(swap, event);
+                if(eventMeta?.txId!=null && swap.refundTxId!==eventMeta.txId) {
+                    swap.refundTxId = eventMeta.txId;
+                    swapChanged ||= true;
+                }
+            }
 
             this.logger.info("processEvents(): "+event.constructor.name+" processed for "+swap.getPaymentHashString()+" swap: ", swap);
 

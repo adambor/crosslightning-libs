@@ -4,8 +4,8 @@ import {address} from "bitcoinjs-lib";
 import * as createHash from "create-hash";
 import {FromBTCWrapper} from "./FromBTCWrapper";
 import * as BN from "bn.js";
-import {SwapData} from "crosslightning-base";
-import {isISwapInit, ISwapInit, Token} from "../../ISwap";
+import {SwapCommitStatus, SwapData} from "crosslightning-base";
+import {isISwapInit, ISwapInit} from "../../ISwap";
 import {Buffer} from "buffer";
 
 export enum FromBTCSwapState {
@@ -229,6 +229,37 @@ export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<
             txid: tx.txid,
             hex: tx.hex
         }, this.vout, null, this.wrapper.synchronizer, true);
+    }
+
+    /**
+     * Claims and finishes the swap
+     *
+     * @param noWaitForConfirmation Do not wait for transaction confirmation
+     * @param abortSignal Abort signal to stop waiting for transaction confirmation
+     */
+    async claim(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        let txIds: string[];
+        try {
+            txIds = await this.wrapper.contract.sendAndConfirm(
+                await this.txsClaim(), !noWaitForConfirmation, abortSignal
+            );
+        } catch (e) {
+            this.logger.info("claim(): Failed to claim ourselves, checking swap claim state...");
+            if(this.state===FromBTCSwapState.CLAIM_CLAIMED) {
+                this.logger.info("claim(): Transaction state is CLAIM_CLAIMED, swap was successfully claimed by the watchtower");
+                return this.claimTxId;
+            }
+            if((await this.wrapper.contract.getCommitStatus(this.data))===SwapCommitStatus.PAID) {
+                this.logger.info("claim(): Transaction commit status is PAID, swap was successfully claimed by the watchtower");
+                await this._saveAndEmit(FromBTCSwapState.CLAIM_CLAIMED);
+                return null;
+            }
+            throw e;
+        }
+
+        this.claimTxId = txIds[0];
+        await this._saveAndEmit(this.CLAIM_STATE);
+        return txIds[0];
     }
 
 

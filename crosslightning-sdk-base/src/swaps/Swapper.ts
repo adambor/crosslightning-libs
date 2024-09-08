@@ -6,7 +6,7 @@ import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
 import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
 import {FromBTCWrapper} from "./frombtc/onchain/FromBTCWrapper";
 import {IntermediaryDiscovery, SwapBounds} from "../intermediaries/IntermediaryDiscovery";
-import {networks, Network, address} from "bitcoinjs-lib";
+import {Network, address} from "bitcoinjs-lib";
 import {decode as bolt11Decode} from "bolt11";
 import * as BN from "bn.js";
 import {IFromBTCSwap} from "./frombtc/IFromBTCSwap";
@@ -104,23 +104,11 @@ export class Swapper<
 
         options.bitcoinNetwork = options.bitcoinNetwork==null ? BitcoinNetwork.TESTNET : options.bitcoinNetwork;
 
-        switch (options.bitcoinNetwork) {
-            case BitcoinNetwork.MAINNET:
-                this.bitcoinNetwork = networks.bitcoin;
-                this.mempoolApi = new MempoolApi("https://mempool.space/api/", options.getRequestTimeout);
-                break;
-            case BitcoinNetwork.TESTNET:
-                this.bitcoinNetwork = networks.testnet;
-                this.mempoolApi = new MempoolApi("https://mempool.space/testnet/api/", options.getRequestTimeout);
-                break;
-            default:
-                throw new Error("Unsupported bitcoin network");
-        }
-
         this.prices = options.pricing;
         this.swapContract = swapContract;
         this.chainEvents = chainEvents;
-        this.bitcoinRpc = new MempoolBitcoinRpc(this.mempoolApi);
+        this.bitcoinRpc = bitcoinRpc;
+        this.mempoolApi = bitcoinRpc.api;
         this.btcRelay = btcRelay;
         this.synchronizer = new MempoolBtcRelaySynchronizer(btcRelay, bitcoinRpc);
 

@@ -150,6 +150,7 @@ export class MempoolBitcoinRpc implements BitcoinRpcWithTxoListener<MempoolBitco
 
     async getTransaction(txId: string): Promise<BtcTxWithBlockheight> {
         const tx = await this.api.getTransaction(txId);
+        if(tx==null) return null;
         return await this.toBtcTx(tx);
     }
 
