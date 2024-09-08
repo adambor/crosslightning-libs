@@ -32,6 +32,8 @@ export class SolanaTransactions extends SolanaModule {
      */
     private async sendRawTransaction(data: Buffer, options?: SendOptions): Promise<string> {
         let result: string = null;
+        options ??= {};
+        options.maxRetries = 0;
         if(this.cbkSendTransaction!=null) result = await this.cbkSendTransaction(data, options);
         if(result==null) result = await this.root.Fees.submitTx(data, options);
         if(result==null) result = await this.provider.connection.sendRawTransaction(data, options);
