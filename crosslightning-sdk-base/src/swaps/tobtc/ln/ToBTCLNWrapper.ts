@@ -369,7 +369,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
             const resp = await tryWithRetries(
                 (retryCount: number) => IntermediaryAPI.initToBTCLNExactIn(lp.url, {
                     pr: invoice,
-                    reqId: resp.reqId,
+                    reqId: prepareResp.reqId,
                     feeRate: preFetches.feeRatePromise,
                     additionalParams
                 }, this.options.postRequestTimeout, abortController.signal, retryCount>0 ? false : null),

@@ -1,4 +1,4 @@
-import {RequestSchema, RequestSchemaResultPromise, verifyField} from "../SchemaVerifier";
+import {isOptionalField, RequestSchema, RequestSchemaResultPromise, verifyField} from "../SchemaVerifier";
 import {RequestError} from "../../../errors/RequestError";
 import {extendAbortController, getLogger, objectMap, timeoutSignal} from "../../Utils";
 import {StreamParamEncoder} from "./StreamParamEncoder";
@@ -164,21 +164,20 @@ export async function streamingFetchPromise<T extends RequestSchema>(
         return objectMap<any, Promise<any>>(schema, (schemaValue, key) => {
             const value = respBody[key];
 
-            if(value===undefined) {
-                return Promise.reject(new Error("EOF before field seen!"));
+            const result = verifyField(schemaValue, value);
+            if(result===undefined) {
+                return Promise.reject(new Error("Invalid field value"));
             } else {
-                const result = verifyField(schemaValue, value);
-                if(result===undefined) {
-                    return Promise.reject(new Error("Invalid field value"));
-                } else {
-                    return Promise.resolve(result);
-                }
+                return Promise.resolve(result);
             }
         }) as any;
     } else {
         const decoder = new ResponseParamDecoder(resp, init.signal);
 
-        return objectMap(schema, (schemaValue, key) => decoder.getParam(key).then(value => {
+        return objectMap(schema, (schemaValue, key) => decoder.getParam(key).catch(e => {
+            if(isOptionalField(schemaValue)) return undefined;
+            throw e;
+        }).then(value => {
             logger.debug(url+": Response frame read ("+(Date.now()-startTime)+"ms) (streaming): ", {[key]: value});
             const result = verifyField(schemaValue, value);
             if(result===undefined) {

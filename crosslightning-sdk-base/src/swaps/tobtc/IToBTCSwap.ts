@@ -1,5 +1,5 @@
 import {IToBTCWrapper} from "./IToBTCWrapper";
-import {Fee, isISwapInit, ISwap, ISwapInit, Token} from "../ISwap";
+import {Fee, isISwapInit, ISwap, ISwapInit} from "../ISwap";
 import * as BN from "bn.js";
 import {SignatureVerificationError, SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
 import {PriceInfoType} from "../../prices/abstract/ISwapPrice";
@@ -321,12 +321,17 @@ export abstract class IToBTCSwap<T extends SwapData, TXType = any> extends ISwap
         checkIntervalSeconds: number = 5
     ): Promise<RefundAuthorizationResponse> {
         let resp: RefundAuthorizationResponse = {code: RefundAuthorizationResponseCodes.PENDING, msg: ""};
-        while(!abortSignal.aborted && resp.code===RefundAuthorizationResponseCodes.PENDING) {
+        while(!abortSignal.aborted && (
+            resp.code===RefundAuthorizationResponseCodes.PENDING || resp.code===RefundAuthorizationResponseCodes.NOT_FOUND
+        )) {
             resp = await IntermediaryAPI.getRefundAuthorization(this.url, this.data.getHash(), this.data.getSequence());
             if(resp.code===RefundAuthorizationResponseCodes.PAID && !await this._setPaymentResult(resp.data, true)) {
                 resp = {code: RefundAuthorizationResponseCodes.PENDING, msg: ""};
             }
-            if(resp.code===RefundAuthorizationResponseCodes.PENDING) await timeoutPromise(checkIntervalSeconds*1000, abortSignal);
+            if(
+                resp.code===RefundAuthorizationResponseCodes.PENDING ||
+                resp.code===RefundAuthorizationResponseCodes.NOT_FOUND
+            ) await timeoutPromise(checkIntervalSeconds*1000, abortSignal);
         }
         return resp;
     }

@@ -222,37 +222,30 @@ export class LNURL {
     ) : Promise<LNURLPayParamsWithUrl | LNURLWithdrawParamsWithUrl | null> {
         if(shouldRetry==null) shouldRetry = true;
 
-        let res: LNURLPayParams | LNURLWithdrawParams;
         const url: string = LNURL.extractCallUrl(str);
         if(url!=null) {
             const sendRequest =
-                () => httpGet<LNURLPayParams | LNURLWithdrawParams | LNURLError>(url, timeout, abortSignal);
+                () => httpGet<LNURLPayParams | LNURLWithdrawParams | LNURLError>(url, timeout, abortSignal, true);
 
             let response = shouldRetry ?
                 await tryWithRetries(sendRequest, null, RequestError, abortSignal) :
                 await sendRequest();
 
-            if(isLNURLError(response)) {
-                return null;
+            if(isLNURLError(response)) return null;
+
+            if(response.tag==="payRequest") try {
+                response.decodedMetadata = JSON.parse(response.metadata)
+            } catch (err) {
+                response.decodedMetadata = []
             }
 
-            if(response.tag==="payRequest") {
-                try {
-                    response.decodedMetadata = JSON.parse(response.metadata)
-                } catch (err) {
-                    response.decodedMetadata = []
-                }
-            }
+            if(!isLNURLPayParams(response) && !isLNURLWithdrawParams(response)) return null;
 
-            if(!isLNURLPayParams(response) || !isLNURLWithdrawParams(response)) return null;
-
-            res = response;
+            return {
+                ...response,
+                url: str
+            };
         }
-
-        return {
-            ...res,
-            url: str
-        };
     }
 
     /**
@@ -339,7 +332,7 @@ export class LNURL {
         const queryParams = (payRequest.callback.includes("?") ? "&" : "?")+params.join("&");
 
         const response = await tryWithRetries(
-            () => httpGet<LNURLPayResult | LNURLError>(payRequest.callback+queryParams, timeout, abortSignal),
+            () => httpGet<LNURLPayResult | LNURLError>(payRequest.callback+queryParams, timeout, abortSignal, true),
             null, RequestError, abortSignal
         );
 
@@ -383,7 +376,7 @@ export class LNURL {
         const queryParams = (withdrawRequest.callback.includes("?") ? "&" : "?")+params.join("&");
 
         const response = await tryWithRetries(
-            () => httpGet<LNURLOk | LNURLError>(withdrawRequest.callback+queryParams),
+            () => httpGet<LNURLOk | LNURLError>(withdrawRequest.callback+queryParams, null, null, true),
             null, RequestError
         );
 

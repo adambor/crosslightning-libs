@@ -183,16 +183,17 @@ export function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit & {
  * @param url Send request to this URL
  * @param timeout Timeout (in milliseconds) for the request to conclude
  * @param abortSignal
- * @throws {RequestError} if non 200 response code was returned
+ * @param allowNon200 Whether to allow non-200 status code HTTP responses
+ * @throws {RequestError} if non 200 response code was returned or body cannot be parsed
  */
-export async function httpGet<T>(url: string, timeout?: number, abortSignal?: AbortSignal): Promise<T> {
+export async function httpGet<T>(url: string, timeout?: number, abortSignal?: AbortSignal, allowNon200: boolean = false): Promise<T> {
     const init = {
         method: "GET",
         timeout,
         signal: abortSignal
     };
 
-    const response: Response = timeout == null ? await fetch(url, init) : await fetchWithTimeout(url, init);
+    const response: Response = await fetchWithTimeout(url, init);
 
     if (response.status !== 200) {
         let resp: string;
@@ -200,6 +201,11 @@ export async function httpGet<T>(url: string, timeout?: number, abortSignal?: Ab
             resp = await response.text();
         } catch (e) {
             throw new RequestError(response.statusText, response.status);
+        }
+        if(allowNon200) {
+            try {
+                return JSON.parse(resp);
+            } catch (e) {}
         }
         throw RequestError.parse(resp, response.status);
     }
