@@ -9,12 +9,13 @@ import {SolanaBtcStoredHeader, SolanaBtcStoredHeaderType} from "./headers/Solana
 import {SolanaBtcHeader} from "./headers/SolanaBtcHeader";
 import * as programIdl from "./program/programIdl.json";
 import {BitcoinRpc, BtcBlock, BtcRelay, StatePredictorUtils} from "crosslightning-base";
-import {SolanaFees, SolanaTx} from "../..";
 import {MethodsBuilder} from "@coral-xyz/anchor/dist/cjs/program/namespace/methods";
 import {SolanaProgramBase} from "../program/SolanaProgramBase";
 import * as BN from "bn.js";
 import {SolanaAction} from "../base/SolanaAction";
-import {fork} from "node:child_process";
+import {Buffer} from "buffer";
+import {SolanaFees} from "../base/modules/SolanaFees";
+import {SolanaTx} from "../base/modules/SolanaTransactions";
 
 const BASE_FEE_SOL_PER_BLOCKHEADER = new BN(5000);
 

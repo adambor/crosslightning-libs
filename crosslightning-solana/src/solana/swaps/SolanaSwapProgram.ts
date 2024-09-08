@@ -5,7 +5,7 @@ import {
     PublicKey, SendOptions,
     Signer,
 } from "@solana/web3.js";
-import {createHash} from "crypto";
+import * as createHash from "create-hash";
 import {SolanaBtcRelay} from "../btcrelay/SolanaBtcRelay";
 import * as programIdl from "./programIdl.json";
 import {IStorageManager, SwapContract, ChainSwapType, TokenAddress, IntermediaryReputationType,
@@ -25,6 +25,7 @@ import {SolanaDataAccount, StoredDataAccount} from "./modules/SolanaDataAccount"
 import {SwapRefund} from "./modules/SwapRefund";
 import {SwapClaim} from "./modules/SwapClaim";
 import {SolanaLpVault} from "./modules/SolanaLpVault";
+import {Buffer} from "buffer";
 
 export class SolanaSwapProgram extends SolanaProgramBase<SwapProgram> implements SwapContract<SolanaSwapData, SolanaTx, SolanaPreFetchData, SolanaPreFetchVerification> {
 

@@ -7,6 +7,7 @@ import {
 import {SolanaModule} from "../SolanaModule";
 import * as bs58 from "bs58";
 import {tryWithRetries} from "../../../utils/Utils";
+import {Buffer} from "buffer";
 
 export type SolanaTx = {tx: Transaction, signers: Signer[]};
 

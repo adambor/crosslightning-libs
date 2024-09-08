@@ -12,6 +12,7 @@ import {
 import {SolanaSwapModule} from "../SolanaSwapModule";
 import {SolanaTx} from "../../base/modules/SolanaTransactions";
 import {tryWithRetries} from "../../../utils/Utils";
+import {Buffer} from "buffer";
 
 export type SolanaPreFetchVerification = {
     latestSlot?: {

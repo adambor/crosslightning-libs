@@ -1,4 +1,5 @@
 import {BtcHeader} from "crosslightning-base";
+import {Buffer} from "buffer";
 
 type SolanaBtcHeaderType = {
     version: number,

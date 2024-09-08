@@ -1,6 +1,6 @@
 import {SolanaSwapModule} from "../SolanaSwapModule";
 import {SolanaSwapData} from "../SolanaSwapData";
-import {createHash} from "crypto";
+import * as createHash from "create-hash";
 import {sign} from "tweetnacl";
 import {SignatureVerificationError, SwapDataVerificationError} from "crosslightning-base";
 import * as BN from "bn.js";
@@ -16,6 +16,7 @@ import {
 } from "@solana/spl-token";
 import {SolanaAction} from "../../base/SolanaAction";
 import {tryWithRetries} from "../../../utils/Utils";
+import {Buffer} from "buffer";
 
 
 export class SwapRefund extends SolanaSwapModule {

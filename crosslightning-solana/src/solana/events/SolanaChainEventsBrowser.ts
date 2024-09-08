@@ -15,6 +15,7 @@ import {
     SingleInstructionWithAccounts
 } from "../program/modules/SolanaProgramEvents";
 import {SwapProgram} from "../swaps/programTypes";
+import {Buffer} from "buffer";
 
 export type EventObject = {
     events: ProgramEvent<SwapProgram>[],

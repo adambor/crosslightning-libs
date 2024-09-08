@@ -5,7 +5,7 @@ import {SolanaSwapProgram} from "../SolanaSwapProgram";
 import {SolanaAction} from "../../base/SolanaAction";
 import {SolanaTx} from "../../base/modules/SolanaTransactions";
 import {tryWithRetries} from "../../../utils/Utils";
-import {randomBytes} from "crypto";
+import * as randomBytes from "randombytes";
 
 export class StoredDataAccount implements StorageObject {
 

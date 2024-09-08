@@ -3,7 +3,8 @@ import {SolanaFees} from "../base/modules/SolanaFees";
 import {SolanaBase, SolanaRetryPolicy} from "../base/SolanaBase";
 import {SolanaProgramEvents} from "./modules/SolanaProgramEvents";
 import {Keypair, PublicKey} from "@solana/web3.js";
-import {createHash} from "crypto";
+import * as createHash from "create-hash";
+import {Buffer} from "buffer";
 
 /**
  * Base class providing program specific utilities
