@@ -1,10 +1,10 @@
 import {BitcoinNetwork} from "../btc/BitcoinNetwork";
 import {ISwapPrice} from "../prices/abstract/ISwapPrice";
 import {ChainEvents, IStorageManager, SwapContract, SwapData} from "crosslightning-base";
-import {ToBTCLNOptions, ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";
-import {ToBTCOptions, ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
-import {FromBTCLNOptions, FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
-import {FromBTCOptions, FromBTCWrapper} from "./frombtc/onchain/FromBTCWrapper";
+import {ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";
+import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
+import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
+import {FromBTCWrapper} from "./frombtc/onchain/FromBTCWrapper";
 import {IntermediaryDiscovery, SwapBounds} from "../intermediaries/IntermediaryDiscovery";
 import {Network, address} from "bitcoinjs-lib";
 import {decode as bolt11Decode} from "bolt11";
@@ -717,6 +717,7 @@ export class Swapper<
     create(srcToken: SCToken<TokenAddressType>, dstToken: BtcToken<false>, amount: BN, exactIn: boolean, address: string): Promise<ToBTCSwap<T, TXType>>;
     create(srcToken: SCToken<TokenAddressType>, dstToken: BtcToken<true>, amount: BN, exactIn: boolean, lnurlPay: string): Promise<ToBTCLNSwap<T, TXType>>;
     create(srcToken: SCToken<TokenAddressType>, dstToken: BtcToken<true>, amount: BN, exactIn: false, lightningInvoice: string): Promise<ToBTCLNSwap<T, TXType>>;
+    create(srcToken: Token, dstToken: Token, amount: BN, exactIn: boolean, addressLnurlLightningInvoice?: string): Promise<ISwap<T, number, TXType>>;
     /**
      * Creates a swap from srcToken to dstToken, of a specific token amount, either specifying input amount (exactIn=true)
      *  or output amount (exactIn=false), NOTE: For regular -> BTC-LN (lightning) swaps the passed amount is ignored and
