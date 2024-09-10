@@ -21,7 +21,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
      * @param useToken
      * @param abortController
      */
-    getFromBtcPricePrefetches(useToken: TokenAddress, abortController: AbortController): {
+    protected getFromBtcPricePrefetches(useToken: TokenAddress, abortController: AbortController): {
         pricePrefetchPromise: Promise<BN>,
         securityDepositPricePrefetchPromise: Promise<BN>
     } {
@@ -47,7 +47,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
      * @param dummySwapData
      * @param abortController
      */
-    getBaseSecurityDepositPrefetch(dummySwapData: T, abortController: AbortController): Promise<BN> {
+    protected getBaseSecurityDepositPrefetch(dummySwapData: T, abortController: AbortController): Promise<BN> {
         //Solana workaround
         if((this.swapContract as any).getRawRefundFee!=null) {
             return (this.swapContract as any).getRawRefundFee(dummySwapData).catch(e => {
@@ -70,7 +70,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
      * @param useToken
      * @param abortController
      */
-    getBalancePrefetch(useToken: TokenAddress, abortController: AbortController): Promise<BN> {
+    protected getBalancePrefetch(useToken: TokenAddress, abortController: AbortController): Promise<BN> {
         return this.swapContract.getBalance(useToken, true).catch(e => {
             this.logger.error("getBalancePrefetch(): balancePrefetch error: ", e);
             abortController.abort(e);
@@ -86,7 +86,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
      * @param signal
      * @throws {DefinedRuntimeError} will throw an error if there are not enough funds in the vault
      */
-    async checkBalance(totalInToken: BN, balancePrefetch: Promise<BN>, signal: AbortSignal): Promise<void> {
+    protected async checkBalance(totalInToken: BN, balancePrefetch: Promise<BN>, signal: AbortSignal): Promise<void> {
         const balance = await balancePrefetch;
         signal.throwIfAborted();
 
@@ -109,7 +109,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
      * @param pricePrefetchPromise
      * @throws {DefinedRuntimeError} will throw an error if the amount is outside minimum/maximum bounds
      */
-    async checkFromBtcAmount(
+    protected async checkFromBtcAmount(
         exactOut: boolean,
         amount: BN,
         useToken: TokenAddress,
@@ -217,7 +217,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
      * @param signal
      * @param metadata
      */
-    async getSecurityDeposit(
+    protected async getSecurityDeposit(
         amountBD: BN,
         swapFee: BN,
         expiryTimeout: BN,
@@ -263,7 +263,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
      * @param abortSignal
      * @param signDataPrefetchPromise
      */
-    async getFromBtcSignatureData(swapObject: T, req: Request & {paramReader: IParamReader}, abortSignal: AbortSignal, signDataPrefetchPromise?: Promise<any>): Promise<{
+    protected async getFromBtcSignatureData(swapObject: T, req: Request & {paramReader: IParamReader}, abortSignal: AbortSignal, signDataPrefetchPromise?: Promise<any>): Promise<{
         prefix: string,
         timeout: string,
         signature: string

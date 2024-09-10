@@ -157,7 +157,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
      * @param hash
      * @param sequence
      */
-    removeSwapData(hash: string, sequence: BN): Promise<void>;
+    protected removeSwapData(hash: string, sequence: BN): Promise<void>;
 
     /**
      * Remove swap data
@@ -165,9 +165,9 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
      * @param swap
      * @param ultimateState set the ultimate state of the swap before removing
      */
-    removeSwapData(swap: V, ultimateState?: S): Promise<void>;
+    protected removeSwapData(swap: V, ultimateState?: S): Promise<void>;
 
-    async removeSwapData(hashOrSwap: string | V, sequenceOrUltimateState?: BN | S) {
+    protected async removeSwapData(hashOrSwap: string | V, sequenceOrUltimateState?: BN | S) {
         let swap: V;
         if(typeof(hashOrSwap)==="string") {
             if(!BN.isBN(sequenceOrUltimateState)) throw new Error("Sequence must be a BN instance!");
@@ -186,7 +186,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
      *
      * @param responseStream
      */
-    getAbortController(responseStream: ServerParamEncoder): AbortController {
+    protected getAbortController(responseStream: ServerParamEncoder): AbortController {
         const abortController = new AbortController();
         const responseStreamAbortController = responseStream.getAbortSignal();
         responseStreamAbortController.addEventListener("abort", () => abortController.abort(responseStreamAbortController.reason));
@@ -199,7 +199,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
      * @param abortController
      * @param responseStream
      */
-    getSignDataPrefetch(abortController: AbortController, responseStream?: ServerParamEncoder): Promise<any> {
+    protected getSignDataPrefetch(abortController: AbortController, responseStream?: ServerParamEncoder): Promise<any> {
         let signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
             this.logger.error("getSignDataPrefetch(): signDataPrefetch: ", e);
             abortController.abort(e);
@@ -219,17 +219,17 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
         return signDataPrefetchPromise;
     }
 
-    getIdentifierFromEvent(event: SwapEvent<T>): string {
+    protected getIdentifierFromEvent(event: SwapEvent<T>): string {
         if(event.sequence.isZero()) return event.paymentHash;
         return event.paymentHash+"_"+event.sequence.toString(16);
     }
 
-    getIdentifierFromSwapData(swapData: T): string {
+    protected getIdentifierFromSwapData(swapData: T): string {
         if(swapData.getSequence().isZero()) return swapData.getHash();
         return swapData.getHash()+"_"+swapData.getSequence().toString(16);
     }
 
-    getIdentifier(swap: SwapHandlerSwap<T> | SwapEvent<T> | T) {
+    protected getIdentifier(swap: SwapHandlerSwap<T> | SwapEvent<T> | T) {
         if(swap instanceof SwapHandlerSwap) {
             return swap.getIdentifier();
         }

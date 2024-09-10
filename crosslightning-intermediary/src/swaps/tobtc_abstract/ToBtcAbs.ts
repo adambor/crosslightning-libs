@@ -811,7 +811,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param nonce
      * @throws {DefinedRuntimeError} will throw an error if the nonce is invalid
      */
-    checkNonceValid(nonce: BN): void {
+    private checkNonceValid(nonce: BN): void {
         if(nonce.isNeg() || nonce.gte(new BN(2).pow(new BN(64)))) throw {
             code: 20021,
             msg: "Invalid request body (nonce - cannot be parsed)"
@@ -833,7 +833,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param confirmationTarget
      * @throws {DefinedRuntimeError} will throw an error if the confirmationTarget is out of bounds
      */
-    checkConfirmationTarget(confirmationTarget: number): void {
+    private checkConfirmationTarget(confirmationTarget: number): void {
         if(confirmationTarget>this.config.maxConfTarget) throw {
             code: 20023,
             msg: "Invalid request body (confirmationTarget - too high)"
@@ -850,7 +850,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param confirmations
      * @throws {DefinedRuntimeError} will throw an error if the confirmations are out of bounds
      */
-    checkRequiredConfirmations(confirmations: number): void {
+    private checkRequiredConfirmations(confirmations: number): void {
         if(confirmations>this.config.maxConfirmations) throw {
             code: 20025,
             msg: "Invalid request body (confirmations - too high)"
@@ -867,7 +867,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param address
      * @throws {DefinedRuntimeError} will throw an error if the address is invalid
      */
-    checkAddress(address: string): void {
+    private checkAddress(address: string): void {
         let parsedOutputScript: Buffer;
 
         try {
@@ -891,7 +891,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param swap
      * @throws {DefinedRuntimeError} will throw an error if the swap is expired
      */
-    checkExpired(swap: ToBtcSwapAbs<T>) {
+    private checkExpired(swap: ToBtcSwapAbs<T>) {
         const isExpired = swap.data.getExpiry().lt(new BN(Math.floor(Date.now()/1000)).sub(new BN(this.config.maxSkew)));
         if(isExpired) throw {
             _httpStatus: 200,
@@ -908,7 +908,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param metadata
      * @throws {DefinedRuntimeError} will throw an error if the plugin cancelled the request
      */
-    async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: ToBtcRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
+    private async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: ToBtcRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
         const pluginResult = await PluginManager.onSwapRequestToBtc(req, parsedBody, metadata);
 
         if(pluginResult.throw) throw {
@@ -929,7 +929,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param amount
      * @throws {DefinedRuntimeError} will throw an error if there are not enough BTC funds
      */
-    async checkAndGetNetworkFee(address: string, amount: BN): Promise<{ networkFee: BN, satsPerVbyte: BN }> {
+    private async checkAndGetNetworkFee(address: string, amount: BN): Promise<{ networkFee: BN, satsPerVbyte: BN }> {
         let chainFeeResp = await this.getChainFee(address, amount.toNumber());
 
         const hasEnoughFunds = chainFeeResp!=null;

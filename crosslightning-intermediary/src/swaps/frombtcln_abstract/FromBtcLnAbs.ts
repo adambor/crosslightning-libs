@@ -406,7 +406,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
      * @param descriptionHash
      * @throws {DefinedRuntimeError} will throw an error if the description hash is invalid
      */
-    checkDescriptionHash(descriptionHash: string) {
+    private checkDescriptionHash(descriptionHash: string) {
         if(descriptionHash!=null) {
             if(typeof(descriptionHash)!=="string" || !HEX_REGEX.test(descriptionHash) || descriptionHash.length!==64) {
                 throw {
@@ -425,7 +425,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
      * @param metadata
      * @throws {DefinedRuntimeError} will throw an error if the plugin cancelled the request
      */
-    async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: FromBtcLnRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
+    private async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: FromBtcLnRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
         const pluginResult = await PluginManager.onSwapRequestFromBtcLn(req, parsedBody, metadata);
 
         if(pluginResult.throw) {
@@ -449,7 +449,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
      * @param signal
      * @throws {DefinedRuntimeError} will throw an error if there isn't enough inbound liquidity to receive the LN payment
      */
-    async checkInboundLiquidity(amountBD: BN, channelsPrefetch: Promise<{channels: any[]}>, signal: AbortSignal) {
+    private async checkInboundLiquidity(amountBD: BN, channelsPrefetch: Promise<{channels: any[]}>, signal: AbortSignal) {
         const channelsResponse = await channelsPrefetch;
 
         signal.throwIfAborted();
@@ -471,7 +471,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
      *
      * @param abortController
      */
-    getChannelsPrefetch(abortController: AbortController): Promise<{channels: any[]}> {
+    private getChannelsPrefetch(abortController: AbortController): Promise<{channels: any[]}> {
         return lncli.getChannels({is_active: true, lnd: this.LND}).catch(e => {
             this.logger.error("getChannelsPrefetch(): error", e);
             abortController.abort(e);
@@ -484,7 +484,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
      *
      * @param abortController
      */
-    getBlockheightPrefetch(abortController: AbortController): Promise<number> {
+    private getBlockheightPrefetch(abortController: AbortController): Promise<number> {
         return lncli.getHeight({lnd: this.LND}).then(res => res.current_block_height).catch(e => {
             this.logger.error("getBlockheightPrefetch(): error", e);
             abortController.abort(e);
@@ -497,7 +497,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
      *
      * @param responseStream
      */
-    sendPublicKeyAsync(responseStream: ServerParamEncoder) {
+    private sendPublicKeyAsync(responseStream: ServerParamEncoder) {
         lncli.getWalletInfo({lnd: this.LND}).then(resp => responseStream.writeParams({
             lnPublicKey: resp.public_key
         })).catch(e => {
@@ -511,7 +511,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
      *
      * @param invoice
      */
-    getInvoicePaymentsTimeout(invoice: {payments: {timeout: number}[]}) {
+    private getInvoicePaymentsTimeout(invoice: {payments: {timeout: number}[]}) {
         let timeout: number = null;
         invoice.payments.forEach((curr) => {
             if (timeout == null || timeout > curr.timeout) timeout = curr.timeout;
@@ -528,7 +528,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
      * @throws {DefinedRuntimeError} Will throw if HTLC expires too soon and therefore cannot be processed
      * @returns expiry timeout in seconds
      */
-    async checkHtlcExpiry(invoice: {payments: {timeout: number}[]}, blockheightPrefetch: Promise<number>, signal: AbortSignal): Promise<BN> {
+    private async checkHtlcExpiry(invoice: {payments: {timeout: number}[]}, blockheightPrefetch: Promise<number>, signal: AbortSignal): Promise<BN> {
         const timeout: number = this.getInvoicePaymentsTimeout(invoice);
         const current_block_height = await blockheightPrefetch;
         signal.throwIfAborted();
@@ -555,7 +555,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
      *
      * @param invoiceData
      */
-    async cancelSwapAndInvoice(invoiceData: FromBtcLnSwapAbs<T>): Promise<void> {
+    private async cancelSwapAndInvoice(invoiceData: FromBtcLnSwapAbs<T>): Promise<void> {
         if(invoiceData.state!==FromBtcLnSwapState.CREATED) return;
         await invoiceData.setState(FromBtcLnSwapState.CANCELED);
         const paymentHash = invoiceData.data.getHash();
@@ -567,7 +567,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         this.swapLogger.info(invoiceData, "cancelSwapAndInvoice(): swap removed & invoice cancelled, invoice: ", invoiceData.pr);
     };
 
-    getDummySwapData(useToken: TokenAddress, address: string, paymentHash: string) {
+    private getDummySwapData(useToken: TokenAddress, address: string, paymentHash: string) {
         return this.swapContract.createSwapData(
             ChainSwapType.HTLC,
             this.swapContract.getAddress(),
@@ -594,7 +594,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
      * @throws {DefinedRuntimeError} Will throw if the lightning invoice is not found, or if it isn't in the HELD state
      * @returns the fetched lightning invoice
      */
-    async checkInvoiceStatus(paymentHash: string): Promise<any> {
+    private async checkInvoiceStatus(paymentHash: string): Promise<any> {
         const invoice = await lncli.getInvoice({
             id: paymentHash,
             lnd: this.LND

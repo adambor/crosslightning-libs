@@ -24,7 +24,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
      * @param sequence
      * @throws {DefinedRuntimeError} will throw an error if sequence number is out of bounds
      */
-    checkSequence(sequence: BN) {
+    protected checkSequence(sequence: BN) {
         if(sequence.isNeg() || sequence.gte(new BN(2).pow(new BN(64)))) {
             throw {
                 code: 20060,
@@ -33,7 +33,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
         }
     }
 
-    async checkVaultInitialized(token: string): Promise<void> {
+    protected async checkVaultInitialized(token: string): Promise<void> {
         if(!this.pdaExistsForToken[token]) {
             this.logger.debug("checkVaultInitialized(): checking vault exists for token: "+token);
             const reputation = await this.swapContract.getIntermediaryReputation(this.swapContract.getAddress(), this.swapContract.toTokenAddress(token));
@@ -62,7 +62,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
      * @throws {DefinedRuntimeError} will throw an error if the amount is outside minimum/maximum bounds,
      *  or if we don't have enough funds (getNetworkFee callback throws)
      */
-    async checkToBtcAmount<T extends {networkFee: BN}>(
+    protected async checkToBtcAmount<T extends {networkFee: BN}>(
         exactIn: boolean,
         amount: BN,
         useToken: TokenAddress,
@@ -190,7 +190,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
      * @param responseStream
      * @param abortController
      */
-    getToBtcPrefetches(token: TokenAddress, responseStream: ServerParamEncoder, abortController: AbortController): {
+    protected getToBtcPrefetches(token: TokenAddress, responseStream: ServerParamEncoder, abortController: AbortController): {
         pricePrefetchPromise?: Promise<BN>,
         signDataPrefetchPromise?: Promise<any>
     } {
@@ -215,7 +215,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
      * @param abortSignal
      * @param signDataPrefetchPromise
      */
-    async getToBtcSignatureData(swapObject: T, req: Request & {paramReader: IParamReader}, abortSignal: AbortSignal, signDataPrefetchPromise?: Promise<any>): Promise<{
+    protected async getToBtcSignatureData(swapObject: T, req: Request & {paramReader: IParamReader}, abortSignal: AbortSignal, signDataPrefetchPromise?: Promise<any>): Promise<{
         prefix: string,
         timeout: string,
         signature: string

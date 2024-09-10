@@ -241,7 +241,7 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
      * @param sequence
      * @throws {DefinedRuntimeError} will throw an error if the sequence number is out of bounds
      */
-    checkSequence(sequence: BN): void {
+    private checkSequence(sequence: BN): void {
         if(sequence.isNeg() || sequence.gte(new BN(2).pow(new BN(64)))) {
             throw {
                 code: 20042,
@@ -258,7 +258,7 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
      * @param metadata
      * @throws {DefinedRuntimeError} will throw an error if the plugin cancelled the request
      */
-    async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: FromBtcRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
+    private async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: FromBtcRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
         const pluginResult = await PluginManager.onSwapRequestFromBtc(req, parsedBody, metadata);
 
         if(pluginResult.throw) {
@@ -283,7 +283,7 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
      * @throws {DefinedRuntimeError} will throw an error if the plugin cancelled the request
      * @returns {Promise<BN>} resulting claimer bounty to be used with the swap
      */
-    async getClaimerBounty(req: Request & {paramReader: IParamReader}, expiry: BN, signal: AbortSignal): Promise<BN> {
+    private async getClaimerBounty(req: Request & {paramReader: IParamReader}, expiry: BN, signal: AbortSignal): Promise<BN> {
         const parsedClaimerBounty = await req.paramReader.getParams({
             claimerBounty: {
                 feePerBlock: FieldTypeEnum.BN,
@@ -309,7 +309,7 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
         return parsedClaimerBounty.claimerBounty.addFee.add(totalBlock.mul(parsedClaimerBounty.claimerBounty.feePerBlock));
     }
 
-    getDummySwapData(useToken: TokenAddress, address: string): Promise<T> {
+    private getDummySwapData(useToken: TokenAddress, address: string): Promise<T> {
         return this.swapContract.createSwapData(
             ChainSwapType.CHAIN,
             this.swapContract.getAddress(),
