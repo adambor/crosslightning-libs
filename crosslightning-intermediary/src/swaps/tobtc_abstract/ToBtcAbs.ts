@@ -253,7 +253,6 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      *
      * @param targetAddress
      * @param targetAmount
-     * @param multiplier
      * @private
      * @returns Fee estimate & inputs/outputs to use when constructing transaction, or null in case of not enough funds
      */

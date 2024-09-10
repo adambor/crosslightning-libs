@@ -239,4 +239,19 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
         return this.getIdentifierFromSwapData(swap);
     }
 
+    /**
+     * Checks if the sequence number is between 0-2^64
+     *
+     * @param sequence
+     * @throws {DefinedRuntimeError} will throw an error if sequence number is out of bounds
+     */
+    protected checkSequence(sequence: BN) {
+        if(sequence.isNeg() || sequence.gte(new BN(2).pow(new BN(64)))) {
+            throw {
+                code: 20060,
+                msg: "Invalid sequence"
+            };
+        }
+    }
+
 }

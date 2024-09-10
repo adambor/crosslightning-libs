@@ -236,21 +236,6 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
     }
 
     /**
-     * Checks if sequence number is in valid range (0-2^64)
-     *
-     * @param sequence
-     * @throws {DefinedRuntimeError} will throw an error if the sequence number is out of bounds
-     */
-    private checkSequence(sequence: BN): void {
-        if(sequence.isNeg() || sequence.gte(new BN(2).pow(new BN(64)))) {
-            throw {
-                code: 20042,
-                msg: "Invalid sequence"
-            };
-        }
-    }
-
-    /**
      * Checks if the request should be processed by calling plugins
      *
      * @param req
