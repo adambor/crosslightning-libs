@@ -1,5 +1,4 @@
 import * as BN from "bn.js";
-import fetch, {Response} from "cross-fetch";
 import {TokenAddress} from "crosslightning-base";
 import {ISwapPrice} from "../swaps/ISwapPrice";
 
