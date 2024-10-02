@@ -1,7 +1,10 @@
-import {RequestSchema, RequestSchemaResult} from "./SchemaVerifier";
-
 export interface IParamReader {
 
-    getParams<T extends RequestSchema>(schema: T): Promise<RequestSchemaResult<T>>;
+    /**
+     * Returns a promise when the specific property with the name is read from the stream
+     *
+     * @param name Name of the property
+     */
+    getParam<T>(name: string): Promise<T>;
 
 }

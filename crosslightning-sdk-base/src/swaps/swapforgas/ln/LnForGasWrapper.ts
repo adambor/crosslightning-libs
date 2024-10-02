@@ -1,63 +1,15 @@
-import {PaymentAuthError} from "../../ClientSwapContract";
 import * as BN from "bn.js";
 import {
-    ChainEvents,
-    ChainSwapType,
-    ClaimEvent,
-    InitializeEvent,
-    IStorageManager,
-    RefundEvent,
-    SignatureVerificationError,
-    SwapCommitStatus,
-    SwapContract,
-    SwapData,
-    SwapEvent,
-    TokenAddress
+    SwapData
 } from "crosslightning-base";
-import {fetchWithTimeout, tryWithRetries} from "../../../utils/RetryUtils";
-import * as EventEmitter from "events";
 import {LnForGasSwap, LnForGasSwapState} from "./LnForGasSwap";
-import {Response} from "cross-fetch";
-import {RequestError} from "../../..";
+import {ISwapWrapper} from "../../ISwapWrapper";
+import {TrustedIntermediaryAPI} from "../../../intermediaries/TrustedIntermediaryAPI";
+import {decode as bolt11Decode} from "bolt11";
+import {IntermediaryError} from "../../../errors/IntermediaryError";
 
-export class LnForGasWrapper<T extends SwapData> {
-
-    readonly events: EventEmitter = new EventEmitter();
-
-    readonly MAX_CONCURRENT_REQUESTS: number = 10;
-
-    readonly storage: IStorageManager<LnForGasSwap<T>>;
-    readonly contract: SwapContract<T, any, any, any>;
-    readonly options: {
-        getRequestTimeout?: number,
-        postRequestTimeout?: number
-    };
-    isInitialized: boolean = false;
-
-    swaps: {
-        [paymentHash: string]: LnForGasSwap<T>
-    };
-
-    /**
-     * @param storage           Storage interface for the current environment
-     * @param contract          Underlying contract handling the swaps
-     * @param options           Options for post/get requests
-     */
-    constructor(
-        storage: IStorageManager<LnForGasSwap<T>>,
-        contract: SwapContract<T, any, any, any>,
-        options: {
-            getRequestTimeout?: number,
-            postRequestTimeout?: number
-        }
-    ) {
-        this.storage = storage;
-        this.contract = contract;
-        if(options.getRequestTimeout==null) options.getRequestTimeout = 15*1000;
-        if(options.postRequestTimeout==null) options.postRequestTimeout = 30*1000;
-        this.options = options;
-
-    }
+export class LnForGasWrapper<T extends SwapData> extends ISwapWrapper<T, LnForGasSwap<T>> {
+    protected readonly swapDeserializer = LnForGasSwap;
 
     /**
      * Returns a newly created swap, receiving 'amount' on lightning network
@@ -66,131 +18,53 @@ export class LnForGasWrapper<T extends SwapData> {
      * @param url               Intermediary/Counterparty swap service url
      */
     async create(amount: BN, url: string): Promise<LnForGasSwap<T>> {
-
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const receiveAddress = this.contract.getAddress();
+        const address = this.contract.getAddress();
 
-        const response: Response = await tryWithRetries(() => fetchWithTimeout(url+"/createInvoice?address="+encodeURIComponent(receiveAddress)+"&amount="+encodeURIComponent(amount.toString(10)), {
-            method: "GET",
-            timeout: this.options.getRequestTimeout
-        }));
+        const resp = await TrustedIntermediaryAPI.initTrustedFromBTCLN(url, {
+            address,
+            amount
+        }, this.options.getRequestTimeout);
 
-        if(response.status!==200) {
-            let resp: string;
-            try {
-                resp = await response.text();
-            } catch (e) {
-                throw new RequestError(response.statusText, response.status);
-            }
-            throw RequestError.parse(resp, response.status);
-        }
+        const decodedPr = bolt11Decode(resp.pr);
+        const amountIn = new BN(decodedPr.millisatoshis).add(new BN(999)).div(new BN(1000));
 
-        let jsonBody: any = await response.json();
+        if(!resp.total.eq(amount)) throw new IntermediaryError("Invalid total returned");
 
-        const swap = new LnForGasSwap(this, jsonBody.data.pr, url, new BN(jsonBody.data.total), new BN(jsonBody.data.swapFee), receiveAddress);
-        this.swaps[swap.getPaymentHash().toString("hex")] = swap;
-        await swap.save();
-        return swap;
+        const pricingInfo = await this.verifyReturnedPrice(
+            {swapFeePPM: 10000, swapBaseFee: 10}, false, amountIn,
+            amount, this.contract.getNativeCurrencyAddress(), resp
+        );
 
-    }
-
-    /**
-     * Initializes the wrapper, be sure to call this before taking any other actions.
-     * Checks if any swaps are in progress.
-     */
-    async init() {
-
-        if(this.isInitialized) return;
-
-        await this.storage.init();
-        const swapData = await this.storage.loadData(LnForGasSwap);
-
-        this.swaps = {};
-        swapData.forEach(e => {
-            e.wrapper = this;
-            this.swaps[e.getPaymentHash().toString("hex")] = e;
+        return new LnForGasSwap(this, {
+            pr: resp.pr,
+            outputAmount: resp.total,
+            recipient: address,
+            pricingInfo,
+            url,
+            expiry: decodedPr.timeExpireDate*1000,
+            swapFee: resp.swapFee,
+            feeRate: ""
         });
-
-        console.log("Loaded LnForGas: ", swapData);
-
-        const processSwap: (swap: LnForGasSwap<T>) => Promise<boolean> = async (swap: LnForGasSwap<T>) => {
-            if(swap.state===LnForGasSwapState.PR_CREATED) {
-                //Check if it's maybe already paid
-                try {
-                    const res = await swap.getInvoiceStatus();
-                    if(res.is_paid) {
-                        return false;
-                    }
-                    if(swap.getTimeoutTime()<Date.now()) {
-                        swap.state = LnForGasSwapState.EXPIRED;
-                        return true;
-                    }
-                } catch (e) {
-                    console.error(e);
-                    if(e instanceof PaymentAuthError) {
-                        swap.state = LnForGasSwapState.FAILED;
-                        return true;
-                    }
-                }
-                return false;
-            }
-        };
-
-        let promises = [];
-        for(let paymentHash in this.swaps) {
-            const swap: LnForGasSwap<T> = this.swaps[paymentHash];
-
-            promises.push(processSwap(swap).then(changed => {
-                if(swap.state===LnForGasSwapState.EXPIRED || swap.state===LnForGasSwapState.FAILED) {
-                    delete this.swaps[swap.getPaymentHash().toString("hex")];
-                    this.storage.removeData(swap.getPaymentHash().toString("hex"));
-                } else {
-                    if(changed) return this.storage.saveData(swap.getPaymentHash().toString("hex"), swap);
-                }
-            }));
-            if(promises.length>=this.MAX_CONCURRENT_REQUESTS) {
-                await Promise.all(promises);
-                promises = [];
-            }
-        }
-        if(promises.length>0) await Promise.all(promises);
-
-        console.log("Swap data checked");
-
-        this.isInitialized = true;
     }
 
-    /**
-     * Returns all swaps that were initiated with the current provider's public key
-     */
-    async getAllSwaps(): Promise<LnForGasSwap<T>[]> {
-        return Promise.resolve(this.getAllSwapsSync());
+    protected async checkPastSwap(swap: LnForGasSwap<T>): Promise<boolean> {
+        if(swap.state===LnForGasSwapState.PR_CREATED) {
+            //Check if it's maybe already paid
+            const res = await swap.checkInvoicePaid(false);
+            if(res!==null) return true;
+
+            if(swap.getTimeoutTime()<Date.now()) {
+                swap.state = LnForGasSwapState.EXPIRED;
+                return true;
+            }
+        }
+        return false;
     }
 
-    /**
-     * Returns all swaps that were initiated with the current provider's public key
-     */
-    getAllSwapsSync(): LnForGasSwap<T>[] {
-
-        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
-
-        const returnArr: LnForGasSwap<T>[] = [];
-
-        for(let paymentHash in this.swaps) {
-            const swap = this.swaps[paymentHash];
-
-            console.log(swap);
-
-            if(swap.recipient!==this.contract.getAddress()) {
-                continue;
-            }
-
-            returnArr.push(swap);
-        }
-
-        return returnArr;
-
+    protected isOurSwap(swap: LnForGasSwap<T>): boolean {
+        return this.contract.getAddress()===swap.getRecipient();
     }
 
 }

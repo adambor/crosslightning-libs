@@ -1,11 +1,15 @@
-import {ParamEncoder} from "../ParamEncoder";
-import {RequestSchema, RequestSchemaResultPromise, verifyField} from "../SchemaVerifier";
-import {ParamDecoder} from "../ParamDecoder";
-import * as stream from "node:stream";
+import {isOptionalField, RequestSchema, RequestSchemaResultPromise, verifyField} from "../SchemaVerifier";
+import {RequestError} from "../../../errors/RequestError";
+import {extendAbortController, getLogger, objectMap, timeoutSignal} from "../../Utils";
+import {StreamParamEncoder} from "./StreamParamEncoder";
+import {ResponseParamDecoder} from "./ResponseParamDecoder";
+
 
 export type RequestBody = {
     [key: string]: Promise<any> | any
 }
+
+const logger = getLogger("StreamingFetch: ");
 
 //https://developer.chrome.com/docs/capabilities/web-apis/fetch-streaming-requests#feature_detection
 const supportsRequestStreams: boolean = (() => {
@@ -29,62 +33,41 @@ const supportsRequestStreams: boolean = (() => {
     }
 })();
 
+logger.info("Environment supports request stream: "+supportsRequestStreams);
 
-async function readResponse(reader: ReadableStreamDefaultReader, inputStream: ParamDecoder) {
-    while(true) {
-        const readResp = await reader.read().catch(e => {
-            console.error(e);
-            return null;
-        });
-        if(readResp==null || readResp.done) {
-            inputStream.onEnd();
-            break;
-        }
-        inputStream.onData(Buffer.from(readResp.value));
-    }
-}
-export function streamingFetchWithTimeoutPromise<T extends RequestSchema>(url: string, body: RequestBody, schema: T, timeout?: number, signal?: AbortSignal, streamRequest?: boolean): Promise<{
-    response: Response,
-    responseBody?: RequestSchemaResultPromise<T>
-}> {
-    if(timeout==null) return streamingFetchPromise<T>(url, body, schema, signal, streamRequest);
-
-    let timedOut = false;
-    const abortController = new AbortController();
-    const timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        abortController.abort(new Error("Network request timed out"))
-    }, timeout);
-    let originalSignal: AbortSignal;
-    if(signal!=null) {
-        originalSignal = signal;
-        originalSignal.addEventListener("abort", () => {
-            clearTimeout(timeoutHandle);
-            abortController.abort(originalSignal.reason);
-        });
-    }
-
-    signal = abortController.signal;
-
-    return streamingFetchPromise<T>(url, body, schema, signal, streamRequest);
-}
-
-export async function streamingFetchPromise<T extends RequestSchema>(url: string, body: RequestBody, schema: T, signal?: AbortSignal, streamRequest?: boolean): Promise<{
-    response: Response,
-    responseBody?: RequestSchemaResultPromise<T>
-}> {
+/**
+ * Sends a POST request to the specified URL in a streaming request/response mode
+ *
+ * @param url URL to send the request to
+ * @param body An object containing properties that should be sent to the server, can be Promise or any
+ * @param schema Schema of the response that should be received from the server
+ * @param timeout Timeout in millseconds for the request to succeed & all its response properties to resolve
+ * @param signal Abort signal
+ * @param streamRequest Whether the request should be streamed or not
+ * @throws {RequestError} When the response code is not 200
+ */
+export async function streamingFetchPromise<T extends RequestSchema>(
+    url: string,
+    body: RequestBody,
+    schema: T,
+    timeout?: number,
+    signal?: AbortSignal,
+    streamRequest?: boolean
+): Promise<RequestSchemaResultPromise<T>> {
     if(streamRequest==null) streamRequest = supportsRequestStreams;
+    if(timeout!=null) signal = timeoutSignal(timeout, new Error("Network request timed out"), signal);
 
     const init: RequestInit = {
-        method: "POST"
+        method: "POST",
+        headers: {}
     };
 
+    const startTime = Date.now();
+
+    const immediateValues: any = {};
+    const promises: Promise<any>[] = [];
+
     if(!streamRequest) {
-
-        const immediateValues: any = {};
-
-        const promises: Promise<any>[] = [];
-
         for(let key in body) {
             if(body[key] instanceof Promise) {
                 promises.push(body[key].then((val) => {
@@ -104,24 +87,17 @@ export async function streamingFetchPromise<T extends RequestSchema>(url: string
 
         if(signal!=null) signal.throwIfAborted();
 
+        logger.debug(url+": Sending request ("+(Date.now()-startTime)+"ms) (non-streaming): ", immediateValues);
         init.body = JSON.stringify(immediateValues);
-        if(init.headers==null) init.headers = {};
         init.headers['content-type'] = "application/json";
-
     } else {
+        const outputStream = new StreamParamEncoder();
 
         let hasPromiseInBody = false;
-        const immediateValues: any = {};
-
-        let stream = new TransformStream();
-        let writeStream = stream.writable.getWriter();
-        const outputStream = new ParamEncoder(writeStream.write.bind(writeStream), writeStream.close.bind(writeStream));
-
-        const promises: Promise<any>[] = [];
-
         for(let key in body) {
             if(body[key] instanceof Promise) {
                 promises.push(body[key].then((val) => {
+                    logger.debug(url+": Send param ("+(Date.now()-startTime)+"ms) (streaming): ", {[key]: val});
                     return outputStream.writeParams({
                         [key]: val
                     });
@@ -133,36 +109,30 @@ export async function streamingFetchPromise<T extends RequestSchema>(url: string
         }
 
         if(hasPromiseInBody) {
-            init.body = stream.readable;
-            if(init.headers==null) init.headers = {};
+            init.body = outputStream.getReadableStream();
             init.headers['content-type'] = "application/x-multiple-json";
             (init as any).duplex = "half";
 
+            logger.debug(url+": Sending request ("+(Date.now()-startTime)+"ms) (streaming): ", immediateValues);
             promises.push(outputStream.writeParams(immediateValues));
 
-            const abortController = new AbortController();
-            if(signal!=null) {
-                signal.addEventListener("abort", () => abortController.abort(signal.reason));
-            }
+            const abortController = extendAbortController(signal);
+            signal = abortController.signal;
+
             Promise.all(promises).then(() => outputStream.end()).catch(e => {
                 e._inputPromiseError = true;
                 abortController.abort(e);
             });
-            signal = abortController.signal;
 
-            signal.addEventListener("abort", () => {
-                if(!writeStream.closed) writeStream.close();
-            });
+            signal.addEventListener("abort", () => outputStream.end());
         } else {
+            logger.debug(url+": Sending request ("+(Date.now()-startTime)+"ms) (non-streaming): ", immediateValues);
             init.body = JSON.stringify(immediateValues);
-            if(init.headers==null) init.headers = {};
             init.headers['content-type'] = "application/json";
         }
-
     }
 
     if(signal!=null) init.signal = signal;
-    if(init.headers==null) init.headers = {};
     init.headers['accept'] = "application/x-multiple-json";
 
     const resp = await fetch(url, init).catch(e => {
@@ -174,72 +144,47 @@ export async function streamingFetchPromise<T extends RequestSchema>(url: string
         }
     });
 
-    if(resp.status!==200) {
-        return {
-            response: resp
-        };
-    }
+    logger.debug(url+": Response status ("+(Date.now()-startTime)+"ms) "+(streamRequest ? "(streaming)" : "(non streaming)")+": ", resp.status);
 
-    const responseBody: any = {};
+    if(resp.status!==200) {
+        let respTxt: string;
+        try {
+            respTxt = await resp.text();
+        } catch (e) {
+            throw new RequestError(resp.statusText, resp.status);
+        }
+        throw new RequestError(respTxt, resp.status);
+    }
 
     if(resp.headers.get("content-type")!=="application/x-multiple-json") {
         const respBody = await resp.json();
 
-        for(let key in schema) {
+        logger.debug(url+": Response read ("+(Date.now()-startTime)+"ms) (non streaming): ", respBody);
+
+        return objectMap<any, Promise<any>>(schema, (schemaValue, key) => {
             const value = respBody[key];
 
-            if(value===undefined) {
-                responseBody[key] = Promise.reject(new Error("EOF before field seen!"));
+            const result = verifyField(schemaValue, value);
+            if(result===undefined) {
+                return Promise.reject(new Error("Invalid field value"));
             } else {
-                const result = verifyField(schema[key], value);
-                if(value===undefined) {
-                    responseBody[key] = Promise.reject(new Error("Invalid field value"));
-                } else {
-                    responseBody[key] = Promise.resolve(result);
-                }
+                return Promise.resolve(result);
             }
-        }
+        }) as any;
     } else {
-        const inputStream = new ParamDecoder();
+        const decoder = new ResponseParamDecoder(resp, init.signal);
 
-        for(let key in schema) {
-            responseBody[key] = inputStream.getParam(key).then(value => {
-                const result = verifyField(schema[key], value);
-                if(value===undefined) {
-                    return Promise.reject(new Error("Invalid field value"));
-                } else {
-                    return result;
-                }
-            });
-        }
-
-        try {
-            //Read from stream
-            const reader = resp.body.getReader();
-
-            if(init.signal!=null) init.signal.addEventListener("abort", () => {
-                if(!reader.closed) reader.cancel(signal.reason);
-            });
-
-            readResponse(reader, inputStream);
-        } catch (e) {
-            //Read in one piece
-            resp.arrayBuffer().then(respBuffer => {
-                if(init.signal!=null && init.signal.aborted) {
-                    inputStream.onError(init.signal.reason);
-                    return;
-                }
-                inputStream.onData(Buffer.from(respBuffer));
-                inputStream.onEnd();
-            }).catch(e => {
-                inputStream.onError(e);
-            });
-        }
-
+        return objectMap(schema, (schemaValue, key) => decoder.getParam(key).catch(e => {
+            if(isOptionalField(schemaValue)) return undefined;
+            throw e;
+        }).then(value => {
+            logger.debug(url+": Response frame read ("+(Date.now()-startTime)+"ms) (streaming): ", {[key]: value});
+            const result = verifyField(schemaValue, value);
+            if(result===undefined) {
+                return Promise.reject(new Error("Invalid field value"));
+            } else {
+                return result;
+            }
+        })) as any;
     }
-
-    return {
-        response: resp,
-        responseBody
-    };
 }

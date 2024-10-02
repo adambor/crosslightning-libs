@@ -1,12 +1,12 @@
 import {Intermediary, ServicesType} from "./Intermediary";
-import {randomBytes} from "crypto-browserify";
 import {SwapType} from "../swaps/SwapType";
 import * as BN from "bn.js";
 import {SwapData, TokenAddress} from "crosslightning-base";
 import {SwapContract} from "crosslightning-base/dist";
-import {fetchWithTimeout, tryWithRetries} from "../utils/RetryUtils";
-import {AbortError} from "../errors/AbortError";
 import {EventEmitter} from "events";
+import {Buffer} from "buffer";
+import {getLogger, httpGet, tryWithRetries} from "../utils/Utils";
+import {IntermediaryAPI} from "./IntermediaryAPI";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -31,12 +31,6 @@ type InfoHandlerResponseEnvelope = {
     }
 };
 
-type InfoHandlerResponse = {
-    address: string,
-    envelope: string,
-    signature: string
-};
-
 export type TokenBounds = {
     [token: string]: {
         min: BN,
@@ -48,8 +42,13 @@ export type SwapBounds = {
     [key in SwapType]?: TokenBounds
 }
 
+/**
+ * Converts SwapHandlerType (represented as string & used in REST API communication with intermediaries) to regular
+ *  SwapType
+ *
+ * @param swapHandlerType
+ */
 function swapHandlerTypeToSwapType(swapHandlerType: SwapHandlerType): SwapType {
-
     switch (swapHandlerType) {
         case SwapHandlerType.FROM_BTC:
             return SwapType.FROM_BTC;
@@ -60,8 +59,15 @@ function swapHandlerTypeToSwapType(swapHandlerType: SwapHandlerType): SwapType {
         case SwapHandlerType.TO_BTCLN:
             return SwapType.TO_BTCLN;
     }
-
 }
+
+/**
+ * A default intermediary comparator, only takes to announced fee into consideration
+ *
+ * @param swapType
+ * @param tokenAddress
+ * @param swapAmount
+ */
 function getIntermediaryComparator(swapType: SwapType, tokenAddress: TokenAddress, swapAmount?: BN) {
 
     if(swapType===SwapType.TO_BTC) {
@@ -81,11 +87,14 @@ function getIntermediaryComparator(swapType: SwapType, tokenAddress: TokenAddres
 
 }
 
-const REGISTRY_URL = "https://api.github.com/repos/adambor/SolLightning-registry/contents/registry.json?ref=main";
-const BATCH_SIZE = 20;
-const TIMEOUT = 3000;
+const logger = getLogger("IntermediaryDiscovery: ");
 
-export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
+const REGISTRY_URL = "https://api.github.com/repos/adambor/SolLightning-registry/contents/registry.json?ref=main";
+
+export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter<{
+    added: [Intermediary[]],
+    removed: [Intermediary[]]
+}> {
 
     intermediaries: Intermediary[];
 
@@ -96,155 +105,103 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
 
     private overrideNodeUrls?: string[];
 
-    constructor(swapContract: SwapContract<T, any, any, any>, registryUrl?: string, nodeUrls?: string[], httpRequestTimeout?: number) {
+    constructor(swapContract: SwapContract<T, any, any, any>, registryUrl: string = REGISTRY_URL, nodeUrls?: string[], httpRequestTimeout?: number) {
         super();
         this.swapContract = swapContract;
-        this.registryUrl = registryUrl || REGISTRY_URL;
+        this.registryUrl = registryUrl;
         this.overrideNodeUrls = nodeUrls;
         this.httpRequestTimeout = httpRequestTimeout;
     }
 
-    async getIntermediaryUrls(abortSignal?: AbortSignal): Promise<string[]> {
-
+    /**
+     * Fetches the URLs of swap intermediaries from registry or from a pre-defined array of node urls
+     *
+     * @param abortSignal
+     */
+    private async getIntermediaryUrls(abortSignal?: AbortSignal): Promise<string[]> {
         if(this.overrideNodeUrls!=null && this.overrideNodeUrls.length>0) {
             return this.overrideNodeUrls;
         }
 
-        const response: Response = await tryWithRetries(() => {
-            return fetchWithTimeout(this.registryUrl, {
-                method: "GET",
-                headers: {'Content-Type': 'application/json'},
-                signal: abortSignal,
-                timeout: this.httpRequestTimeout
-            })
-        }, null, null, abortSignal);
+        const response = await httpGet<{content: string}>(this.registryUrl, this.httpRequestTimeout, abortSignal);
 
-        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
+        const content = response.content.replace(new RegExp("\\n", "g"), "");
 
-        if(response.status!==200) {
-            let resp: string;
-            try {
-                resp = await response.text();
-            } catch (e) {
-                throw new Error(response.statusText);
-            }
-            throw new Error(resp);
-        }
-
-        let jsonBody: any = await response.json();
-
-        const content = jsonBody.content.replace(new RegExp("\\n", "g"), "");
-        console.log(content);
-
-        const urls: string[] = JSON.parse(Buffer.from(content, "base64").toString());
-
-        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
-
-        return urls;
-
+        return JSON.parse(Buffer.from(content, "base64").toString()) as string[];
     }
 
-    async getNodeInfo(url: string, abortSignal?: AbortSignal) : Promise<{address: string, info: InfoHandlerResponseEnvelope}> {
+    /**
+     * Returns data as reported by a specific node (as identified by its URL)
+     *
+     * @param url
+     * @param abortSignal
+     */
+    private async getNodeInfo(url: string, abortSignal?: AbortSignal) : Promise<{address: string, info: InfoHandlerResponseEnvelope}> {
+        const response = await IntermediaryAPI.getIntermediaryInfo(url);
 
-        const nonce = randomBytes(32).toString("hex");
-
-        const response: Response = await fetchWithTimeout(url+"/info", {
-            method: "POST",
-            body: JSON.stringify({
-                nonce
-            }),
-            headers: {'Content-Type': 'application/json'},
-            signal: abortSignal,
-            timeout: this.httpRequestTimeout
-        });
-
-        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
-
-        if(response.status!==200) {
-            let resp: string;
-            try {
-                resp = await response.text();
-            } catch (e) {
-                throw new Error(response.statusText);
-            }
-            throw new Error(resp);
-        }
-
-        let jsonBody: InfoHandlerResponse = await response.json();
-        const info: InfoHandlerResponseEnvelope = JSON.parse(jsonBody.envelope);
-
-        if(nonce!==info.nonce) throw new Error("Invalid response - nonce");
-
-        await this.swapContract.isValidDataSignature(Buffer.from(jsonBody.envelope), jsonBody.signature, jsonBody.address);
-
-        console.log("Returned info: ", info);
-
-        if(abortSignal!=null && abortSignal.aborted) throw new AbortError();
+        await this.swapContract.isValidDataSignature(Buffer.from(response.envelope), response.signature, response.address);
+        if(abortSignal!=null) abortSignal.throwIfAborted();
 
         return {
-            address: jsonBody.address,
-            info
+            address: response.address,
+            info: JSON.parse(response.envelope)
         };
-
     }
 
-    async fetchIntermediaries(abortSignal?: AbortSignal): Promise<Intermediary[]> {
+    /**
+     * Fetches data about all intermediaries in the network, pinging every one of them and ensuring they are online
+     *
+     * @param abortSignal
+     * @private
+     * @throws {Error} When no online intermediary was found
+     */
+    private async fetchIntermediaries(abortSignal?: AbortSignal): Promise<Intermediary[]> {
         const urls = await this.getIntermediaryUrls(abortSignal);
 
-        const activeNodes: {
-            url: string,
-            address: string,
-            info: InfoHandlerResponseEnvelope
-        }[] = [];
+        logger.debug("fetchIntermediaries(): Pinging intermediaries: ", urls.join());
 
-        let promises = [];
-        for(let url of urls) {
-            promises.push(this.getNodeInfo(url, abortSignal).then((resp) => {
-                activeNodes.push({
-                    address: resp.address,
-                    url,
-                    info: resp.info,
-                })
-            }).catch(e => console.error(e)));
-            if(promises.length>=BATCH_SIZE) {
-                await Promise.all(promises);
-                promises = [];
-            }
-        }
-
-        if(promises.length>0) await Promise.all(promises);
-
-        if(activeNodes.length===0) throw new Error("No online intermediary found!");
-
-        return activeNodes.map(node => {
+        const promises: Promise<Intermediary | null>[] = urls.map(url => this.getNodeInfo(url, abortSignal).then((node) => {
             const services: ServicesType = {};
             for(let key in node.info.services) {
                 services[swapHandlerTypeToSwapType(key as SwapHandlerType)] = node.info.services[key];
             }
-            return new Intermediary(node.url, node.address, services);
-        });
+            return new Intermediary(url, node.address, services);
+        }).catch(e => {
+            logger.error("fetchIntermediaries(): Error contacting intermediary "+url+": ", e);
+            return null;
+        }));
+
+        const activeNodes: Intermediary[] = (await Promise.all(promises)).filter(intermediary => intermediary!=null);
+        if(activeNodes.length===0) throw new Error("No online intermediary found!");
+
+        return activeNodes;
     }
 
+    /**
+     * Reloads the saves a list of intermediaries
+     * @param abortSignal
+     */
     async reloadIntermediaries(abortSignal?: AbortSignal): Promise<void> {
-
         const fetchedIntermediaries = await tryWithRetries<Intermediary[]>(() => this.fetchIntermediaries(abortSignal), null, null, abortSignal);
         this.intermediaries = fetchedIntermediaries;
         this.emit("added", fetchedIntermediaries);
 
-        console.log("Reloaded intermediaries: ", this.intermediaries);
-
+        logger.info("reloadIntermediaries(): Using active intermediaries: ", fetchedIntermediaries.map(lp => lp.url).join());
     }
 
-    async init(abortSignal?: AbortSignal): Promise<void> {
-
-        const fetchedIntermediaries = await tryWithRetries<Intermediary[]>(() => this.fetchIntermediaries(abortSignal), null, null, abortSignal);
-        this.intermediaries = fetchedIntermediaries;
-        this.emit("added", fetchedIntermediaries);
-
-        console.log("Swap intermediaries: ", this.intermediaries);
-
+    /**
+     * Initializes the discovery by fetching/reloading intermediaries
+     *
+     * @param abortSignal
+     */
+    init(abortSignal?: AbortSignal): Promise<void> {
+        logger.info("init(): Initializing with registryUrl: "+this.registryUrl+" intermediary array: "+(this.overrideNodeUrls || []).join());
+        return this.reloadIntermediaries(abortSignal);
     }
 
+    /**
+     * Returns aggregate swap bounds (in sats - BTC) as indicated by the intermediaries
+     */
     getSwapBounds(): SwapBounds {
         const bounds: SwapBounds = {};
 
@@ -273,32 +230,49 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
         return bounds;
     }
 
+    /**
+     * Returns the aggregate swap minimum (in sats - BTC) for a specific swap type & token
+     *  as indicated by the intermediaries
+     *
+     * @param swapType
+     * @param token
+     */
     getSwapMinimum(swapType: SwapType, token: TokenAddress): number {
-        let min;
         const tokenStr = token.toString();
-        this.intermediaries.forEach(intermediary => {
+        return this.intermediaries.reduce<number>((prevMin, intermediary) => {
             const swapService = intermediary.services[swapType];
-            if(swapService!=null && swapService.tokens.includes(tokenStr)) {
-                min==null ? min = swapService.min : min = Math.min(min, swapService.min);
-            }
-        });
-        return min;
+            if(swapService!=null && swapService.tokens.includes(tokenStr))
+                return prevMin==null ? swapService.min : Math.min(prevMin, swapService.min);
+            return prevMin;
+        }, null);
     }
 
+    /**
+     * Returns the aggregate swap maximum (in sats - BTC) for a specific swap type & token
+     *  as indicated by the intermediaries
+     *
+     * @param swapType
+     * @param token
+     */
     getSwapMaximum(swapType: SwapType, token: TokenAddress): number {
-        let max;
         const tokenStr = token.toString();
-        this.intermediaries.forEach(intermediary => {
+        return this.intermediaries.reduce<number>((prevMax, intermediary) => {
             const swapService = intermediary.services[swapType];
-            if(swapService!=null && swapService.tokens.includes(tokenStr)) {
-                max==null ? max = swapService.max : max = Math.max(max, swapService.max);
-            }
-        });
-        return max;
+            if(swapService!=null && swapService.tokens.includes(tokenStr))
+                return prevMax==null ? swapService.max : Math.max(prevMax, swapService.max);
+            return prevMax;
+        }, null);
     }
 
+    /**
+     * Returns swap candidates for a specific swap type & token address
+     *
+     * @param swapType
+     * @param tokenAddress
+     * @param amount Amount to be swapped in sats - BTC
+     * @param count How many intermediaries to return at most
+     */
     getSwapCandidates(swapType: SwapType, tokenAddress: TokenAddress, amount?: BN, count?: number): Intermediary[] {
-
         const candidates = this.intermediaries.filter(e => {
             const swapService = e.services[swapType];
             if(swapService==null) return false;
@@ -313,21 +287,20 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
 
         if(count==null) {
             return candidates;
+        } else {
+            return candidates.slice(0, count);
         }
-
-        const result = [];
-
-        for(let i=0;i<count && i<candidates.length;i++) {
-            result.push(candidates[i]);
-        }
-
-        return result;
-
     }
 
+    /**
+     * Removes a specific intermediary from the list of active intermediaries (used for blacklisting)
+     *
+     * @param intermediary
+     */
     removeIntermediary(intermediary: Intermediary): boolean {
         const index = this.intermediaries.indexOf(intermediary);
         if(index>=0) {
+            logger.info("removeIntermediary(): Removing intermediary: "+intermediary.url);
             this.intermediaries.splice(index, 1);
             this.emit("removed", [intermediary]);
             return true;

@@ -1,43 +1,242 @@
-import {FromBTCLNSwap, FromBTCLNSwapState} from "./FromBTCLNSwap";
+import {FromBTCLNSwap, FromBTCLNSwapInit, FromBTCLNSwapState} from "./FromBTCLNSwap";
 import {IFromBTCWrapper} from "../IFromBTCWrapper";
-import {IWrapperStorage} from "../../../storage/IWrapperStorage";
-import {AmountData, ClientSwapContract, LNURLWithdraw, PaymentAuthError} from "../../ClientSwapContract";
 import * as BN from "bn.js";
-import * as bolt11 from "bolt11";
+import {decode as bolt11Decode, PaymentRequestObject, TagsObject} from "bolt11";
 import {
     ChainEvents,
     ChainSwapType,
     ClaimEvent,
     InitializeEvent,
+    IStorageManager,
     RefundEvent,
-    SignatureVerificationError,
-    SwapCommitStatus,
-    SwapData,
-    SwapEvent,
-    TokenAddress
+    SwapCommitStatus, SwapContract,
+    SwapData
 } from "crosslightning-base";
-import {tryWithRetries} from "../../../utils/RetryUtils";
-import * as EventEmitter from "events";
 import {Intermediary} from "../../../intermediaries/Intermediary";
-import {FromBTCOptions} from "../onchain/FromBTCWrapper";
+import {Buffer} from "buffer";
+import {UserError} from "../../../errors/UserError";
+import * as randomBytes from "randombytes";
+import * as createHash from "create-hash";
+import {IntermediaryError} from "../../../errors/IntermediaryError";
+import {SwapType} from "../../SwapType";
+import {extendAbortController, tryWithRetries} from "../../../utils/Utils";
+import {FromBTCLNResponseType, IntermediaryAPI} from "../../../intermediaries/IntermediaryAPI";
+import {RequestError} from "../../../errors/RequestError";
+import {LightningNetworkApi, LNNodeLiquidity} from "../../../btc/LightningNetworkApi";
+import {ISwapPrice} from "../../../prices/abstract/ISwapPrice";
+import {EventEmitter} from "events";
+import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
+import {LNURL, LNURLWithdrawParamsWithUrl} from "../../../utils/LNURL";
 
 export type FromBTCLNOptions = {
     descriptionHash?: Buffer
 };
 
-export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
+export class FromBTCLNWrapper<
+    T extends SwapData,
+    TXType = any
+> extends IFromBTCWrapper<T, FromBTCLNSwap<T, TXType>> {
+    protected readonly swapDeserializer = FromBTCLNSwap;
 
-    listener: (events: SwapEvent<T>[]) => Promise<boolean>;
+    protected readonly lnApi: LightningNetworkApi;
 
     /**
-     * @param storage                   Storage interface for the current environment
-     * @param contract                  Underlying contract handling the swaps
-     * @param chainEvents               On-chain event emitter
-     * @param swapDataDeserializer      Deserializer for SwapData
-     * @param events                    Instance to use for emitting events
+     * @param storage Storage interface for the current environment
+     * @param contract Underlying contract handling the swaps
+     * @param prices Swap pricing handler
+     * @param chainEvents On-chain event listener
+     * @param swapDataDeserializer Deserializer for SwapData
+     * @param lnApi
+     * @param options
+     * @param events Instance to use for emitting events
      */
-    constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T, events?: EventEmitter) {
-        super(storage, contract, chainEvents, swapDataDeserializer, events);
+    constructor(
+        storage: IStorageManager<FromBTCLNSwap<T, TXType>>,
+        contract: SwapContract<T, any, any, any>,
+        chainEvents: ChainEvents<T>,
+        prices: ISwapPrice,
+        swapDataDeserializer: new (data: any) => T,
+        lnApi: LightningNetworkApi,
+        options: ISwapWrapperOptions,
+        events?: EventEmitter<{swapState: [FromBTCLNSwap<T, TXType>]}>
+    ) {
+        super(storage, contract, chainEvents, prices, swapDataDeserializer, options, events);
+        this.lnApi = lnApi;
+    }
+
+    protected async checkPastSwap(swap: FromBTCLNSwap<T, TXType>): Promise<boolean> {
+        if(swap.state===FromBTCLNSwapState.PR_CREATED) {
+            if(swap.getTimeoutTime()<Date.now()) {
+                swap.state = FromBTCLNSwapState.QUOTE_EXPIRED;
+                return true;
+            }
+
+            const result = await swap.checkIntermediaryPaymentReceived(false);
+            if(result!==null) return true;
+        }
+
+        if(swap.state===FromBTCLNSwapState.PR_PAID) {
+            //Check if it's already committed
+            const status = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
+            switch(status) {
+                case SwapCommitStatus.PAID:
+                    swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
+                    return true;
+                case SwapCommitStatus.EXPIRED:
+                case SwapCommitStatus.REFUNDABLE:
+                    swap.state = FromBTCLNSwapState.FAILED;
+                    return true;
+                case SwapCommitStatus.COMMITED:
+                    swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
+                    return true;
+            }
+
+            if(!await swap.isQuoteValid()) {
+                swap.state = FromBTCLNSwapState.FAILED;
+                return true;
+            }
+
+            return false;
+        }
+
+        if(swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
+            //Check if it's already successfully paid
+            const commitStatus = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
+            if(commitStatus===SwapCommitStatus.PAID) {
+                swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
+                return true;
+            }
+
+            if(commitStatus===SwapCommitStatus.NOT_COMMITED || commitStatus===SwapCommitStatus.EXPIRED || commitStatus===SwapCommitStatus.REFUNDABLE) {
+                swap.state = FromBTCLNSwapState.FAILED;
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    protected async processEventInitialize(swap: FromBTCLNSwap<T, TXType>, event: InitializeEvent<T>): Promise<boolean> {
+        if(swap.state===FromBTCLNSwapState.PR_PAID) {
+            const swapData = await event.swapData();
+            if(swap.data!=null && !swap.data.equals(swapData)) return false;
+            swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
+            swap.data = swapData;
+            return true;
+        }
+    }
+
+    protected processEventClaim(swap: FromBTCLNSwap<T, TXType>, event: ClaimEvent<T>): Promise<boolean> {
+        if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
+            swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
+            return Promise.resolve(true);
+        }
+        return Promise.resolve(false);
+    }
+
+    protected processEventRefund(swap: FromBTCLNSwap<T, TXType>, event: RefundEvent<T>): Promise<boolean> {
+        if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
+            swap.state = FromBTCLNSwapState.FAILED;
+            return Promise.resolve(true);
+        }
+        return Promise.resolve(false);
+    }
+
+    /**
+     * Generates a new 32-byte secret to be used as pre-image for lightning network invoice & HTLC swap\
+     *
+     * @private
+     * @returns Hash pre-image & payment hash
+     */
+    private getSecretAndHash(): {secret: Buffer, paymentHash: Buffer} {
+        const secret = randomBytes(32);
+        const paymentHash = createHash("sha256").update(secret).digest();
+        return {secret, paymentHash};
+    }
+
+    /**
+     * Pre-fetches intermediary's LN node capacity, doesn't throw, instead returns null
+     *
+     * @param pubkeyPromise Promise that resolves when we receive "lnPublicKey" param from the intermediary thorugh
+     *  streaming
+     * @private
+     * @returns LN Node liquidity
+     */
+    private preFetchLnCapacity(pubkeyPromise: Promise<string>): Promise<LNNodeLiquidity | null> {
+        return pubkeyPromise.then(pubkey => {
+            if(pubkey==null) return null;
+            return this.lnApi.getLNNodeLiquidity(pubkey)
+        }).catch(e => {
+            this.logger.error("preFetchLnCapacity(): Error: ", e);
+            return null;
+        })
+    }
+
+    /**
+     * Verifies response returned from intermediary
+     *
+     * @param resp Response as returned by the intermediary
+     * @param amountData
+     * @param lp Intermediary
+     * @param options Options as passed to the swap creation function
+     * @param decodedPr Decoded bolt11 lightning network invoice
+     * @param amountIn Amount in sats that will be paid for the swap
+     * @private
+     * @throws {IntermediaryError} in case the response is invalid
+     */
+    private verifyReturnedData(
+        resp: FromBTCLNResponseType,
+        amountData: AmountData,
+        lp: Intermediary,
+        options: FromBTCLNOptions,
+        decodedPr: PaymentRequestObject & {tagsObject: TagsObject},
+        amountIn: BN
+    ): void {
+        if(lp.address!==resp.intermediaryKey) throw new IntermediaryError("Invalid intermediary address/pubkey");
+
+        if(options.descriptionHash!=null && decodedPr.tagsObject.purpose_commit_hash!==options.descriptionHash.toString("hex"))
+            throw new IntermediaryError("Invalid pr returned - description hash");
+
+        if(!amountData.exactIn) {
+            if(!resp.total.eq(amountData.amount)) throw new IntermediaryError("Invalid amount returned");
+        } else {
+            if(!amountIn.eq(amountData.amount)) throw new IntermediaryError("Invalid payment request returned, amount mismatch");
+        }
+    }
+
+    /**
+     * Verifies whether the intermediary's lightning node has enough inbound capacity to receive the LN payment
+     *
+     * @param lp Intermediary
+     * @param decodedPr Decoded bolt11 lightning network invoice
+     * @param amountIn Amount to be paid for the swap in sats
+     * @param lnCapacityPrefetchPromise Pre-fetch for LN node capacity, preFetchLnCapacity()
+     * @param abortSignal
+     * @private
+     * @throws {IntermediaryError} if the lightning network node doesn't have enough inbound liquidity
+     * @throws {Error} if the lightning network node's inbound liquidity might be enough, but the swap would
+     *  deplete more than half of the liquidity
+     */
+    private async verifyLnNodeCapacity(
+        lp: Intermediary,
+        decodedPr: PaymentRequestObject & {tagsObject: TagsObject},
+        amountIn: BN,
+        lnCapacityPrefetchPromise: Promise<LNNodeLiquidity | null>,
+        abortSignal?: AbortSignal
+    ): Promise<void> {
+        let result: LNNodeLiquidity = await lnCapacityPrefetchPromise;
+        if(result==null) result = await this.lnApi.getLNNodeLiquidity(decodedPr.payeeNodeKey);
+        if(abortSignal!=null) abortSignal.throwIfAborted();
+
+        if(result===null) throw new IntermediaryError("LP's lightning node not found in the lightning network graph!");
+
+        lp.lnData = result
+
+        if(decodedPr.payeeNodeKey!==result.publicKey) throw new IntermediaryError("Invalid pr returned - payee pubkey");
+        if(result.capacity.lt(amountIn))
+            throw new IntermediaryError("LP's lightning node doesn't have enough inbound capacity for the swap!");
+        if(result.capacity.div(new BN(2)).lt(amountIn))
+            throw new Error("LP's lightning node probably doesn't have enough inbound capacity for the swap!");
     }
 
     /**
@@ -48,78 +247,112 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
      * @param options               Quote options
      * @param additionalParams      Additional parameters sent to the LP when creating the swap
      * @param abortSignal           Abort signal for aborting the process
+     * @param preFetches
      */
     create(
         amountData: AmountData,
         lps: Intermediary[],
         options: FromBTCLNOptions,
         additionalParams?: Record<string, any>,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        preFetches?: {
+            pricePrefetchPromise?: Promise<BN>,
+            feeRatePromise?: Promise<any>
+        }
     ): {
-        quote: Promise<FromBTCLNSwap<T>>,
+        quote: Promise<FromBTCLNSwap<T, TXType>>,
         intermediary: Intermediary
     }[] {
+        if(options==null) options = {};
+        if(preFetches==null) preFetches = {};
 
-        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
+        if(options.descriptionHash!=null && options.descriptionHash.length!==32)
+            throw new UserError("Invalid description hash length");
 
-        const resultPromises = this.contract.receiveLightning(
-            amountData,
-            lps,
-            options,
-            null,
-            additionalParams,
-            abortSignal
-        );
+        const {secret, paymentHash} = this.getSecretAndHash();
 
-        return resultPromises.map(data => {
+        const _abortController = extendAbortController(abortSignal);
+        preFetches.pricePrefetchPromise ??= this.preFetchPrice(amountData, _abortController.signal);
+        preFetches.feeRatePromise ??= this.preFetchFeeRate(amountData, paymentHash.toString("hex"), _abortController);
+
+        return lps.map(lp => {
             return {
-                intermediary: data.intermediary,
-                quote: data.response.then(response => {
-                    const parsed = bolt11.decode(response.pr);
-                    return this.contract.swapContract.createSwapData(
-                        ChainSwapType.HTLC,
-                        data.intermediary.address,
-                        this.contract.swapContract.getAddress(),
-                        amountData.token,
-                        response.amount,
-                        parsed.tagsObject.payment_hash,
-                        null,
-                        null,
-                        null,
-                        null,
-                        false,
-                        true,
-                        response.fees.securityDeposit,
-                        new BN(0)
-                    ).then(swapData => new FromBTCLNSwap<T>(
-                        this,
-                        response.pr,
-                        response.secret,
-                        data.intermediary.url+"/frombtcln",
-                        swapData,
-                        response.fees.swapFee,
-                        null,
-                        null,
-                        response.amount,
-                        response.pricingInfo,
-                        response.authorization.feeRate,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null
-                    ))
-                })
+                intermediary: lp,
+                quote: (async () => {
+                    const abortController = extendAbortController(_abortController.signal);
+
+                    const liquidityPromise: Promise<BN> = this.preFetchIntermediaryLiquidity(amountData, lp, abortController);
+
+                    const {lnCapacityPromise, resp} = await tryWithRetries(async(retryCount: number) => {
+                        const {lnPublicKey, response} = IntermediaryAPI.initFromBTCLN(lp.url, {
+                            paymentHash,
+                            amount: amountData.amount,
+                            claimer: this.contract.getAddress(),
+                            token: amountData.token.toString(),
+                            descriptionHash: options.descriptionHash,
+                            exactOut: !amountData.exactIn,
+                            feeRate: preFetches.feeRatePromise,
+                            additionalParams
+                        }, this.options.postRequestTimeout, abortController.signal, retryCount>0 ? false : null);
+
+                        return {
+                            lnCapacityPromise: this.preFetchLnCapacity(lnPublicKey),
+                            resp: await response
+                        };
+                    }, null, RequestError, abortController.signal);
+
+                    const decodedPr = bolt11Decode(resp.pr);
+                    const amountIn = new BN(decodedPr.millisatoshis).add(new BN(999)).div(new BN(1000));
+
+                    try {
+                        this.verifyReturnedData(resp, amountData, lp, options, decodedPr, amountIn);
+                        const [pricingInfo] = await Promise.all([
+                            this.verifyReturnedPrice(
+                                lp.services[SwapType.FROM_BTCLN], false, amountIn, resp.total,
+                                amountData.token, resp, preFetches.pricePrefetchPromise, abortController.signal
+                            ),
+                            this.verifyIntermediaryLiquidity(lp, resp.total, amountData.token, liquidityPromise),
+                            this.verifyLnNodeCapacity(lp, decodedPr, amountIn, lnCapacityPromise, abortController.signal)
+                        ]);
+
+                        return new FromBTCLNSwap<T, TXType>(this, {
+                            pricingInfo,
+                            url: lp.url,
+                            expiry: decodedPr.timeExpireDate*1000,
+                            swapFee: resp.swapFee,
+                            feeRate: await preFetches.feeRatePromise,
+                            data: await this.contract.createSwapData(
+                                ChainSwapType.HTLC, lp.address, this.contract.getAddress(), amountData.token,
+                                resp.total, paymentHash.toString("hex"), null, null, null, null, false, true,
+                                resp.securityDeposit, new BN(0)
+                            ),
+                            pr: resp.pr,
+                            secret: secret.toString("hex")
+                        } as FromBTCLNSwapInit<T>);
+                    } catch (e) {
+                        abortController.abort(e);
+                        throw e;
+                    }
+                })()
             }
         });
+    }
 
-        //Saved when waitForPayment is called
-        // await swap.save();
-        // this.swapData[swap.getPaymentHash().toString("hex")] = swap;
-        // this.events.emit("swapCreated", swap);
-        //
-        // return swap;
+    /**
+     * Parses and fetches lnurl withdraw params from the specified lnurl
+     *
+     * @param lnurl LNURL to be parsed and fetched
+     * @param abortSignal
+     * @private
+     * @throws {UserError} if the LNURL is invalid or if it's not a LNURL-withdraw
+     */
+    private async getLNURLWithdraw(lnurl: string | LNURLWithdrawParamsWithUrl, abortSignal: AbortSignal): Promise<LNURLWithdrawParamsWithUrl> {
+        if(typeof(lnurl)!=="string") return lnurl;
 
+        const res = await LNURL.getLNURL(lnurl, true, this.options.getRequestTimeout, abortSignal);
+        if(res==null) throw new UserError("Invalid LNURL");
+        if(res.tag!=="withdrawRequest") throw new UserError("Not a LNURL-withdrawal");
+        return res;
     }
 
     /**
@@ -132,362 +365,67 @@ export class FromBTCLNWrapper<T extends SwapData> extends IFromBTCWrapper<T> {
      * @param abortSignal           Abort signal for aborting the process
      */
     async createViaLNURL(
-        lnurl: string | LNURLWithdraw,
+        lnurl: string | LNURLWithdrawParamsWithUrl,
         amountData: AmountData,
         lps: Intermediary[],
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
     ): Promise<{
-        quote: Promise<FromBTCLNSwap<T>>,
+        quote: Promise<FromBTCLNSwap<T, TXType>>,
         intermediary: Intermediary
     }[]> {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const resultPromises = await this.contract.receiveLightningLNURL(
-            typeof(lnurl)==="string" ? lnurl : lnurl.params,
-            amountData,
-            lps,
-            additionalParams,
-            abortSignal
-        );
-
-        return resultPromises.map(data => {
-            return {
-                intermediary: data.intermediary,
-                quote: data.response.then(response => {
-                    const parsed = bolt11.decode(response.pr);
-                    return this.contract.swapContract.createSwapData(
-                        ChainSwapType.HTLC,
-                        data.intermediary.address,
-                        this.contract.swapContract.getAddress(),
-                        amountData.token,
-                        response.amount,
-                        parsed.tagsObject.payment_hash,
-                        null,
-                        null,
-                        null,
-                        null,
-                        false,
-                        true,
-                        response.fees.securityDeposit,
-                        new BN(0)
-                    ).then(swapData => new FromBTCLNSwap<T>(
-                        this,
-                        response.pr,
-                        response.secret,
-                        data.intermediary.url+"/frombtcln",
-                        swapData,
-                        response.fees.swapFee,
-                        null,
-                        null,
-                        response.amount,
-                        response.pricingInfo,
-                        response.authorization.feeRate,
-                        typeof(lnurl)==="string" ? lnurl : lnurl.params.url,
-                        null,
-                        response.withdrawRequest.k1,
-                        response.withdrawRequest.callback,
-                        false
-                    ))
-                })
-            }
-        });
-
-        //Saved when waitForPayment is called
-        // await swap.save();
-        // this.swapData[swap.getPaymentHash().toString("hex")] = swap;
-
-    }
-
-    /**
-     * Initializes the wrapper, be sure to call this before taking any other actions.
-     * Checks if any swaps are in progress.
-     */
-    async init() {
-
-        if(this.isInitialized) return;
-
-        console.log("Deserializers: ", SwapData.deserializers);
-
-        let eventQueue: SwapEvent<T>[] = [];
-        this.swapData = await this.storage.loadSwapData<FromBTCLNSwap<T>>(this, FromBTCLNSwap);
-
-        console.log("Swap data loaded");
-
-        const processEvent = async (events: SwapEvent<T>[]) => {
-
-
-            for(let event of events) {
-                const paymentHash = event.paymentHash;
-
-                console.log("Event payment hash: ", paymentHash);
-
-                const swap: FromBTCLNSwap<T> = this.swapData[paymentHash] as FromBTCLNSwap<T>;
-
-                console.log("Swap found: ", swap);
-
-                if(swap==null) continue;
-
-                let swapChanged = false;
-
-                if(event instanceof InitializeEvent) {
-                    if(swap.state===FromBTCLNSwapState.PR_PAID) {
-                        const swapData = await event.swapData();
-                        if(swap.data!=null) {
-                            try {
-                                if(!swap.data.equals(swapData)) throw new Error("Unexpected data in event, skipping!");
-                            } catch (e) {
-                                console.error(e);
-                                continue;
-                            }
-                        }
-                        if(swap.state===FromBTCLNSwapState.PR_PAID) {
-                            swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
-                        }
-                        swap.data = swapData;
-                        swapChanged = true;
-                    }
-                }
-                if(event instanceof ClaimEvent) {
-                    if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
-                        swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
-                        swapChanged = true;
-                    }
-                }
-                if(event instanceof RefundEvent) {
-                    if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
-                        swap.state = FromBTCLNSwapState.FAILED;
-                        swapChanged = true;
-                    }
-                }
-
-                if(swapChanged) {
-                    if(eventQueue==null) {
-                        let promise: Promise<any>;
-                        if(swap.state===FromBTCLNSwapState.EXPIRED) {
-                            promise = this.storage.removeSwapData(swap)
-                        } else {
-                            promise = swap.save();
-                        }
-                        promise.then(() => {
-                            swap.emitEvent();
-                        });
-                    }
-                }
-            }
-
-            return true;
-
+        const abortController = extendAbortController(abortSignal);
+        const preFetches = {
+            pricePrefetchPromise: this.preFetchPrice(amountData, abortController.signal),
+            feeRatePromise: this.preFetchFeeRate(amountData, null, abortController)
         };
 
-        this.listener = (events: SwapEvent<T>[]) => {
-            console.log("EVENT: ", events);
+        try {
+            const exactOutAmountPromise: Promise<BN> = !amountData.exactIn ? preFetches.pricePrefetchPromise.then(price =>
+                this.prices.getToBtcSwapAmount(amountData.amount, amountData.token, abortController.signal, price)
+            ).catch(e => {
+                abortController.abort(e);
+                return null;
+            }) : null;
 
-            if(eventQueue!=null) {
-                for(let event of events) {
-                    eventQueue.push(event);
-                }
-                return Promise.resolve(true);
+            const withdrawRequest = await this.getLNURLWithdraw(lnurl, abortController.signal);
+
+            const min = new BN(withdrawRequest.minWithdrawable).div(new BN(1000));
+            const max = new BN(withdrawRequest.maxWithdrawable).div(new BN(1000));
+
+            if(amountData.exactIn) {
+                if(amountData.amount.lt(min)) throw new UserError("Amount less than LNURL-withdraw minimum");
+                if(amountData.amount.gt(max)) throw new UserError("Amount more than LNURL-withdraw maximum");
+            } else {
+                const amount = await exactOutAmountPromise;
+                abortController.signal.throwIfAborted();
+
+                if(amount.muln(95).divn(100).lt(min)) throw new UserError("Amount less than LNURL-withdraw minimum");
+                if(amount.muln(105).divn(100).gt(max)) throw new UserError("Amount more than LNURL-withdraw maximum");
             }
 
-            return processEvent(events);
-        };
+            return this.create(amountData, lps, null, additionalParams, abortSignal, preFetches).map(data => {
+                return {
+                    quote: data.quote.then(quote => {
+                        quote.lnurl = withdrawRequest.url;
+                        quote.lnurlK1 = withdrawRequest.k1;
+                        quote.lnurlCallback = withdrawRequest.callback;
 
-        this.chainEvents.registerListener(this.listener);
+                        const amountIn = quote.getInAmount();
+                        if(amountIn.lt(min)) throw new UserError("Amount less than LNURL-withdraw minimum");
+                        if(amountIn.gt(max)) throw new UserError("Amount more than LNURL-withdraw maximum");
 
-        const changedSwaps = {};
-
-        console.log("Loaded FromBTCLN: ", this.swapData);
-
-        const processSwap: (swap: FromBTCLNSwap<T>) => Promise<boolean> = async (swap: FromBTCLNSwap<T>) => {
-            if(swap.state===FromBTCLNSwapState.PR_CREATED) {
-                if(swap.getTimeoutTime()<Date.now()) {
-                    swap.state = FromBTCLNSwapState.EXPIRED;
-                    return true;
+                        return quote;
+                    }),
+                    intermediary: data.intermediary
                 }
-
-                //Check if it's maybe already paid
-                try {
-                    const res = await this.contract.getPaymentAuthorization(swap.pr, swap.url, swap.data.getToken(), swap.data.getOfferer(), swap.requiredBaseFee, swap.requiredFeePPM);
-                    if(res.is_paid) {
-                        swap.state = FromBTCLNSwapState.PR_PAID;
-
-                        swap.data = res.data;
-                        swap.prefix = res.prefix;
-                        swap.timeout = res.timeout;
-                        swap.signature = res.signature;
-
-                        swap.expiry = res.expiry;
-                        return true;
-                    }
-                } catch (e) {
-                    console.error(e);
-                    if(e instanceof PaymentAuthError) {
-                        swap.state = FromBTCLNSwapState.EXPIRED;
-                        return true;
-                    }
-                }
-                return false;
-            }
-
-            if(swap.state===FromBTCLNSwapState.PR_PAID) {
-                //Check if it's already committed
-                try {
-                    const status = await tryWithRetries(() => this.contract.swapContract.getCommitStatus(swap.data));
-                    if(status===SwapCommitStatus.PAID) {
-                        swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
-                        return true;
-                    }
-                    if(status===SwapCommitStatus.EXPIRED) {
-                        swap.state = FromBTCLNSwapState.EXPIRED;
-                        return true;
-                    }
-                    if(status===SwapCommitStatus.COMMITED) {
-                        swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
-                        return true;
-                    }
-                } catch (e) {
-                    console.error(e);
-                }
-
-                try {
-                    await tryWithRetries(
-                        () => this.contract.swapContract.isValidInitAuthorization(swap.data, swap.timeout, swap.prefix, swap.signature, swap.feeRate),
-                        null,
-                        (e) => e instanceof SignatureVerificationError
-                    );
-                } catch (e) {
-                    console.error(e);
-                    if(e instanceof SignatureVerificationError) {
-                        swap.state = FromBTCLNSwapState.EXPIRED;
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            if(swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
-                //Check if it's already successfully paid
-                try {
-                    const commitStatus = await tryWithRetries(() => this.contract.swapContract.getCommitStatus(swap.data));
-                    if(commitStatus===SwapCommitStatus.PAID) {
-                        swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
-                        return true;
-                    }
-                    if(commitStatus===SwapCommitStatus.NOT_COMMITED || commitStatus===SwapCommitStatus.EXPIRED) {
-                        swap.state = FromBTCLNSwapState.FAILED;
-                        return true;
-                    }
-                } catch (e) {
-                    console.error(e);
-                }
-                return false;
-            }
-        };
-
-        let promises = [];
-        for(let paymentHash in this.swapData) {
-            const swap: FromBTCLNSwap<T> = this.swapData[paymentHash] as FromBTCLNSwap<T>;
-
-            promises.push(processSwap(swap).then(changed => {
-                if(swap.state===FromBTCLNSwapState.EXPIRED) {
-                    this.storage.removeSwapData(swap);
-                } else {
-                    if(changed) changedSwaps[paymentHash] = true;
-                }
-            }));
-            if(promises.length>=this.MAX_CONCURRENT_REQUESTS) {
-                await Promise.all(promises);
-                promises = [];
-            }
+            });
+        } catch (e) {
+            abortController.abort(e);
+            throw e;
         }
-        if(promises.length>0) await Promise.all(promises);
-
-        console.log("Swap data checked");
-
-        for(let event of eventQueue) {
-            await processEvent([event]);
-        }
-
-        eventQueue = null;
-
-        await this.storage.saveSwapDataArr(Object.keys(changedSwaps).map(e => this.swapData[e]));
-
-        this.isInitialized = true;
-    }
-
-    /**
-     * Returns swaps that are in-progress and are claimable that were initiated with the current provider's public key
-     */
-    getClaimableSwaps(): Promise<FromBTCLNSwap<T>[]> {
-        return Promise.resolve(this.getClaimableSwapsSync());
-    }
-
-    /**
-     * Returns swaps that are in-progress and are claimable that were initiated with the current provider's public key
-     */
-    getClaimableSwapsSync(): FromBTCLNSwap<T>[] {
-
-        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
-
-        const returnArr: FromBTCLNSwap<T>[] = [];
-
-        for(let paymentHash in this.swapData) {
-            const swap = this.swapData[paymentHash];
-
-            console.log(swap);
-
-            if(swap.data.getClaimer()!==this.contract.swapContract.getAddress()) {
-                continue;
-            }
-
-            const castedSwap = swap as FromBTCLNSwap<T>;
-
-            if(castedSwap.isClaimable()) {
-                returnArr.push(castedSwap);
-            }
-        }
-
-        return returnArr;
-
-    }
-
-    /**
-     * Returns all swaps that were initiated with the current provider's public key
-     */
-    getAllSwaps(): Promise<FromBTCLNSwap<T>[]> {
-        return Promise.resolve(this.getAllSwapsSync());
-    }
-
-    /**
-     * Returns all swaps that were initiated with the current provider's public key
-     */
-    getAllSwapsSync(): FromBTCLNSwap<T>[] {
-
-        if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
-
-        const returnArr: FromBTCLNSwap<T>[] = [];
-
-        for(let paymentHash in this.swapData) {
-            const swap = this.swapData[paymentHash];
-
-            console.log(swap);
-
-            if(swap.data.getClaimer()!==this.contract.swapContract.getAddress()) {
-                continue;
-            }
-
-            returnArr.push(swap as FromBTCLNSwap<T>);
-        }
-
-        return returnArr;
-
-    }
-
-    stop(): Promise<void> {
-        this.chainEvents.unregisterListener(this.listener);
-        return super.stop();
     }
 
 }

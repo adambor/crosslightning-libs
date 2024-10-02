@@ -1,67 +1,109 @@
 import {IFromBTCSwap} from "./IFromBTCSwap";
-import {IWrapperStorage} from "../../storage/IWrapperStorage";
-import {ClientSwapContract} from "../ClientSwapContract";
-import * as EventEmitter from "events";
-import {SwapData, ChainEvents} from "crosslightning-base";
+import {SwapData, TokenAddress} from "crosslightning-base";
+import {AmountData, ISwapWrapper, ISwapWrapperOptions} from "../ISwapWrapper";
+import * as BN from "bn.js";
+import * as randomBytes from "randombytes";
+import {Intermediary} from "../../intermediaries/Intermediary";
+import {IntermediaryError} from "../../errors/IntermediaryError";
+import {tryWithRetries} from "../../utils/Utils";
 
-export abstract class IFromBTCWrapper<T extends SwapData> {
-
-    readonly MAX_CONCURRENT_REQUESTS: number = 10;
-
-    readonly storage: IWrapperStorage;
-    readonly contract: ClientSwapContract<T>;
-    readonly chainEvents: ChainEvents<T>;
-    readonly swapDataDeserializer: new (data: any) => T;
+export abstract class IFromBTCWrapper<
+    T extends SwapData,
+    S extends IFromBTCSwap<T, any>,
+    O extends ISwapWrapperOptions = ISwapWrapperOptions,
+    TXType = any
+> extends ISwapWrapper<T, S, O, TXType> {
 
     /**
-     * Event emitter for all the swaps
+     * Returns a random sequence to be used for swaps
      *
-     * @event BTCLNtoSolSwap#swapState
-     * @type {BTCLNtoSolSwap}
+     * @protected
+     * @returns Random 64-bit sequence number
      */
-    readonly events: EventEmitter;
-
-    swapData: {[paymentHash: string]: IFromBTCSwap<T>};
-
-    isInitialized: boolean = false;
-
-    /**
-     * @param storage                   Storage interface for the current environment
-     * @param contract                  Underlying contract handling the swaps
-     * @param chainEvents               On-chain event emitter
-     * @param swapDataDeserializer      Deserializer for SwapData
-     * @param events                    Instance to use for emitting events
-     */
-    protected constructor(storage: IWrapperStorage, contract: ClientSwapContract<T>, chainEvents: ChainEvents<T>, swapDataDeserializer: new (data: any) => T, events?: EventEmitter) {
-        this.storage = storage;
-        this.contract = contract;
-        this.chainEvents = chainEvents;
-        this.swapDataDeserializer = swapDataDeserializer;
-        this.events = events || new EventEmitter();
+    protected getRandomSequence(): BN {
+        return new BN(randomBytes(8));
     }
 
     /**
-     * Initializes the wrapper, be sure to call this before taking any other actions.
-     * Checks if any swaps are already refundable
+     * Pre-fetches feeRate for a given swap
+     *
+     * @param amountData
+     * @param hash optional hash of the swap or null
+     * @param abortController
+     * @protected
+     * @returns Fee rate
      */
-    abstract init(): Promise<void>;
+    protected preFetchFeeRate(
+        amountData: AmountData,
+        hash: string | null,
+        abortController: AbortController
+    ): Promise<any | null> {
+        return tryWithRetries(
+            () => this.contract.getInitFeeRate(null, this.contract.getAddress(), amountData.token, hash),
+            null, null, abortController.signal
+        ).catch(e => {
+            this.logger.error("preFetchFeeRate(): Error: ", e);
+            abortController.abort(e);
+            return null;
+        });
+    }
 
     /**
-     * Un-subscribes from event listeners on Solana
+     * Pre-fetches intermediary's available SC on-chain liquidity
+     * @param amountData
+     * @param lp Intermediary
+     * @param abortController
+     * @protected
+     * @returns Intermediary's liquidity balance
      */
-    async stop() {
-        this.swapData = null;
-        this.isInitialized = false;
+    protected preFetchIntermediaryLiquidity(amountData: AmountData, lp: Intermediary, abortController: AbortController): Promise<BN | null> {
+        return tryWithRetries(
+            () => this.contract.getIntermediaryBalance(lp.address, amountData.token),
+            null, null, abortController.signal
+        ).catch(e => {
+            this.logger.error("preFetchIntermediaryLiquidity(): Error: ", e);
+            abortController.abort(e);
+            return null;
+        })
+    }
+
+    /**
+     * Verifies whether the intermediary has enough available liquidity such that we can initiate the swap
+     *
+     * @param lp Intermediary
+     * @param amount Swap amount that we should receive
+     * @param token Swap token
+     * @param liquidityPromise pre-fetched liquidity promise as obtained from preFetchIntermediaryLiquidity()
+     * @protected
+     * @throws {IntermediaryError} if intermediary's liquidity is lower than what's required for the swap
+     */
+    protected async verifyIntermediaryLiquidity(
+        lp: Intermediary,
+        amount: BN,
+        token: TokenAddress,
+        liquidityPromise: Promise<BN>
+    ): Promise<void> {
+        const liquidity = await liquidityPromise;
+        lp.liquidity[token.toString()] = liquidity;
+        if(liquidity.lt(amount)) throw new IntermediaryError("Intermediary doesn't have enough liquidity");
+    }
+
+    protected isOurSwap(swap: S): boolean {
+        return this.contract.areWeClaimer(swap.data);
+    }
+
+    /**
+     * Returns swaps that are refundable and that were initiated with the current provider's public key
+     */
+    public getClaimableSwaps(): Promise<S[]> {
+        return Promise.resolve(this.getClaimableSwapsSync());
     }
 
     /**
      * Returns swaps that are claimable and that were initiated with the current provider's public key
      */
-    abstract getClaimableSwaps(): Promise<IFromBTCSwap<T>[]>;
-
-    /**
-     * Returns all swaps that were initiated with the current provider's public key
-     */
-    abstract getAllSwaps(): Promise<IFromBTCSwap<T>[]>;
+    public getClaimableSwapsSync(): S[] {
+        return this.getAllSwapsSync().filter(swap => swap.isClaimable());
+    }
 
 }

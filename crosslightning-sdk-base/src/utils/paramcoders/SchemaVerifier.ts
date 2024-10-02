@@ -55,6 +55,19 @@ export type RequestSchema = {
     [fieldName: string]: FieldTypeEnum | RequestSchema | ((val: any) => any)
 }
 
+function isAllOptional(schema: RequestSchema) {
+    for(let key in schema) {
+        if(!isOptionalField(schema[key])) return false;
+    }
+    return true;
+}
+
+export function isOptionalField(type: FieldTypeEnum | RequestSchema | ((val: any) => (string | boolean | number | BN | any))) {
+    if(typeof(type)==="function") return type(undefined)!=null;
+    if(typeof(type)==="object") return isAllOptional(type);
+    return type>=100;
+}
+
 export function verifyField<T extends FieldTypeEnum | RequestSchema | ((val: any) => (string | boolean | number | BN | any))>(fieldType: T, val: any): FieldType<T> {
 
     const type: FieldTypeEnum | RequestSchema | ((val: any) => (string | boolean | number | BN | any)) = fieldType;
@@ -64,7 +77,7 @@ export function verifyField<T extends FieldTypeEnum | RequestSchema | ((val: any
         return result;
     }
 
-    if(val==null && (type as FieldTypeEnum)>=100) {
+    if(val==null && isOptionalField(type as FieldTypeEnum)) {
         return null;
     }
 
@@ -107,7 +120,7 @@ export function verifySchema<T extends RequestSchema>(req: any, schema: T): Requ
             continue;
         }
 
-        if(val==null && (type as FieldTypeEnum)>=100) {
+        if(val==null && isOptionalField(type as FieldTypeEnum)) {
             resultSchema[fieldName] = null;
             continue;
         }

@@ -1,4 +1,4 @@
-
+import {Buffer} from "buffer";
 
 export class ParamEncoder {
 
@@ -10,7 +10,12 @@ export class ParamEncoder {
         this.endFN = end;
     }
 
-    writeParams(data: any): Promise<void> {
+    /**
+     * Write a set of parameters to the underlying sink
+     *
+     * @param data
+     */
+    writeParams(data: {[key: string]: any}): Promise<void> {
         const serialized: Buffer = Buffer.from(JSON.stringify(data));
 
         const frameLengthBuffer = Buffer.alloc(4);
@@ -22,6 +27,9 @@ export class ParamEncoder {
         ]));
     }
 
+    /**
+     * Cancels the underlying sink and encoder
+     */
     end(): Promise<void> {
         return this.endFN();
     }

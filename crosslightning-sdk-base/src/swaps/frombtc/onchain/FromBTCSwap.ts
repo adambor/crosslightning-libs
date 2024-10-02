@@ -1,477 +1,78 @@
 import {IFromBTCSwap} from "../IFromBTCSwap";
 import {SwapType} from "../../SwapType";
-import * as bitcoin from "bitcoinjs-lib";
-import {createHash, randomBytes} from "crypto-browserify";
-import {ChainUtils} from "../../../btc/ChainUtils";
+import {address} from "bitcoinjs-lib";
+import * as createHash from "create-hash";
 import {FromBTCWrapper} from "./FromBTCWrapper";
 import * as BN from "bn.js";
 import {SwapCommitStatus, SwapData} from "crosslightning-base";
-import {SignatureVerificationError} from "crosslightning-base";
-import {PriceInfoType} from "../../ISwap";
+import {isISwapInit, ISwapInit} from "../../ISwap";
+import {Buffer} from "buffer";
 
 export enum FromBTCSwapState {
     FAILED = -2,
-    EXPIRED = -1,
+    QUOTE_EXPIRED = -1,
     PR_CREATED = 0,
     CLAIM_COMMITED = 1,
     BTC_TX_CONFIRMED = 2,
     CLAIM_CLAIMED = 3
 }
 
-export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
+export type FromBTCSwapInit<T extends SwapData> = ISwapInit<T> & {
+    address: string;
+    amount: BN;
+};
 
-    state: FromBTCSwapState;
+export function isFromBTCSwapInit<T extends SwapData>(obj: any): obj is FromBTCSwapInit<T> {
+    return typeof(obj.address)==="string" &&
+        BN.isBN(obj.amount) &&
+        isISwapInit<T>(obj);
+}
 
-    txId: string;
-    vout: number;
+export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<T, FromBTCSwapState, TXType> {
+    protected readonly TYPE = SwapType.FROM_BTC;
 
-    readonly secret: string;
+    protected readonly PRE_COMMIT_STATE = FromBTCSwapState.PR_CREATED;
+    protected readonly COMMIT_STATE = FromBTCSwapState.CLAIM_COMMITED;
+    protected readonly CLAIM_STATE = FromBTCSwapState.CLAIM_CLAIMED;
+    protected readonly FAIL_STATE = FromBTCSwapState.FAILED;
 
-    //State: PR_CREATED
+    readonly wrapper: FromBTCWrapper<T, TXType>;
+
     readonly address: string;
     readonly amount: BN;
 
-    constructor(
-        wrapper: FromBTCWrapper<T>,
-        address: string,
-        amount: BN,
-        url: string,
-        data: T,
-        swapFee: BN,
-        prefix: string,
-        timeout: string,
-        signature: string,
-        feeRate: any,
-        expiry: number,
-        pricing: PriceInfoType
-    );
-    constructor(wrapper: FromBTCWrapper<T>, obj: any);
+    txId?: string;
+    vout?: number;
 
-    constructor(
-        wrapper: FromBTCWrapper<T>,
-        addressOrObject: string | any,
-        amount?: BN,
-        url?: string,
-        data?: T,
-        swapFee?: BN,
-        prefix?: string,
-        timeout?: string,
-        signature?: string,
-        feeRate?: any,
-        expiry?: number,
-        pricing?: PriceInfoType
-    ) {
-        if(typeof(addressOrObject)==="string") {
-            super(wrapper, url, data, swapFee, prefix, timeout, signature, feeRate, expiry, pricing);
+    constructor(wrapper: FromBTCWrapper<T, TXType>, init: FromBTCSwapInit<T>);
+    constructor(wrapper: FromBTCWrapper<T, TXType>, obj: any);
+    constructor(wrapper: FromBTCWrapper<T, TXType>, initOrObject: FromBTCSwapInit<T> | any) {
+        if(isFromBTCSwapInit(initOrObject)) initOrObject.url += "/frombtc";
+        super(wrapper, initOrObject);
+        if(isFromBTCSwapInit(initOrObject)) {
             this.state = FromBTCSwapState.PR_CREATED;
-
-            this.address = addressOrObject;
-            this.amount = amount;
-
-            this.secret = randomBytes(32).toString("hex");
         } else {
-            super(wrapper, addressOrObject);
-            this.state = addressOrObject.state;
-
-            this.address = addressOrObject.address;
-            this.amount = new BN(addressOrObject.amount);
-
-            this.txId = addressOrObject.txId;
-            this.vout = addressOrObject.vout;
-            this.secret = addressOrObject.secret;
+            this.address = initOrObject.address;
+            this.amount = new BN(initOrObject.amount);
+            this.txId = initOrObject.txId;
+            this.vout = initOrObject.vout;
         }
+        this.tryCalculateSwapFee();
     }
 
-    /**
-     * Returns amount that will be received on Solana
-     */
-    getOutAmount(): BN {
-        return this.data.getAmount();
-    }
 
-    /**
-     * Returns amount that will be sent on Bitcoin on-chain
-     */
-    getInAmount(): BN {
-        return new BN(this.amount);
-    }
+    //////////////////////////////
+    //// Getters & utils
 
-    serialize(): any {
-        const partiallySerialized = super.serialize();
-
-        partiallySerialized.state = this.state;
-        partiallySerialized.address = this.address;
-        partiallySerialized.amount = this.amount.toString(10);
-        partiallySerialized.txId = this.txId;
-        partiallySerialized.vout = this.vout;
-        partiallySerialized.secret = this.secret;
-
-        return partiallySerialized;
-    }
-
-    /**
-     * A blocking promise resolving when payment was received by the intermediary and client can continue
-     * rejecting in case of failure
-     *
-     * @param abortSignal           Abort signal
-     * @param checkIntervalSeconds  How often to poll the intermediary for answer
-     * @param updateCallback        Callback called when txId is found, and also called with subsequent confirmations
-     */
-    async waitForPayment(
-        abortSignal?: AbortSignal,
-        checkIntervalSeconds?: number,
-        updateCallback?: (txId: string, confirmations: number, targetConfirmations: number, txEtaMs: number) => void
-    ): Promise<void> {
-        if(this.state!==FromBTCSwapState.CLAIM_COMMITED) {
-            throw new Error("Must be in PR_CREATED state!");
-        }
-
-        const result = await ChainUtils.waitForAddressTxo(this.address, this.getTxoHash(), this.data.getConfirmations(), (confirmations: number, txId: string, vout: number, txEtaMs: number) => {
-            if(updateCallback!=null) {
-                updateCallback(txId, confirmations, this.data.getConfirmations(), txEtaMs);
-            }
-        }, abortSignal, checkIntervalSeconds);
-
-        if(abortSignal!=null && abortSignal.aborted) throw new Error("Aborted");
-
-        this.txId = result.tx.txid;
-        this.vout = result.vout;
-        if(this.state<FromBTCSwapState.BTC_TX_CONFIRMED) {
-            this.state = FromBTCSwapState.BTC_TX_CONFIRMED;
-        }
-
-        await this.save();
-
-        this.emitEvent();
-    }
-
-    /**
-     * Checks whether a bitcoin payment was already made, returns the payment or null when no payment has been made.
-     */
-    async getBitcoinPayment(): Promise<{txId: string, confirmations: number, targetConfirmations: number} | null> {
-
-        const result = await ChainUtils.checkAddressTxos(this.address, this.getTxoHash());
-
-        if(result==null) return null;
-
-        let confirmations = 0;
-        if(result.tx.status.confirmed) {
-            const tipHeight = await ChainUtils.getTipBlockHeight();
-            confirmations = tipHeight-result.tx.status.block_height+1;
-        }
-
+    getInToken(): {chain: "BTC", lightning: false} {
         return {
-            txId: result.tx.txid,
-            confirmations,
-            targetConfirmations: this.data.getConfirmations()
-        }
-
-    }
-
-    /**
-     * Returns if the swap can be committed
-     */
-    canCommit(): boolean {
-        if(this.state!==FromBTCSwapState.PR_CREATED) {
-            return false;
-        }
-        const expiry = this.wrapper.contract.getOnchainSendTimeout(this.data);
-        const currentTimestamp = new BN(Math.floor(Date.now()/1000));
-
-        if(expiry.sub(currentTimestamp).lt(new BN(this.wrapper.contract.options.minSendWindow))) {
-            return false;
-        }
-        return true;
-    }
-
-    /**
-     * Commits the swap on-chain, locking the tokens from the intermediary in an PTLC
-     * Important: Make sure this transaction is confirmed and only after it is display the address to user
-     *
-     * @param signer                    Signer to use to send the commit transaction
-     * @param noWaitForConfirmation     Do not wait for transaction confirmation (careful! be sure that transaction confirms before calling claim())
-     * @param abortSignal               Abort signal
-     */
-    async commit(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        if(this.state!==FromBTCSwapState.PR_CREATED) {
-            throw new Error("Must be in PR_CREATED state!");
-        }
-
-        //Check that we have enough time to send the TX and for it to confirm
-        const expiry = this.wrapper.contract.getOnchainSendTimeout(this.data);
-        const currentTimestamp = new BN(Math.floor(Date.now()/1000));
-
-        if(expiry.sub(currentTimestamp).lt(new BN(this.wrapper.contract.options.minSendWindow))) {
-            throw new Error("Send window too low");
-        }
-
-        await this.save();
-        this.wrapper.swapData[this.data.getHash()] = this;
-
-        let txResult;
-        try {
-            txResult = await this.wrapper.contract.swapContract.init(this.data, this.timeout, this.prefix, this.signature, this.getTxoHash(), !noWaitForConfirmation, false, abortSignal, this.feeRate);
-        } catch (e) {
-            if(e instanceof SignatureVerificationError) {
-                throw new Error("Request timed out!");
-            }
-            throw e;
-        }
-
-        this.commitTxId = txResult;
-        this.state = FromBTCSwapState.CLAIM_COMMITED;
-        await this.save();
-        this.emitEvent();
-
-        //Maybe don't wait for TX but instead subscribe to logs, this would improve the experience when user speeds up the transaction by replacing it.
-
-        // if(!noWaitForConfirmation) {
-        //     await this.waitTillCommited(abortSignal);
-        //     return txResult;
-        // }
-
-        // this.state = BTCtoSolNewSwapState.CLAIM_COMMITED;
-        //
-        // await this.save();
-        //
-        // this.emitEvent();
-
-        return txResult;
-    }
-
-    /**
-     * Commits the swap on-chain, locking the tokens from the intermediary in an PTLC
-     * Important: Make sure this transaction is confirmed and only after it is display the address to user
-     */
-    async txsCommit(): Promise<any[]> {
-        if(this.state!==FromBTCSwapState.PR_CREATED) {
-            throw new Error("Must be in PR_CREATED state!");
-        }
-
-        //Check that we have enough time to send the TX and for it to confirm
-        const expiry = this.wrapper.contract.getOnchainSendTimeout(this.data);
-        const currentTimestamp = new BN(Math.floor(Date.now()/1000));
-
-        if(expiry.sub(currentTimestamp).lt(new BN(this.wrapper.contract.options.minSendWindow))) {
-            throw new Error("Send window too low");
-        }
-
-        await this.save();
-        this.wrapper.swapData[this.data.getHash()] = this;
-
-        let txs: any[];
-        try {
-            txs = await this.wrapper.contract.swapContract.txsInit(this.data, this.timeout, this.prefix, this.signature, this.getTxoHash(), false, this.feeRate);
-        } catch (e) {
-            if(e instanceof SignatureVerificationError) {
-                throw new Error("Request timed out!");
-            } else {
-                throw e;
-            }
-        }
-
-        return txs;
-    }
-
-    /**
-     * Returns a promise that resolves when swap is committed
-     *
-     * @param abortSignal   AbortSignal
-     */
-    waitTillCommited(abortSignal?: AbortSignal): Promise<void> {
-        if(this.state===FromBTCSwapState.CLAIM_COMMITED) {
-            return Promise.resolve();
-        }
-
-        return new Promise((resolve, reject) => {
-            if(abortSignal!=null && abortSignal.aborted) {
-                reject("Aborted");
-                return;
-            }
-
-            const abortController = new AbortController();
-
-            const intervalWatchdog = setInterval(() => {
-                this.wrapper.contract.swapContract.getCommitStatus(this.data).then((status) => {
-                    if(status!==SwapCommitStatus.NOT_COMMITED) {
-                        abortController.abort();
-                        if(this.state<FromBTCSwapState.CLAIM_COMMITED) {
-                            this.state = FromBTCSwapState.CLAIM_COMMITED;
-                            this.save().then(() => {
-                                this.emitEvent();
-                                if(abortSignal!=null && abortSignal.aborted) return;
-                                resolve();
-                            });
-                        } else {
-                            resolve();
-                        }
-                    }
-                }).catch(e => console.error(e));
-            }, 5000);
-            abortController.signal.addEventListener("abort", () => clearInterval(intervalWatchdog));
-
-            const listener = (swap) => {
-                if(swap.state===FromBTCSwapState.CLAIM_COMMITED) {
-                    abortController.abort();
-                    resolve();
-                }
-            };
-            this.events.on("swapState", listener);
-            abortController.signal.addEventListener("abort", () => this.events.removeListener("swapState", listener));
-
-            abortController.signal.addEventListener("abort", () => {
-                if(abortSignal!=null) abortSignal.onabort = null;
-            });
-
-            if(abortSignal!=null) abortSignal.onabort = () => {
-                abortController.abort();
-                reject("Aborted");
-            };
-        });
-    }
-
-    /**
-     * Returns if the swap can be claimed
-     */
-    canClaim(): boolean {
-        return this.state===FromBTCSwapState.BTC_TX_CONFIRMED;
-    }
-
-    /**
-     * Claims and finishes the swap once it was successfully committed on-chain with commit()
-     *
-     * @param noWaitForConfirmation     Do not wait for transaction confirmation
-     * @param abortSignal               Abort signal
-     */
-    async claim(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        if(this.state!==FromBTCSwapState.BTC_TX_CONFIRMED) {
-            throw new Error("Must be in BTC_TX_CONFIRMED state!");
-        }
-
-        const txData = await ChainUtils.getTransaction(this.txId);
-        const rawTx = await ChainUtils.getRawTransaction(this.txId);
-
-        const txResult = await this.wrapper.contract.swapContract.claimWithTxData(this.data, txData.status.block_height, {
-            blockhash: txData.status.block_hash,
-            confirmations: this.data.getConfirmations(),
-            txid: txData.txid,
-            hex: rawTx.toString("hex")
-        }, this.vout, null, (this.wrapper as FromBTCWrapper<T>).synchronizer, true, !noWaitForConfirmation, abortSignal);
-
-        this.claimTxId = txResult;
-
-        // if(!noWaitForConfirmation) {
-        //     await this.save();
-        //     await this.waitTillClaimed(abortSignal);
-        //     return txResult;
-        // }
-
-        this.state = FromBTCSwapState.CLAIM_CLAIMED;
-        await this.save();
-
-        this.emitEvent();
-
-        return txResult;
-    }
-
-    /**
-     * Claims and finishes the swap once it was successfully committed on-chain with commit()
-     */
-    async txsClaim(): Promise<any[]> {
-        if(this.state!==FromBTCSwapState.BTC_TX_CONFIRMED) {
-            throw new Error("Must be in BTC_TX_CONFIRMED state!");
-        }
-
-        const txData = await ChainUtils.getTransaction(this.txId);
-        const rawTx = await ChainUtils.getRawTransaction(this.txId);
-
-        return await this.wrapper.contract.swapContract.txsClaimWithTxData(this.data, txData.status.block_height, {
-            blockhash: txData.status.block_hash,
-            confirmations: this.data.getConfirmations(),
-            txid: txData.txid,
-            hex: rawTx.toString("hex")
-        }, this.vout, null, (this.wrapper as FromBTCWrapper<T>).synchronizer, true);
-    }
-
-    /**
-     * Returns a promise that resolves when swap is committed
-     *
-     * @param abortSignal   AbortSignal
-     */
-    waitTillClaimed(abortSignal?: AbortSignal): Promise<void> {
-        if(this.state===FromBTCSwapState.CLAIM_CLAIMED) {
-            return Promise.resolve();
-        }
-
-        return new Promise((resolve, reject) => {
-            if(abortSignal!=null && abortSignal.aborted) {
-                reject("Aborted");
-                return;
-            }
-
-            const abortController = new AbortController();
-
-            const intervalWatchdog = setInterval(() => {
-                this.wrapper.contract.swapContract.getCommitStatus(this.data).then((status) => {
-                    if(status===SwapCommitStatus.PAID) {
-                        abortController.abort();
-                        if(this.state<FromBTCSwapState.CLAIM_CLAIMED) {
-                            this.state = FromBTCSwapState.CLAIM_CLAIMED;
-                            this.save().then(() => {
-                                this.emitEvent();
-                                if(abortSignal!=null && abortSignal.aborted) return;
-                                resolve();
-                            });
-                        } else {
-                            resolve();
-                        }
-                    }
-                }).catch(e => console.error(e));
-            }, 5000);
-            abortController.signal.addEventListener("abort", () => clearInterval(intervalWatchdog));
-
-            const listener = (swap) => {
-                if(swap.state===FromBTCSwapState.CLAIM_CLAIMED) {
-                    abortController.abort();
-                    resolve();
-                }
-            };
-            this.events.on("swapState", listener);
-            abortController.signal.addEventListener("abort", () => this.events.removeListener("swapState", listener));
-
-            abortController.signal.addEventListener("abort", () => {
-                if(abortSignal!=null) abortSignal.onabort = null;
-            });
-
-            if(abortSignal!=null) abortSignal.onabort = () => {
-                abortController.abort();
-                reject("Aborted");
-            };
-        });
-    }
-
-    /**
-     * Returns current state of the swap
-     */
-    getState() {
-        return this.state;
-    }
-
-    /**
-     * @fires BTCtoSolWrapper#swapState
-     * @fires BTCtoSolSwap#swapState
-     */
-    emitEvent() {
-        this.wrapper.events.emit("swapState", this);
-        this.events.emit("swapState", this);
-    }
-
-    getPaymentHash(): Buffer {
-        return Buffer.from(this.data.getHash(), "hex");
+            chain: "BTC",
+            lightning: false
+        };
     }
 
     getTxoHash(): Buffer {
-        const parsedOutputScript = bitcoin.address.toOutputScript(this.address, this.wrapper.contract.options.bitcoinNetwork);
+        const parsedOutputScript = address.toOutputScript(this.address, this.wrapper.options.bitcoinNetwork);
 
         return createHash("sha256").update(Buffer.concat([
             Buffer.from(this.amount.toArray("le", 8)),
@@ -479,35 +80,200 @@ export class FromBTCSwap<T extends SwapData> extends IFromBTCSwap<T> {
         ])).digest();
     }
 
-    getAddress(): string {
-        return this.state===FromBTCSwapState.PR_CREATED ? null : this.address;
+    /**
+     * Returns bitcoin address where the on-chain BTC should be sent to
+     */
+    getBitcoinAddress(): string {
+        if(this.state===FromBTCSwapState.PR_CREATED) return null;
+        return this.address;
     }
 
     getQrData(): string {
-        return this.state===FromBTCSwapState.PR_CREATED ? null : "bitcoin:"+this.address+"?amount="+encodeURIComponent((this.amount.toNumber()/100000000).toString(10));
+        if(this.state===FromBTCSwapState.PR_CREATED) return null;
+        return "bitcoin:"+this.address+"?amount="+encodeURIComponent((this.amount.toNumber()/100000000).toString(10));
     }
 
-    getType(): SwapType {
-        return SwapType.FROM_BTC;
-    }
-
+    /**
+     * Returns timeout time (in UNIX milliseconds) when the on-chain address will expire and no funds should be sent
+     *  to that address anymore
+     */
     getTimeoutTime(): number {
-        return this.wrapper.contract.getOnchainSendTimeout(this.data).toNumber()*1000;
+        return this.wrapper.getOnchainSendTimeout(this.data).toNumber()*1000;
     }
 
+    isFinished(): boolean {
+        return this.state===FromBTCSwapState.CLAIM_CLAIMED || this.state===FromBTCSwapState.QUOTE_EXPIRED || this.state===FromBTCSwapState.FAILED;
+    }
+
+    isClaimable(): boolean {
+        return this.state===FromBTCSwapState.BTC_TX_CONFIRMED || (this.state===FromBTCSwapState.CLAIM_COMMITED && !this.wrapper.contract.isExpired(this.data) && this.getTimeoutTime()>Date.now());
+    }
+
+    isSuccessful(): boolean {
+        return this.state===FromBTCSwapState.CLAIM_CLAIMED;
+    }
+
+    isFailed(): boolean {
+        return this.state===FromBTCSwapState.FAILED;
+    }
+
+    isQuoteExpired(): boolean {
+        return this.state===FromBTCSwapState.QUOTE_EXPIRED;
+    }
+
+    canCommit(): boolean {
+        if(this.state!==FromBTCSwapState.PR_CREATED) return false;
+        const expiry = this.wrapper.getOnchainSendTimeout(this.data);
+        const currentTimestamp = new BN(Math.floor(Date.now()/1000));
+
+        return expiry.sub(currentTimestamp).gte(new BN(this.wrapper.options.minSendWindow));
+    }
+
+    canClaim(): boolean {
+        return this.state===FromBTCSwapState.BTC_TX_CONFIRMED;
+    }
+
+
+    //////////////////////////////
+    //// Amounts & fees
+
+    getInAmount(): BN {
+        return new BN(this.amount);
+    }
+
+    /**
+     * Returns claimer bounty, acting as a reward for watchtowers to claim the swap automatically
+     */
     getClaimerBounty(): BN {
         return this.data.getClaimerBounty();
     }
 
+
+    //////////////////////////////
+    //// Bitcoin tx
+
     /**
-     * Returns whether the swap is finished and in its terminal state (this can mean successful, refunded or failed)
+     * Waits till the bitcoin transaction confirms and swap becomes claimable
+     *
+     * @param abortSignal Abort signal
+     * @param checkIntervalSeconds How often to check the bitcoin transaction
+     * @param updateCallback Callback called when txId is found, and also called with subsequent confirmations
+     * @throws {Error} if in invalid state (must be CLAIM_COMMITED)
      */
-    isFinished(): boolean {
-        return this.state===FromBTCSwapState.CLAIM_CLAIMED || this.state===FromBTCSwapState.EXPIRED || this.state===FromBTCSwapState.FAILED;
+    async waitForBitcoinTransaction(
+        abortSignal?: AbortSignal,
+        checkIntervalSeconds?: number,
+        updateCallback?: (txId: string, confirmations: number, targetConfirmations: number, txEtaMs: number) => void
+    ): Promise<void> {
+        if(this.state!==FromBTCSwapState.CLAIM_COMMITED) throw new Error("Must be in COMMITED state!");
+
+        const result = await this.wrapper.btcRpc.waitForAddressTxo(
+            this.address,
+            this.getTxoHash(),
+            this.data.getConfirmations(),
+            (confirmations: number, txId: string, vout: number, txEtaMs: number) => {
+                if(updateCallback!=null) updateCallback(txId, confirmations, this.data.getConfirmations(), txEtaMs);
+            },
+            abortSignal,
+            checkIntervalSeconds
+        );
+
+        if(abortSignal!=null) abortSignal.throwIfAborted();
+
+        this.txId = result.tx.txid;
+        this.vout = result.vout;
+        if(this.state<FromBTCSwapState.BTC_TX_CONFIRMED) {
+            this.state = FromBTCSwapState.BTC_TX_CONFIRMED;
+        }
+
+        await this._saveAndEmit();
     }
 
-    isClaimable(): boolean {
-        return this.state===FromBTCSwapState.BTC_TX_CONFIRMED || (this.state===FromBTCSwapState.CLAIM_COMMITED && !this.wrapper.contract.swapContract.isExpired(this.data) && this.getTimeoutTime()>Date.now());
+    /**
+     * Checks whether a bitcoin payment was already made, returns the payment or null when no payment has been made.
+     */
+    async getBitcoinPayment(): Promise<{
+        txId: string,
+        vout: number,
+        confirmations: number,
+        targetConfirmations: number
+    } | null> {
+        const result = await this.wrapper.btcRpc.checkAddressTxos(this.address, this.getTxoHash());
+        if(result==null) return null;
+
+        return {
+            txId: result.tx.txid,
+            vout: result.vout,
+            confirmations: result.tx.confirmations,
+            targetConfirmations: this.data.getConfirmations()
+        }
+    }
+
+
+    //////////////////////////////
+    //// Claim
+
+    /**
+     * Returns transactions required to claim the swap on-chain (and possibly also sync the bitcoin light client)
+     *  after a bitcoin transaction was sent and confirmed
+     * @throws {Error} If the swap is in invalid state (must be BTC_TX_CONFIRMED)
+     */
+    async txsClaim(): Promise<TXType[]> {
+        if(!this.canClaim()) throw new Error("Must be in BTC_TX_CONFIRMED state!");
+
+        const tx = await this.wrapper.btcRpc.getTransaction(this.txId);
+
+        return await this.wrapper.contract.txsClaimWithTxData(this.data, tx.blockheight, {
+            blockhash: tx.blockhash,
+            confirmations: this.data.getConfirmations(),
+            txid: tx.txid,
+            hex: tx.hex
+        }, this.vout, null, this.wrapper.synchronizer, true);
+    }
+
+    /**
+     * Claims and finishes the swap
+     *
+     * @param noWaitForConfirmation Do not wait for transaction confirmation
+     * @param abortSignal Abort signal to stop waiting for transaction confirmation
+     */
+    async claim(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        let txIds: string[];
+        try {
+            txIds = await this.wrapper.contract.sendAndConfirm(
+                await this.txsClaim(), !noWaitForConfirmation, abortSignal
+            );
+        } catch (e) {
+            this.logger.info("claim(): Failed to claim ourselves, checking swap claim state...");
+            if(this.state===FromBTCSwapState.CLAIM_CLAIMED) {
+                this.logger.info("claim(): Transaction state is CLAIM_CLAIMED, swap was successfully claimed by the watchtower");
+                return this.claimTxId;
+            }
+            if((await this.wrapper.contract.getCommitStatus(this.data))===SwapCommitStatus.PAID) {
+                this.logger.info("claim(): Transaction commit status is PAID, swap was successfully claimed by the watchtower");
+                await this._saveAndEmit(FromBTCSwapState.CLAIM_CLAIMED);
+                return null;
+            }
+            throw e;
+        }
+
+        this.claimTxId = txIds[0];
+        await this._saveAndEmit(this.CLAIM_STATE);
+        return txIds[0];
+    }
+
+
+    //////////////////////////////
+    //// Storage
+
+    serialize(): any {
+        return {
+            ...super.serialize(),
+            address: this.address,
+            amount: this.amount.toString(10),
+            txId: this.txId,
+            vout: this.vout
+        };
     }
 
 }

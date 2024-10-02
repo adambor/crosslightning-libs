@@ -1,5 +1,5 @@
-import {FieldTypeEnum, parseBN, RequestSchema, RequestSchemaResult, verifySchema} from "./SchemaVerifier";
 import {IParamReader} from "./IParamReader";
+import {Buffer} from "buffer";
 
 
 export class ParamDecoder implements IParamReader {
@@ -18,10 +18,12 @@ export class ParamDecoder implements IParamReader {
         }
     } = {};
 
-    constructor() {
-
-    }
-
+    /**
+     * Called when a frame is fully ready such that it can be parsed
+     *
+     * @param data Frame data
+     * @private
+     */
     private onFrameRead(data: Buffer) {
         const obj = JSON.parse(data.toString());
         console.log("Frame read: ", obj);
@@ -42,7 +44,13 @@ export class ParamDecoder implements IParamReader {
         }
     }
 
-    onData(data: Buffer): void {
+    /**
+     * Called when data is read from the underlying source
+     *
+     * @param data Data that has been read from the underlying source
+     * @protected
+     */
+    protected onData(data: Buffer): void {
         let leavesBuffer = data;
         while(leavesBuffer!=null && leavesBuffer.length>0) {
             if(this.frameHeader==null) {
@@ -91,7 +99,11 @@ export class ParamDecoder implements IParamReader {
         }
     }
 
-    onEnd(): void {
+    /**
+     * Called when the underlying source ends/closes/cancels
+     * @protected
+     */
+    protected onEnd(): void {
         for(let key in this.params) {
             if(this.params[key].reject!=null) {
                 this.params[key].reject(new Error("EOF before field seen!"));
@@ -100,7 +112,13 @@ export class ParamDecoder implements IParamReader {
         this.closed = true;
     }
 
-    onError(e: any): void {
+    /**
+     * Called when an error happens with the underlying stream
+     *
+     * @param e Error
+     * @protected
+     */
+    protected onError(e: any): void {
         for(let key in this.params) {
             if(this.params[key].reject!=null) {
                 this.params[key].reject(e);
@@ -109,7 +127,7 @@ export class ParamDecoder implements IParamReader {
         this.closed = true;
     }
 
-    getParam(key: string): Promise<any> {
+    getParam<T>(key: string): Promise<T> {
         if(this.params[key]==null) {
             if(this.closed) return Promise.reject(new Error("Stream already closed without param received!"));
             let resolve: (data: any) => void;
@@ -125,49 +143,6 @@ export class ParamDecoder implements IParamReader {
             }
         }
         return this.params[key].promise;
-    }
-
-    async getParams<T extends RequestSchema>(schema: T): Promise<RequestSchemaResult<T>> {
-        const resultSchema: any = {};
-        for(let fieldName in schema) {
-            const val: any = await this.getParam(fieldName);
-            const type: FieldTypeEnum | RequestSchema | ((val: any) => boolean) = schema[fieldName];
-            if(typeof(type)==="function") {
-                const result = type(val);
-                if(result==null) return null;
-                resultSchema[fieldName] = result;
-                continue;
-            }
-
-            if(val==null && (type as FieldTypeEnum)>=100) {
-                resultSchema[fieldName] = null;
-                continue;
-            }
-
-            if(type===FieldTypeEnum.Any || type===FieldTypeEnum.AnyOptional) {
-                resultSchema[fieldName] = val;
-            } else if(type===FieldTypeEnum.Boolean || type===FieldTypeEnum.BooleanOptional) {
-                if(typeof(val)!=="boolean") return null;
-                resultSchema[fieldName] = val;
-            } else if(type===FieldTypeEnum.Number || type===FieldTypeEnum.NumberOptional) {
-                if(typeof(val)!=="number") return null;
-                if(isNaN(val as number)) return null;
-                resultSchema[fieldName] = val;
-            } else if(type===FieldTypeEnum.BN || type===FieldTypeEnum.BNOptional) {
-                const result = parseBN(val);
-                if(result==null) return null;
-                resultSchema[fieldName] = result;
-            } else if(type===FieldTypeEnum.String || type===FieldTypeEnum.StringOptional) {
-                if(typeof(val)!=="string") return null;
-                resultSchema[fieldName] = val;
-            } else {
-                //Probably another request schema
-                const result = verifySchema(val, type as RequestSchema);
-                if(result==null) return null;
-                resultSchema[fieldName] = result;
-            }
-        }
-        return resultSchema;
     }
 
 }
