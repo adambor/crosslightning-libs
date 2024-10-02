@@ -20,7 +20,7 @@ export class SwapTypeEnum {
         return null;
     }
 
-    static fromNumber(kind: 0 | 1 | 2 | 3): { htlc?: never; chain?: never; chainNonced?: never; } & { chainTxhash: Record<string, never> } {
+    static fromNumber(kind: 0 | 1 | 2 | 3): {htlc?: never; chain?: never; chainNonced?: never;} & {chainTxhash: Record<string,never>} {
         if(kind===0) return {htlc: null} as any;
         if(kind===1) return {chain: null} as any;
         if(kind===2) return {chainNonced: null} as any;
