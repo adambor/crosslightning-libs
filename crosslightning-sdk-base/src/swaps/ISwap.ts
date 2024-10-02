@@ -86,9 +86,7 @@ export abstract class ISwap<
     /**
      * Event emitter emitting "swapState" event when swap's state changes
      */
-    events: EventEmitter<{
-        swapState: [ISwap<T>]
-    }> = new EventEmitter<{swapState: [ISwap<T>]}>();
+    events: EventEmitter = new EventEmitter();
 
     protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>>, obj: any);
     protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>>, swapInit: ISwapInit<T>);

@@ -6,7 +6,7 @@ import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
 import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
 import {FromBTCWrapper} from "./frombtc/onchain/FromBTCWrapper";
 import {IntermediaryDiscovery, SwapBounds} from "../intermediaries/IntermediaryDiscovery";
-import {Network, address} from "bitcoinjs-lib";
+import {address, Network, networks} from "bitcoinjs-lib";
 import {decode as bolt11Decode} from "bolt11";
 import * as BN from "bn.js";
 import {IFromBTCSwap} from "./frombtc/IFromBTCSwap";
@@ -103,6 +103,10 @@ export class Swapper<
         storagePrefix = storagePrefix || "";
 
         options.bitcoinNetwork = options.bitcoinNetwork==null ? BitcoinNetwork.TESTNET : options.bitcoinNetwork;
+
+        this.bitcoinNetwork = options.bitcoinNetwork===BitcoinNetwork.MAINNET ? networks.bitcoin :
+            options.bitcoinNetwork===BitcoinNetwork.REGTEST ? networks.regtest :
+                options.bitcoinNetwork===BitcoinNetwork.TESTNET ? networks.testnet : null;
 
         this.prices = options.pricing;
         this.swapContract = swapContract;

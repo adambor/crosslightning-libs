@@ -70,7 +70,7 @@ export class FromBTCWrapper<
         synchronizer: RelaySynchronizer<any,any,any>,
         btcRpc: BitcoinRpcWithTxoListener<any>,
         options?: FromBTCWrapperOptions,
-        events?: EventEmitter<{swapState: [FromBTCSwap<T, TXType>]}>
+        events?: EventEmitter
     ) {
         if(options==null) options = {};
         options.bitcoinNetwork = options.bitcoinNetwork || networks.testnet;

@@ -55,7 +55,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
         prices: ISwapPrice,
         swapDataDeserializer: new (data: any) => T,
         options?: ToBTCLNWrapperOptions,
-        events?: EventEmitter<{swapState: [ToBTCLNSwap<T, TXType>]}>
+        events?: EventEmitter
     ) {
         if(options==null) options = {};
         options.paymentTimeoutSeconds ??= 3*24*60*60;

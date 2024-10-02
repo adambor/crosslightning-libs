@@ -91,10 +91,7 @@ const logger = getLogger("IntermediaryDiscovery: ");
 
 const REGISTRY_URL = "https://api.github.com/repos/adambor/SolLightning-registry/contents/registry.json?ref=main";
 
-export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter<{
-    added: [Intermediary[]],
-    removed: [Intermediary[]]
-}> {
+export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
 
     intermediaries: Intermediary[];
 

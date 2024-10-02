@@ -63,7 +63,7 @@ export class ToBTCWrapper<T extends SwapData, TXType = any> extends IToBTCWrappe
         swapDataDeserializer: new (data: any) => T,
         btcRpc: BitcoinRpc<any>,
         options?: ToBTCWrapperOptions,
-        events?: EventEmitter<{swapState: [ToBTCSwap<T, TXType>]}>
+        events?: EventEmitter
     ) {
         if(options==null) options = {};
         options.bitcoinNetwork = options.bitcoinNetwork || networks.testnet;

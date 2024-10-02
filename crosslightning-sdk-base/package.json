@@ -1,6 +1,6 @@
 {
   "name": "crosslightning-sdk-base",
-  "version": "10.0.0",
+  "version": "10.0.1",
   "description": "CrossLightning SDK chain-agnostic base",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",
@@ -38,6 +38,7 @@
     "@types/aes-js": "3.1.4",
     "@types/bn.js": "5.1.5",
     "@types/create-hash": "1.2.6",
+    "@types/events": "3.0.3",
     "@types/randombytes": "2.0.3",
     "typescript": "4.9.5"
   }

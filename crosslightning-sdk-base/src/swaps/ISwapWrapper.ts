@@ -47,9 +47,7 @@ export abstract class ISwapWrapper<
     readonly prices: ISwapPrice;
     readonly chainEvents: ChainEvents<T>;
     readonly swapDataDeserializer: new (data: any) => T;
-    readonly events: EventEmitter<{
-        swapState: [S]
-    }>;
+    readonly events: EventEmitter;
     readonly options: O;
 
     swapData: Map<string, S>;
@@ -71,7 +69,7 @@ export abstract class ISwapWrapper<
         prices: ISwapPrice,
         swapDataDeserializer: new (data: any) => T,
         options: O,
-        events?: EventEmitter<{swapState: [S]}>
+        events?: EventEmitter
     ) {
         this.storage = new SwapWrapperStorage<S>(storage);
         this.contract = contract;

@@ -58,7 +58,7 @@ export class FromBTCLNWrapper<
         swapDataDeserializer: new (data: any) => T,
         lnApi: LightningNetworkApi,
         options: ISwapWrapperOptions,
-        events?: EventEmitter<{swapState: [FromBTCLNSwap<T, TXType>]}>
+        events?: EventEmitter
     ) {
         super(storage, contract, chainEvents, prices, swapDataDeserializer, options, events);
         this.lnApi = lnApi;
