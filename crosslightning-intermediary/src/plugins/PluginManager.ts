@@ -1,4 +1,4 @@
-import {BitcoinRpc, BtcRelay, ChainEvents, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
+import {BitcoinRpc, BtcRelay, ChainEvents, SwapContract, SwapData, SwapEvent, TokenAddress} from "crosslightning-base";
 import {IPlugin} from "./IPlugin";
 import {
     FromBtcLnRequestType,
@@ -13,8 +13,36 @@ import {AuthenticatedLnd} from "lightning";
 import {IParamReader} from "../utils/paramcoders/IParamReader";
 import * as BN from "bn.js";
 import * as fs from "fs";
-import {Command, createCommand} from "crosslightning-server-base";
+import {getLogger} from "../utils/Utils";
 
+export type FailSwapResponse = {
+    type: "fail",
+    code?: number,
+    msg?: string
+};
+
+export type FeeSwapResponse = {
+    type: "fee",
+    baseFee: BN,
+    feePPM: BN
+};
+
+export type AmountAndFeeSwapResponse = {
+    type: "amountAndFee",
+    baseFee?: BN,
+    feePPM?: BN,
+    amount: BN
+};
+
+export type SwapResponse = FailSwapResponse | FeeSwapResponse | AmountAndFeeSwapResponse;
+
+const logger = getLogger("PluginManager: ");
+const pluginLogger = {
+    debug: (plugin: IPlugin<any>, msg, ...args) => logger.debug(plugin.name+": "+msg, ...args),
+    info: (plugin: IPlugin<any>, msg, ...args) => logger.info(plugin.name+": "+msg, ...args),
+    warn: (plugin: IPlugin<any>, msg, ...args) => logger.warn(plugin.name+": "+msg, ...args),
+    error: (plugin: IPlugin<any>, msg, ...args) => logger.error(plugin.name+": "+msg, ...args)
+};
 
 export class PluginManager {
 
@@ -62,8 +90,7 @@ export class PluginManager {
                     directory+"/"+name
                 );
             } catch (e) {
-                console.error("Plugin ENABLE error: ", plugin.name);
-                console.error(e);
+                pluginLogger.error(plugin, "enable(): plugin enable error", e);
             }
         }
     }
@@ -73,8 +100,7 @@ export class PluginManager {
             try {
                 await plugin.onDisable();
             } catch (e) {
-                console.error("Plugin DISABLE error: ", plugin.name);
-                console.error(e);
+                pluginLogger.error(plugin, "disable(): plugin disable error", e);
             }
         }
     }
@@ -84,8 +110,7 @@ export class PluginManager {
             try {
                 await plugin.onServiceInitialize(handler);
             } catch (e) {
-                console.error("Plugin onServiceInitialize error: ", plugin.name);
-                console.error(e);
+                pluginLogger.error(plugin, "serviceInitialize(): plugin error", e);
             }
         }
     }
@@ -95,8 +120,7 @@ export class PluginManager {
             try {
                 if(plugin.onHttpServerStarted!=null) await plugin.onHttpServerStarted(httpServer);
             } catch (e) {
-                console.error("Plugin onHttpServerStarted error: ", plugin.name);
-                console.error(e);
+                pluginLogger.error(plugin, "onHttpServerStarted(): plugin error", e);
             }
         }
     }
@@ -106,8 +130,7 @@ export class PluginManager {
             try {
                 if(plugin.onSwapStateChange!=null) await plugin.onSwapStateChange(swap);
             } catch (e) {
-                console.error("Plugin onSwapStateChange error: ", plugin.name);
-                console.error(e);
+                pluginLogger.error(plugin, "swapStateChange(): plugin error", e);
             }
         }
     }
@@ -117,8 +140,7 @@ export class PluginManager {
             try {
                 if(plugin.onSwapCreate!=null) await plugin.onSwapCreate(swap);
             } catch (e) {
-                console.error("Plugin onSwapCreate error: ", plugin.name);
-                console.error(e);
+                pluginLogger.error(plugin, "swapCreate(): plugin error", e);
             }
         }
     }
@@ -128,8 +150,7 @@ export class PluginManager {
             try {
                 if(plugin.onSwapRemove!=null) await plugin.onSwapRemove(swap);
             } catch (e) {
-                console.error("Plugin onSwapRemove error: ", plugin.name);
-                console.error(e);
+                pluginLogger.error(plugin, "swapRemove(): plugin error", e);
             }
         }
     }
@@ -149,8 +170,7 @@ export class PluginManager {
                     }
                 }
             } catch (e) {
-                console.error("Plugin onSwapRequestToBtcLn error: ", plugin.name);
-                console.error(e);
+                pluginLogger.error(plugin, "onSwapRequestToBtcLn(): plugin error", e);
             }
         }
         return fees;
@@ -171,8 +191,7 @@ export class PluginManager {
                     }
                 }
             } catch (e) {
-                console.error("Plugin onSwapRequestToBtc error: ", plugin.name);
-                console.error(e);
+                pluginLogger.error(plugin, "onSwapRequestToBtc(): plugin error", e);
             }
         }
         return fees;
@@ -193,8 +212,7 @@ export class PluginManager {
                     }
                 }
             } catch (e) {
-                console.error("Plugin onSwapRequestFromBtcLn error: ", plugin.name);
-                console.error(e);
+                pluginLogger.error(plugin, "onSwapRequestFromBtcLn(): plugin error", e);
             }
         }
         return fees;
@@ -215,8 +233,7 @@ export class PluginManager {
                     }
                 }
             } catch (e) {
-                console.error("Plugin onSwapRequestFromBtc error: ", plugin.name);
-                console.error(e);
+                pluginLogger.error(plugin, "onSwapRequestFromBtc(): plugin error", e);
             }
         }
         return fees;
@@ -234,8 +251,7 @@ export class PluginManager {
                     }
                 }
             } catch (e) {
-                console.error("Plugin getWhitelistedTxIds error: ", plugin.name);
-                console.error(e);
+                pluginLogger.error(plugin, "getWhitelistedTxIds(): plugin error", e);
             }
         }
 

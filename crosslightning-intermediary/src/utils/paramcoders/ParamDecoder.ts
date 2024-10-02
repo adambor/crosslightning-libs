@@ -25,7 +25,6 @@ export class ParamDecoder implements IParamReader {
 
     private onFrameRead(data: Buffer) {
         const obj = JSON.parse(data.toString());
-        console.log("Frame read: ", obj);
         for(let key in obj) {
             if(this.params[key]==null) {
                 this.params[key] = {
@@ -142,7 +141,7 @@ export class ParamDecoder implements IParamReader {
                 continue;
             }
 
-            if(val==null && type>=100) {
+            if(val==null && (type as number)>=100) {
                 resultSchema[fieldName] = null;
                 continue;
             }
@@ -188,11 +187,6 @@ export class ParamDecoder implements IParamReader {
                 const result = type(val);
                 if(result==null) return null;
                 resultSchema[fieldName] = result;
-                continue;
-            }
-
-            if(val==null && type>=100) {
-                resultSchema[fieldName] = null;
                 continue;
             }
 

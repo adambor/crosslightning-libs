@@ -3,23 +3,21 @@ import {Express} from "express";
 import * as bolt11 from "bolt11";
 import * as lncli from "ln-service";
 import {ToBtcLnSwapAbs, ToBtcLnSwapState} from "./ToBtcLnSwapAbs";
-import {SwapHandler, SwapHandlerType} from "../SwapHandler";
+import {SwapHandlerType} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
 import {
     ChainEvents,
     ChainSwapType,
     ClaimEvent,
     InitializeEvent,
-    IStorageManager,
     RefundEvent,
     SwapCommitStatus,
     SwapContract,
     SwapData,
-    SwapEvent,
     TokenAddress
 } from "crosslightning-base";
-import {AuthenticatedLnd} from "lightning";
-import {expressHandlerWrapper, HEX_REGEX} from "../../utils/Utils";
+import {AuthenticatedLnd, pay} from "lightning";
+import {expressHandlerWrapper, HEX_REGEX, isDefinedRuntimeError} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
 import {randomBytes} from "crypto";
@@ -27,23 +25,12 @@ import {serverParamDecoder} from "../../utils/paramcoders/server/ServerParamDeco
 import {IParamReader} from "../../utils/paramcoders/IParamReader";
 import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
 import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
-import * as express from "express";
+import {ToBtcBaseConfig, ToBtcBaseSwapHandler} from "../ToBtcBaseSwapHandler";
 
-export type ToBtcLnConfig = {
-    authorizationTimeout: number,
-    bitcoinBlocktime: BN,
-    gracePeriod: BN,
-    baseFee: BN,
-    feePPM: BN,
-    max: BN,
-    min: BN,
-    maxSkew: number,
-    safetyFactor: BN,
+export type ToBtcLnConfig = ToBtcBaseConfig & {
     routingFeeMultiplier: BN,
 
     minSendCltv: BN,
-
-    swapCheckInterval: number,
 
     allowProbeFailedSwaps: boolean,
     allowShortExpiry: boolean,
@@ -141,7 +128,7 @@ export type ToBtcLnRequestType = {
 /**
  * Swap handler handling to BTCLN swaps using submarine swaps
  */
-export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T>, T> {
+export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs<T>, T, ToBtcLnSwapState> {
 
     activeSubscriptions: Set<string> = new Set<string>();
 
@@ -151,10 +138,6 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
 
     readonly exactInAuths: {
         [reqId: string]: ExactInAuthorization
-    } = {};
-
-    readonly pdaExistsForToken: {
-        [token: string]: boolean
     } = {};
 
     constructor(
@@ -177,16 +160,82 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
     }
 
     /**
-     * Checks past swaps, deletes ones that are already expired, and tries to process ones that are committed.
+     * Fetches the payment info, returns null if payment not found
+     *
+     * @param paymentHash
+     * @private
      */
-    private async checkPastInvoices() {
+    private async getPayment(paymentHash: string): Promise<any> {
+        try {
+            return await lncli.getPayment({
+                id: paymentHash,
+                lnd: this.LND
+            });
+        } catch (e) {
+            if (Array.isArray(e) && e[0] === 404 && e[1] === "SentPaymentNotFound") return null;
+            throw e;
+        }
+    }
 
+    /**
+     * Cleans up exactIn authorization that are already past their expiry
+     *
+     * @protected
+     */
+    private cleanExpiredExactInAuthorizations() {
         for(let key in this.exactInAuths) {
             const obj = this.exactInAuths[key];
             if(obj.expiry<Date.now()) {
+                this.logger.info("cleanExpiredExactInAuthorizations(): remove expired authorization, reqId: "+key);
                 delete this.exactInAuths[key];
             }
         }
+    }
+
+    protected async processPastSwap(swap: ToBtcLnSwapAbs<T>): Promise<void> {
+        //Current timestamp plus maximum allowed on-chain time skew
+        const timestamp = new BN(Math.floor(Date.now()/1000)).sub(new BN(this.config.maxSkew));
+
+        if (swap.state === ToBtcLnSwapState.SAVED) {
+            //Cancel the swaps where signature is expired
+            const isSignatureExpired = swap.signatureExpiry!=null && swap.signatureExpiry.lt(timestamp);
+            if(isSignatureExpired) {
+                this.swapLogger.info(swap, "processPastSwap(state=SAVED): signature expired, cancel uncommited swap, invoice: "+swap.pr);
+                await this.removeSwapData(swap, ToBtcLnSwapState.CANCELED);
+                return;
+            }
+
+            //Cancel the swaps where lightning invoice is expired
+            const decodedPR = bolt11.decode(swap.pr);
+            const isInvoiceExpired = decodedPR.timeExpireDate < Date.now() / 1000;
+            if (isInvoiceExpired) {
+                this.swapLogger.info(swap, "processPastSwap(state=SAVED): invoice expired, cancel uncommited swap, invoice: "+swap.pr);
+                await this.removeSwapData(swap, ToBtcLnSwapState.CANCELED);
+                return;
+            }
+        }
+
+        if (swap.state === ToBtcLnSwapState.COMMITED || swap.state === ToBtcLnSwapState.PAID) {
+            //Process swaps in commited & paid state
+            await this.processInitialized(swap);
+        }
+
+        if (swap.state === ToBtcLnSwapState.NON_PAYABLE) {
+            //Remove expired swaps (as these can already be unilaterally refunded by the client), so we don't need
+            // to be able to cooperatively refund them
+            const isSwapExpired = swap.data.getExpiry().lt(timestamp);
+            if(isSwapExpired) {
+                this.swapLogger.info(swap, "processPastSwap(state=NON_PAYABLE): swap expired, removing swap data, invoice: "+swap.pr);
+                await this.removeSwapData(swap);
+            }
+        }
+    }
+
+    /**
+     * Checks past swaps, deletes ones that are already expired, and tries to process ones that are committed.
+     */
+    protected async processPastSwaps() {
+        this.cleanExpiredExactInAuthorizations();
 
         const queriedData = await this.storageManager.query([
             {
@@ -200,106 +249,87 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
             }
         ]);
 
-        for(let invoiceData of queriedData) {
-            const decodedPR = bolt11.decode(invoiceData.pr);
+        for(let swap of queriedData) {
+            await this.processPastSwap(swap);
+        }
+    }
 
-            const timestamp = new BN(Math.floor(Date.now()/1000)).sub(new BN(this.config.maxSkew));
+    /**
+     * Tries to claim the swap funds on the SC side, returns false if the swap is already locked (claim tx is already being sent)
+     *
+     * @param swap
+     * @private
+     * @returns Whether the transaction was successfully sent
+     */
+    private async tryClaimSwap(swap: ToBtcLnSwapAbs<T>): Promise<boolean> {
+        if(swap.secret==null) throw new Error("Invalid swap state, needs payment pre-image!");
 
-            if (invoiceData.state === ToBtcLnSwapState.SAVED) {
-                //Current timestamp plus maximum allowed on-chain time skew
+        //Set flag that we are sending the transaction already, so we don't end up with race condition
+        const unlock: () => boolean = swap.lock(this.swapContract.claimWithSecretTimeout);
+        if(unlock==null) return false;
 
-                const isSignatureExpired = invoiceData.signatureExpiry!=null && invoiceData.signatureExpiry.lt(timestamp);
-                if(isSignatureExpired) {
-                    await invoiceData.setState(ToBtcLnSwapState.CANCELED);
-                    await this.removeSwapData(invoiceData.getHash(), invoiceData.data.getSequence());
-                    continue;
-                }
-
-                //Yet unpaid
-                const isInvoiceExpired = decodedPR.timeExpireDate < Date.now() / 1000;
-                if (isInvoiceExpired) {
-                    //Expired
-                    await invoiceData.setState(ToBtcLnSwapState.CANCELED);
-                    await this.removeSwapData(invoiceData.getHash(), invoiceData.data.getSequence());
-                    continue;
-                }
-            }
-
-            if (invoiceData.state === ToBtcLnSwapState.COMMITED || invoiceData.state === ToBtcLnSwapState.PAID) {
-                await this.processInitialized(invoiceData);
-            }
-
-            if (invoiceData.state === ToBtcLnSwapState.NON_PAYABLE) {
-                if(invoiceData.data.getExpiry().lt(timestamp)) {
-                    await this.removeSwapData(invoiceData.getHash(), invoiceData.data.getSequence());
-                }
-            }
+        try {
+            this.swapLogger.debug(swap, "tryClaimSwap(): initiate claim of swap, secret: "+swap.secret);
+            const success = await this.swapContract.claimWithSecret(swap.data, swap.secret, false, false, true);
+            this.swapLogger.info(swap, "tryClaimSwap(): swap claimed successfully, secret: "+swap.secret+" invoice: "+swap.pr);
+            if(swap.metadata!=null) swap.metadata.times.txClaimed = Date.now();
+            unlock();
+            return true;
+        } catch (e) {
+            this.swapLogger.error(swap, "tryClaimSwap(): error occurred claiming swap, secret: "+swap.secret+" invoice: "+swap.pr, e);
+            return false;
         }
     }
 
     /**
      * Process the result of attempted lightning network payment
      *
-     * @param invoiceData
+     * @param swap
      * @param lnPaymentStatus
      */
-    private async processPaymentResult(invoiceData: ToBtcLnSwapAbs<T>, lnPaymentStatus: {is_confirmed?: boolean, is_failed?: boolean, is_pending?: boolean, payment?: any}) {
-        const decodedPR = bolt11.decode(invoiceData.pr);
-
-        if(lnPaymentStatus.is_failed) {
-            console.error("[To BTC-LN: BTCLN.PaymentResult] Invoice payment failed, should refund offerer");
-            await invoiceData.setState(ToBtcLnSwapState.CANCELED);
-            //await PluginManager.swapStateChange(invoiceData);
-            await this.removeSwapData(decodedPR.tagsObject.payment_hash, invoiceData.data.getSequence());
-            return;
-        }
-
+    private async processPaymentResult(swap: ToBtcLnSwapAbs<T>, lnPaymentStatus: {is_confirmed?: boolean, is_failed?: boolean, is_pending?: boolean, payment?: any}) {
         if(lnPaymentStatus.is_pending) {
             return;
         }
 
-        if(lnPaymentStatus.is_confirmed) {
-            invoiceData.secret = lnPaymentStatus.payment.secret;
-            invoiceData.realRoutingFee = new BN(lnPaymentStatus.payment.fee_mtokens).div(new BN(1000));
-            await invoiceData.setState(ToBtcLnSwapState.PAID);
-            // await PluginManager.swapStateChange(invoiceData);
-            await this.storageManager.saveData(decodedPR.tagsObject.payment_hash, invoiceData.data.getSequence(), invoiceData);
-
-            //Check if escrow state exists
-            const isCommited = await this.swapContract.isCommited(invoiceData.data);
-
-            if(!isCommited) {
-                const status = await this.swapContract.getCommitStatus(invoiceData.data);
-                if(status===SwapCommitStatus.PAID) {
-                    await invoiceData.setState(ToBtcLnSwapState.CLAIMED);
-                    await this.removeSwapData(decodedPR.tagsObject.payment_hash, invoiceData.data.getSequence());
-                } else if(status===SwapCommitStatus.EXPIRED) {
-                    await invoiceData.setState(ToBtcLnSwapState.REFUNDED);
-                    await this.removeSwapData(decodedPR.tagsObject.payment_hash, invoiceData.data.getSequence());
-                }
-                console.error("[To BTC-LN: BTCLN.PaymentResult] Tried to claim but escrow doesn't exist anymore, commit status="+status+" : ", decodedPR.tagsObject.payment_hash);
-                return;
-            }
-
-            //Set flag that we are sending the transaction already, so we don't end up with race condition
-            const unlock: () => boolean = invoiceData.lock(this.swapContract.claimWithSecretTimeout);
-            if(unlock==null) return;
-
-            const success = await this.swapContract.claimWithSecret(invoiceData.data, lnPaymentStatus.payment.secret, false, false, true);
-
-            if(invoiceData.metadata!=null) invoiceData.metadata.times.txClaimed = Date.now();
-
-            // if(success) {
-            //     if(invoiceData.state!==ToBtcLnSwapState.CLAIMED) {
-            //         await invoiceData.setState(ToBtcLnSwapState.CLAIMED);
-            //         await this.removeSwapData(decodedPR.tagsObject.payment_hash, invoiceData.data.getSequence());
-            //     }
-            // }
-            unlock();
-
+        if(lnPaymentStatus.is_failed) {
+            this.swapLogger.info(swap, "processPaymentResult(): invoice payment failed, cancelling swap, invoice: "+swap.pr);
+            await this.removeSwapData(swap, ToBtcLnSwapState.CANCELED);
             return;
         }
 
+        if(lnPaymentStatus.is_confirmed) {
+            //Save pre-image & real network fee
+            swap.secret = lnPaymentStatus.payment.secret;
+            swap.realRoutingFee = new BN(lnPaymentStatus.payment.fee_mtokens).div(new BN(1000));
+            this.swapLogger.info(swap, "processPaymentResult(): invoice paid, secret: "+swap.secret+" realRoutingFee: "+swap.realRoutingFee.toString(10)+" invoice: "+swap.pr);
+            await swap.setState(ToBtcLnSwapState.PAID);
+            await this.storageManager.saveData(swap.data.getHash(), swap.data.getSequence(), swap);
+
+            //Check if escrow state exists
+            const isCommited = await this.swapContract.isCommited(swap.data);
+            if(!isCommited) {
+                const status = await this.swapContract.getCommitStatus(swap.data);
+                if(status===SwapCommitStatus.PAID) {
+                    //This is alright, we got the money
+                    await this.removeSwapData(swap, ToBtcLnSwapState.CLAIMED);
+                    return;
+                } else if(status===SwapCommitStatus.EXPIRED) {
+                    //This means the user was able to refund before we were able to claim, no good
+                    await this.removeSwapData(swap, ToBtcLnSwapState.REFUNDED);
+                }
+                this.swapLogger.warn(swap, "processPaymentResult(): tried to claim but escrow doesn't exist anymore,"+
+                    " status: "+status+
+                    " invoice: "+swap.pr);
+                return;
+            }
+
+            const success = await this.tryClaimSwap(swap);
+            if(success) this.swapLogger.info(swap, "processPaymentResult(): swap claimed successfully, invoice: "+swap.pr);
+            return;
+        }
+
+        //This should never happen
         throw new Error("Invalid lnPaymentStatus");
     }
 
@@ -308,240 +338,502 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
      *
      * @param invoiceData
      */
-    private subscribeToPayment(invoiceData: ToBtcLnSwapAbs<T>) {
+    private subscribeToPayment(invoiceData: ToBtcLnSwapAbs<T>): boolean {
+        const paymentHash = invoiceData.data.getHash();
+        if(this.activeSubscriptions.has(paymentHash)) return false;
 
-        const decodedPR = bolt11.decode(invoiceData.pr);
-        if(this.activeSubscriptions.has(decodedPR.tagsObject.payment_hash)) {
-            //Already subscribed
-            return;
-        }
+        const subscription = lncli.subscribeToPastPayment({id: paymentHash, lnd: this.LND});
 
-        const sub = lncli.subscribeToPastPayment({id: decodedPR.tagsObject.payment_hash, lnd: this.LND});
-
-        console.log("[To BTC-LN: BTCLN.PaymentResult] Subscribed to payment: ", decodedPR.tagsObject.payment_hash);
-
-        const onResult = (lnPaymentStatus: {is_confirmed?: boolean, is_failed?: boolean, payment?: any}) => {
-            this.processPaymentResult(invoiceData, lnPaymentStatus).catch(e => console.error(e));
-            sub.removeAllListeners();
-            this.activeSubscriptions.delete(decodedPR.tagsObject.payment_hash);
+        const onResult = (lnPaymentStatus: {is_confirmed?: boolean, is_failed?: boolean, payment?: any, error?: any}) => {
+            const outcome = lnPaymentStatus.is_confirmed ? "success" : lnPaymentStatus.is_failed ? "failure" : null;
+            this.swapLogger.info(invoiceData, "subscribeToPayment(): result callback, outcome: "+outcome+" invoice: "+invoiceData.pr);
+            this.processPaymentResult(invoiceData, lnPaymentStatus).catch(e => this.swapLogger.error(invoiceData, "subscribeToPayment(): process payment result", e));
+            subscription.removeAllListeners();
+            this.activeSubscriptions.delete(paymentHash);
         };
 
-        sub.on('confirmed', (payment) => {
-            const lnPaymentStatus = {
-                is_confirmed: true,
-                payment
-            };
+        subscription.on('confirmed', (payment) => onResult({
+            is_confirmed: true,
+            payment
+        }));
+        subscription.on('failed', (data) => onResult({
+            is_failed: true,
+            error: data
+        }));
 
-            console.log("[To BTC-LN: BTCLN.PaymentResult] Invoice paid, result: ", payment);
+        this.swapLogger.info(invoiceData, "subscribeToPayment(): subscribe to payment outcome, invoice: "+invoiceData.pr);
 
-            onResult(lnPaymentStatus);
-        });
+        this.activeSubscriptions.add(paymentHash);
+        return true;
+    }
 
-        sub.on('failed', (payment) => {
-            const lnPaymentStatus = {
-                is_failed: true
-            };
+    private async sendLightningPayment(swap: ToBtcLnSwapAbs<T>): Promise<void> {
+        const decodedPR = bolt11.decode(swap.pr);
+        const expiryTimestamp: BN = swap.data.getExpiry();
+        const currentTimestamp: BN = new BN(Math.floor(Date.now()/1000));
 
-            console.log("[To BTC-LN: BTCLN.PaymentResult] Invoice pay failed, result: ", payment);
+        //Run checks
+        const hasEnoughTimeToPay = expiryTimestamp.sub(currentTimestamp).gte(this.config.minTsSendCltv);
+        if(!hasEnoughTimeToPay) throw {
+            code: 90005,
+            msg: "Not enough time to reliably pay the invoice"
+        }
 
-            onResult(lnPaymentStatus);
-        });
+        const isInvoiceExpired = decodedPR.timeExpireDate < Date.now() / 1000;
+        if (isInvoiceExpired) throw {
+            code: 90006,
+            msg: "Invoice already expired"
+        };
 
-        this.activeSubscriptions.add(decodedPR.tagsObject.payment_hash);
+        //Compute max cltv delta
+        const maxFee = swap.maxFee;
+        const maxUsableCLTVdelta = expiryTimestamp.sub(currentTimestamp).sub(this.config.gracePeriod).div(this.config.bitcoinBlocktime.mul(this.config.safetyFactor));
 
+        await swap.setState(ToBtcLnSwapState.COMMITED);
+        await this.storageManager.saveData(decodedPR.tagsObject.payment_hash, swap.data.getSequence(), swap);
+
+        //Initiate payment
+        const { current_block_height } = await lncli.getHeight({lnd: this.LND});
+        const obj: any = {
+            request: swap.pr,
+            max_fee: maxFee.toString(10),
+            max_timeout_height: new BN(current_block_height).add(maxUsableCLTVdelta).toString(10),
+            lnd: this.LND
+        };
+        this.swapLogger.info(swap, "sendLightningPayment(): paying lightning network invoice,"+
+            " cltvDelta: "+maxUsableCLTVdelta.toString(10)+
+            " maxFee: "+maxFee.toString(10)+
+            " invoice: "+swap.pr);
+
+        try {
+            await lncli.pay(obj)
+        } catch (e) {
+            throw {
+                code: 90007,
+                msg: "Failed to initiate invoice payment",
+                data: {
+                    error: JSON.stringify(e)
+                }
+            }
+        }
+        if(swap.metadata!=null) swap.metadata.times.payComplete = Date.now();
     }
 
     /**
      * Begins a lightning network payment attempt, if not attempted already
      *
-     * @param invoiceData
-     * @param data
+     * @param swap
      */
-    private async processInitialized(invoiceData: ToBtcLnSwapAbs<T>) {
-
-        const lnPr = invoiceData.pr;
-        const decodedPR = bolt11.decode(lnPr);
-
+    private async processInitialized(swap: ToBtcLnSwapAbs<T>) {
         //Check if payment was already made
-        let lnPaymentStatus = await lncli.getPayment({
-            id: decodedPR.tagsObject.payment_hash,
-            lnd: this.LND
-        }).catch(e => {
-            console.error(e);
-        });
-
-        if(invoiceData.metadata!=null) invoiceData.metadata.times.payPaymentChecked = Date.now();
-
-        const markAsNonPayable = async() => {
-            await invoiceData.setState(ToBtcLnSwapState.NON_PAYABLE);
-            // await PluginManager.swapStateChange(invoiceData);
-            await this.storageManager.saveData(decodedPR.tagsObject.payment_hash, invoiceData.data.getSequence(), invoiceData);
-        };
+        let lnPaymentStatus = await this.getPayment(swap.getHash());
+        if(swap.metadata!=null) swap.metadata.times.payPaymentChecked = Date.now();
 
         const paymentExists = lnPaymentStatus!=null;
         if(!paymentExists) {
-            if (!invoiceData.data.isToken(invoiceData.data.getToken())) {
-                console.error("[To BTC-LN: Solana.Initialize] Invalid token used");
-                return;
+            try {
+                await this.sendLightningPayment(swap);
+            } catch (e) {
+                this.swapLogger.error(swap, "processInitialized(): lightning payment error", e);
+                if(isDefinedRuntimeError(e)) {
+                    await swap.setState(ToBtcLnSwapState.NON_PAYABLE);
+                    await this.storageManager.saveData(swap.data.getHash(), swap.data.getSequence(), swap);
+                    return;
+                } else throw e;
             }
-
-            console.log("[To BTC-LN: Solana.Initialize] Struct: ", invoiceData.data);
-
-            //const tokenAmount: BN = data.getAmount();
-            const expiryTimestamp: BN = invoiceData.data.getExpiry();
-            const currentTimestamp: BN = new BN(Math.floor(Date.now()/1000));
-
-            console.log("[To BTC-LN: Solana.Initialize] Expiry time: ", expiryTimestamp.toString(10));
-
-            const hasEnoughTimeToPay = expiryTimestamp.sub(currentTimestamp).gte(this.config.minTsSendCltv);
-            if(!hasEnoughTimeToPay) {
-                console.error("[To BTC-LN: Solana.Initialize] Not enough time to reliably pay the invoice");
-                await markAsNonPayable();
-                return;
-            }
-
-            console.log("[To BTC-LN: Solana.Initialize] lightning payment request: ", lnPr);
-            console.log("[To BTC-LN: Solana.Initialize] Decoded lightning payment request: ", decodedPR);
-
-            if(decodedPR.millisatoshis==null) {
-                console.error("[To BTC-LN: Solana.Initialize] Invalid invoice with no amount");
-                await markAsNonPayable();
-                return;
-            }
-
-            const maxFee = invoiceData.maxFee;
-
-            const maxUsableCLTVdelta = expiryTimestamp.sub(currentTimestamp).sub(this.config.gracePeriod).div(this.config.bitcoinBlocktime.mul(this.config.safetyFactor));
-
-            console.log("[To BTC-LN: Solana.Initialize] Max usable CLTV expiry delta: ", maxUsableCLTVdelta.toString(10));
-            console.log("[To BTC-LN: Solana.Initialize] Max fee: ", maxFee.toString(10));
-
-            const isInvoiceExpired = decodedPR.timeExpireDate < Date.now() / 1000;
-            if (isInvoiceExpired) {
-                //Expired
-                console.error("[To BTC-LN: Solana.Initialize] Invoice already expired!");
-                await markAsNonPayable();
-                return;
-            }
-
-            await invoiceData.setState(ToBtcLnSwapState.COMMITED);
-            // await PluginManager.swapStateChange(invoiceData);
-            await this.storageManager.saveData(decodedPR.tagsObject.payment_hash, invoiceData.data.getSequence(), invoiceData);
-
-            const { current_block_height } = await lncli.getHeight({lnd: this.LND});
-
-            const obj: any = {
-                request: lnPr,
-                max_fee: maxFee.toString(10),
-                max_timeout_height: new BN(current_block_height).add(maxUsableCLTVdelta).toString(10)
-            };
-
-            console.log("[To BTC-LN: Solana.Initialize] Paying invoice: ", obj);
-
-            obj.lnd = this.LND;
-
-            const payment = await lncli.pay(obj).catch(e => {
-                console.error(e);
-            });
-
-            if(invoiceData.metadata!=null) invoiceData.metadata.times.payComplete = Date.now();
-
-            if(payment==null) {
-                console.error("[To BTC-LN: Solana.Initialize] Failed to initiate invoice payment!");
-                await markAsNonPayable();
-                return;
-            }
-
-            this.subscribeToPayment(invoiceData);
+            this.subscribeToPayment(swap);
             return;
         }
 
         if(lnPaymentStatus.is_pending) {
-            this.subscribeToPayment(invoiceData);
+            this.subscribeToPayment(swap);
             return;
         }
 
-        await this.processPaymentResult(invoiceData, lnPaymentStatus);
+        //Payment has already concluded, process the result
+        await this.processPaymentResult(swap, lnPaymentStatus);
+    }
 
+    protected async processInitializeEvent(event: InitializeEvent<T>): Promise<void> {
+        if(event.swapType!==ChainSwapType.HTLC) return;
+
+        const paymentHash = event.paymentHash;
+
+        const swap = await this.storageManager.getData(paymentHash, event.sequence);
+        if(swap==null) return;
+
+        swap.txIds.init = (event as any).meta?.txId;
+        if(swap.metadata!=null) swap.metadata.times.txReceived = Date.now();
+
+        this.swapLogger.info(swap, "SC: InitializeEvent: swap initialized by the client, invoice: "+swap.pr);
+
+        //Only process swaps in SAVED state
+        if(swap.state!==ToBtcLnSwapState.SAVED) return;
+        await this.processInitialized(swap);
+    }
+
+    protected async processClaimEvent(event: ClaimEvent<T>): Promise<void> {
+        const paymentHash = event.paymentHash;
+
+        const swap = await this.storageManager.getData(paymentHash, event.sequence);
+        if(swap==null) return;
+
+        swap.txIds.claim = (event as any).meta?.txId;
+
+        this.swapLogger.info(swap, "SC: ClaimEvent: swap claimed to us, secret: "+event.secret+" invoice: "+swap.pr);
+
+        await this.removeSwapData(swap, ToBtcLnSwapState.CLAIMED);
+    }
+
+    protected async processRefundEvent(event: RefundEvent<T>): Promise<void> {
+        const paymentHash = event.paymentHash;
+
+        const swap = await this.storageManager.getData(paymentHash, event.sequence);
+        if(swap==null) return;
+
+        swap.txIds.refund = (event as any).meta?.txId;
+
+        this.swapLogger.info(swap, "SC: RefundEvent: swap refunded back to the client, invoice: "+swap.pr);
+
+        await this.removeSwapData(swap, ToBtcLnSwapState.REFUNDED);
     }
 
     /**
-     * Chain event handler
+     * Checks if the amount was supplied in the exactIn request
      *
-     * @param eventData
+     * @param amount
+     * @param exactIn
+     * @throws {DefinedRuntimeError} will throw an error if the swap was exactIn, but amount not specified
      */
-    private async processEvent(eventData: SwapEvent<T>[]): Promise<boolean> {
-
-        for(let event of eventData) {
-            if(event instanceof InitializeEvent) {
-                console.log("Initialize Event: ", event);
-
-                if(event.swapType!==ChainSwapType.HTLC) {
-                    //Only process ln requests
-                    continue;
-                }
-
-                const paymentHash = event.paymentHash;
-
-                const savedInvoice = await this.storageManager.getData(paymentHash, event.sequence);
-
-                if(savedInvoice==null) {
-                    // console.error("[To BTC-LN: Solana.Initialize] No invoice submitted: ", paymentHash);
-                    continue;
-                }
-                savedInvoice.txIds.init = (event as any).meta?.txId;
-
-                if(savedInvoice.metadata!=null) savedInvoice.metadata.times.txReceived = Date.now();
-
-                console.log("[To BTC-LN: Solana.Initialize] SOL request submitted: ", paymentHash);
-
-                //Only process swaps in SAVED state
-                if(savedInvoice.state!==ToBtcLnSwapState.SAVED) continue;
-
-                await this.processInitialized(savedInvoice);
-
-                continue;
+    private checkAmount(amount: BN, exactIn: boolean): void {
+        if(exactIn) {
+            if(amount==null) {
+                throw {
+                    code: 20040,
+                    msg: "Invalid request body (amount not specified)!"
+                };
             }
-            if(event instanceof ClaimEvent) {
-                const paymentHash = event.paymentHash;
-                const paymentHashBuffer = Buffer.from(event.paymentHash, "hex");
+        }
+    }
 
-                const savedInvoice = await this.storageManager.getData(paymentHash, event.sequence);
+    /**
+     * Checks if the maxFee parameter is in valid range (>0)
+     *
+     * @param maxFee
+     * @throws {DefinedRuntimeError} will throw an error if the maxFee is zero or negative
+     */
+    private checkMaxFee(maxFee: BN): void {
+        if(maxFee.isNeg() || maxFee.isZero()) {
+            throw {
+                code: 20030,
+                msg: "Invalid request body (maxFee too low)!"
+            };
+        }
+    }
 
-                if(savedInvoice==null) {
-                    console.error("[To BTC-LN: Solana.ClaimEvent] No invoice submitted: ", paymentHash);
-                    continue;
-                }
-                savedInvoice.txIds.claim = (event as any).meta?.txId;
+    /**
+     * Checks and parses a payment request (bolt11 invoice), additionally also checks expiration time of the invoice
+     *
+     * @param pr
+     * @throws {DefinedRuntimeError} will throw an error if the pr is invalid, without amount or expired
+     */
+    private checkPaymentRequest(pr: string): {
+        parsedPR: bolt11.PaymentRequestObject & { tagsObject: bolt11.TagsObject },
+        halfConfidence: boolean
+    } {
+        let parsedPR: bolt11.PaymentRequestObject & { tagsObject: bolt11.TagsObject };
 
-                console.log("[To BTC-LN: Solana.ClaimEvent] Transaction confirmed! Event: ", event);
+        try {
+            parsedPR = bolt11.decode(pr);
+        } catch (e) {
+            throw {
+                code: 20021,
+                msg: "Invalid request body (pr - cannot be parsed)"
+            };
+        }
 
-                await savedInvoice.setState(ToBtcLnSwapState.CLAIMED);
-                await this.removeSwapData(paymentHash, event.sequence);
-                continue;
+        if(parsedPR.millisatoshis==null) throw {
+            code: 20022,
+            msg: "Invalid request body (pr - needs to have amount)"
+        };
+
+        let halfConfidence = false;
+        if(parsedPR.timeExpireDate < ((Date.now()/1000)+(this.config.authorizationTimeout+(2*60)))) {
+            if(!this.config.allowShortExpiry) {
+                throw {
+                    code: 20020,
+                    msg: "Invalid request body (pr - expired)"
+                };
+            } else if(parsedPR.timeExpireDate < Date.now()/1000) {
+                throw {
+                    code: 20020,
+                    msg: "Invalid request body (pr - expired)"
+                };
             }
-            if(event instanceof RefundEvent) {
-                const paymentHash = event.paymentHash;
+            halfConfidence = true;
+        }
 
-                const savedInvoice = await this.storageManager.getData(paymentHash, event.sequence);
+        return {parsedPR, halfConfidence};
+    }
 
-                if(savedInvoice==null) {
-                    console.error("[To BTC-LN: Solana.RefundEvent] No invoice submitted");
-                    continue;
+    /**
+     * Checks if the request specified too short of an expiry
+     *
+     * @param expiryTimestamp
+     * @param currentTimestamp
+     * @throws {DefinedRuntimeError} will throw an error if the expiry time is too short
+     */
+    private checkExpiry(expiryTimestamp: BN, currentTimestamp: BN): void {
+        const expiresTooSoon = expiryTimestamp.sub(currentTimestamp).lt(this.config.minTsSendCltv);
+        if(expiresTooSoon) {
+            throw {
+                code: 20001,
+                msg: "Expiry time too low!"
+            };
+        }
+    }
+
+    /**
+     * Checks if the request should be processed by calling plugins
+     *
+     * @param req
+     * @param parsedBody
+     * @param metadata
+     * @throws {DefinedRuntimeError} will throw an error if the plugin cancelled the request
+     */
+    private async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: ToBtcLnRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
+        const pluginResult = await PluginManager.onSwapRequestToBtcLn(req, parsedBody, metadata);
+
+        if(pluginResult.throw) {
+            throw {
+                code: 29999,
+                msg: pluginResult.throw
+            };
+        }
+
+        return {
+            baseFee: pluginResult.baseFee || this.config.baseFee,
+            feePPM: pluginResult.feePPM || this.config.feePPM
+        };
+    }
+
+    /**
+     * Checks if the prior payment with the same paymentHash exists
+     *
+     * @param paymentHash
+     * @param abortSignal
+     * @throws {DefinedRuntimeError} will throw an error if payment already exists
+     */
+    private async checkPriorPayment(paymentHash: string, abortSignal: AbortSignal): Promise<void> {
+        const payment = await this.getPayment(paymentHash);
+        if(payment!=null) throw {
+            code: 20010,
+            msg: "Already processed"
+        };
+        abortSignal.throwIfAborted();
+    }
+
+    /**
+     * Checks if the underlying LND backend has enough liquidity in channels to honor the swap
+     *
+     * @param amount
+     * @param abortSignal
+     * @throws {DefinedRuntimeError} will throw an error if there isn't enough liquidity
+     */
+    private async checkLiquidity(amount: BN, abortSignal: AbortSignal): Promise<void> {
+        const amountBDMtokens = amount.mul(new BN(1000));
+        const channelBalances = await lncli.getChannelBalance({lnd: this.LND});
+        const localBalance = new BN(channelBalances.channel_balance_mtokens);
+        if(amountBDMtokens.gt(localBalance)) {
+            throw {
+                code: 20002,
+                msg: "Not enough liquidity"
+            };
+        }
+        abortSignal.throwIfAborted();
+    }
+
+    /**
+     * Estimates the routing fee & confidence by either probing or routing (if probing fails), the fee is also adjusted
+     *  according to routing fee multiplier, and subject to minimums set in config
+     *
+     * @param amountBD
+     * @param maxFee
+     * @param expiryTimestamp
+     * @param currentTimestamp
+     * @param pr
+     * @param metadata
+     * @param abortSignal
+     * @throws {DefinedRuntimeError} will throw an error if the destination is unreachable
+     */
+    private async checkAndGetNetworkFee(amountBD: BN, maxFee: BN, expiryTimestamp: BN, currentTimestamp: BN, pr: string, metadata: any, abortSignal: AbortSignal): Promise<{
+        confidence: number,
+        networkFee: BN,
+        routes: LNRoutes
+    }> {
+        const maxUsableCLTV: BN = expiryTimestamp.sub(currentTimestamp).sub(this.config.gracePeriod).div(this.config.bitcoinBlocktime.mul(this.config.safetyFactor));
+
+        const { current_block_height } = await lncli.getHeight({lnd: this.LND});
+        abortSignal.throwIfAborted();
+
+        metadata.times.blockheightFetched = Date.now();
+
+        //Probe for a route
+        const parsedRequest = await lncli.parsePaymentRequest({
+            request: pr
+        });
+        metadata.times.prParsed = Date.now();
+
+        const probeReq: any = {
+            destination: parsedRequest.destination,
+            cltv_delta: parsedRequest.cltv_delta,
+            mtokens: amountBD.mul(new BN(1000)).toString(10),
+            max_fee_mtokens: maxFee.mul(new BN(1000)).toString(10),
+            max_timeout_height: new BN(current_block_height).add(maxUsableCLTV).toString(10),
+            payment: parsedRequest.payment,
+            total_mtokens: amountBD.mul(new BN(1000)).toString(10),
+            routes: parsedRequest.routes
+        };
+        metadata.probeRequest = {...probeReq};
+        probeReq.lnd = this.LND;
+
+        let is_snowflake: boolean = false;
+        if(parsedRequest.routes!=null) {
+            for(let route of parsedRequest.routes) {
+                if(SNOWFLAKE_LIST.has(route[0].public_key) || SNOWFLAKE_LIST.has(route[1].public_key)) {
+                    is_snowflake = true;
                 }
-                savedInvoice.txIds.refund = (event as any).meta?.txId;
-
-                console.log("[To BTC-LN: Solana.RefundEvent] Transaction refunded! Event: ", event);
-
-                await savedInvoice.setState(ToBtcLnSwapState.REFUNDED);
-                await this.removeSwapData(paymentHash, event.sequence);
-
-                continue;
             }
         }
 
-        return true;
+        let obj;
+        if(!is_snowflake) try {
+            obj = await lncli.probeForRoute(probeReq);
+        } catch (e) {
+            //TODO: Properly handle error, such that only probe failed error is consumed, and e.g. network errors are thrown
+        }
+        abortSignal.throwIfAborted();
 
+        metadata.times.probeResult = Date.now();
+        metadata.probeResponse = {...obj};
+
+        if(obj!=null) this.logger.info("checkAndGetNetworkFee(): route probed,"+
+            " destination: "+parsedRequest.destination+
+            " confidence: "+obj.route.confidence+
+            " safe fee: "+obj.route.safe_fee);
+
+        if(obj==null || obj.route==null) {
+            if(!this.config.allowProbeFailedSwaps) {
+                throw {
+                    code: 20002,
+                    msg: "Cannot route the payment!"
+                };
+            }
+
+            probeReq.is_ignoring_past_failures = true;
+
+            let routingObj;
+            try {
+                routingObj = await lncli.getRouteToDestination(probeReq);
+            } catch (e) {
+                //TODO: Properly handle error, such that only routing failed error is consumed, and e.g. network errors are thrown
+            }
+            abortSignal.throwIfAborted();
+
+            if(routingObj==null || routingObj.route==null) {
+                throw {
+                    code: 20002,
+                    msg: "Cannot route the payment!"
+                };
+            }
+
+            metadata.times.routingResult = Date.now();
+            metadata.routeResponse = {...routingObj};
+
+            this.logger.info("checkAndGetNetworkFee(): routing result,"+
+                " destination: "+parsedRequest.destination+
+                " confidence: "+routingObj.route.confidence+
+                " safe fee: "+routingObj.route.safe_fee);
+
+            obj = routingObj;
+            obj.route.confidence = 0;
+        }
+
+        let actualRoutingFee: BN = new BN(obj.route.safe_fee).mul(this.config.routingFeeMultiplier);
+
+        const minRoutingFee: BN = amountBD.mul(this.config.minLnRoutingFeePPM).div(new BN(1000000)).add(this.config.minLnBaseFee);
+        if(actualRoutingFee.lt(minRoutingFee)) {
+            actualRoutingFee = minRoutingFee;
+            if(actualRoutingFee.gt(maxFee)) {
+                obj.route.confidence = 0;
+            }
+        }
+
+        if(actualRoutingFee.gt(maxFee)) {
+            actualRoutingFee = maxFee;
+        }
+
+        return {
+            networkFee: actualRoutingFee,
+            confidence: obj.route.confidence,
+            routes: parsedRequest.routes
+        };
+    }
+
+    /**
+     * Checks and consumes (deletes & returns) exactIn authorizaton with a specific reqId
+     *
+     * @param reqId
+     * @throws {DefinedRuntimeError} will throw an error if the authorization doesn't exist
+     */
+    private checkExactInAuthorization(reqId: string): ExactInAuthorization {
+        const parsedAuth = this.exactInAuths[reqId];
+        if (parsedAuth==null) {
+            throw {
+                code: 20070,
+                msg: "Invalid reqId"
+            };
+        }
+        delete this.exactInAuths[reqId];
+        if(parsedAuth.expiry<Date.now()) {
+            throw {
+                code: 20200,
+                msg: "Authorization already expired!"
+            };
+        }
+        return parsedAuth;
+    }
+
+    /**
+     * Checks if the newly submitted PR has the same parameters (destination, cltv_delta, routes) as the initial dummy
+     *  invoice sent for exactIn swap quote
+     *
+     * @param pr
+     * @param parsedAuth
+     * @throws {DefinedRuntimeError} will throw an error if the details don't match
+     */
+    private async checkPaymentRequestMatchesInitial(pr: string, parsedAuth: ExactInAuthorization): Promise<void> {
+        const parsedRequest = await lncli.parsePaymentRequest({
+            request: pr
+        });
+
+        if(
+            parsedRequest.destination!==parsedAuth.destination ||
+            parsedRequest.cltv_delta!==parsedAuth.cltvDelta ||
+            !new BN(parsedRequest.mtokens).eq(parsedAuth.amount.mul(new BN(1000)))
+        ) {
+            throw {
+                code: 20102,
+                msg: "Provided PR doesn't match initial!"
+            };
+        }
+
+        if(!routesMatch(parsedRequest.routes, parsedAuth.routes)) {
+            throw {
+                code: 20102,
+                msg: "Provided PR doesn't match initial (routes)!"
+            };
+        }
     }
 
     startRestServer(restServer: Express) {
@@ -558,97 +850,26 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 reqId: FieldTypeEnum.String,
                 feeRate: FieldTypeEnum.String
             });
-
-            const responseStream = res.responseStream;
-
             if (parsedBody==null) {
-                await responseStream.writeParamsAndEnd({
+                throw {
                     code: 20100,
                     msg: "Invalid request body"
-                });
-                return;
+                };
             }
 
-            const parsedAuth = this.exactInAuths[parsedBody.reqId];
+            const responseStream = res.responseStream;
+            const abortSignal = responseStream.getAbortSignal();
 
-            if (parsedAuth==null) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20070,
-                    msg: "Invalid reqId"
-                });
-                return;
-            }
-
-            delete this.exactInAuths[parsedBody.reqId];
-
-            if(parsedAuth.expiry<Date.now()) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20200,
-                    msg: "Authorization already expired!"
-                });
-                return;
-            }
-
-            let parsedPR: bolt11.PaymentRequestObject & { tagsObject: bolt11.TagsObject };
-
-            try {
-                parsedPR = bolt11.decode(parsedBody.pr);
-            } catch (e) {
-                console.error(e);
-                await responseStream.writeParamsAndEnd({
-                    code: 20021,
-                    msg: "Invalid request body (pr - cannot be parsed)"
-                });
-                return;
-            }
-
-            let halfConfidence = false;
-            if(parsedPR.timeExpireDate < ((Date.now()/1000)+(this.config.authorizationTimeout+(2*60)))) {
-                if(!this.config.allowShortExpiry) {
-                    await responseStream.writeParamsAndEnd({
-                        code: 20020,
-                        msg: "Invalid request body (pr - expired)"
-                    });
-                    return;
-                } else if(parsedPR.timeExpireDate < Date.now()/1000) {
-                    await responseStream.writeParamsAndEnd({
-                        code: 20020,
-                        msg: "Invalid request body (pr - expired)"
-                    });
-                    return;
-                }
-                halfConfidence = true;
-            }
-
-            const parsedRequest = await lncli.parsePaymentRequest({
-                request: parsedBody.pr
-            });
-            console.log("[To BTC-LN: REST.payInvoice] Parsed PR: ", JSON.stringify(parsedRequest, null, 4));
-
-            if(
-                parsedPR.payeeNodeKey!==parsedAuth.destination ||
-                parsedPR.tagsObject.min_final_cltv_expiry!==parsedAuth.cltvDelta ||
-                !new BN(parsedPR.millisatoshis).eq(parsedAuth.amount.mul(new BN(1000)))
-            ) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20102,
-                    msg: "Provided PR doesn't match initial!"
-                });
-                return;
-            }
-
-            if(!routesMatch(parsedRequest.routes, parsedAuth.routes)) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20102,
-                    msg: "Provided PR doesn't match initial (routes)!"
-                });
-                return;
-            }
+            //Check request params
+            const parsedAuth = this.checkExactInAuthorization(parsedBody.reqId);
+            const {parsedPR, halfConfidence} = this.checkPaymentRequest(parsedBody.pr);
+            await this.checkPaymentRequestMatchesInitial(parsedBody.pr, parsedAuth);
 
             const metadata = parsedAuth.metadata;
 
             const sequence = new BN(randomBytes(8));
 
+            //Create swap data
             const payObject: T = await this.swapContract.createSwapData(
                 ChainSwapType.HTLC,
                 parsedAuth.offerer,
@@ -665,30 +886,25 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 new BN(0),
                 new BN(0)
             );
-
             metadata.times.swapCreated = Date.now();
 
+            //Sign swap data
             const prefetchedSignData = parsedAuth.preFetchSignData;
-
-            if(prefetchedSignData!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetched signature data: ", prefetchedSignData);
-
-            const feeRate = parsedBody.feeRate;
-            const sigData = await this.swapContract.getClaimInitSignature(
-                payObject,
-                this.config.authorizationTimeout,
-                prefetchedSignData,
-                feeRate
-            );
-
+            const sigData = await this.getToBtcSignatureData(payObject, req, abortSignal, prefetchedSignData);
             metadata.times.swapSigned = Date.now();
 
-            const createdSwap = new ToBtcLnSwapAbs<T>(parsedBody.pr, parsedAuth.swapFee, parsedAuth.routingFeeSats, new BN(sigData.timeout));
+            //Create swap
+            const createdSwap = new ToBtcLnSwapAbs<T>(parsedBody.pr, parsedAuth.swapFeeSats, parsedAuth.routingFeeSats, new BN(sigData.timeout));
             createdSwap.data = payObject;
             createdSwap.metadata = metadata;
 
             await PluginManager.swapCreate(createdSwap);
-
             await this.storageManager.saveData(parsedPR.tagsObject.payment_hash, sequence, createdSwap);
+
+            this.swapLogger.info(createdSwap, "REST: /payInvoiceExactIn: created exact in swap,"+
+                " reqId: "+parsedBody.reqId+
+                " amount: "+new BN(parsedPR.millisatoshis).div(new BN(1000)).toString(10)+
+                " invoice: "+createdSwap.pr);
 
             await responseStream.writeParamsAndEnd({
                 code: 20000,
@@ -749,420 +965,89 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 exactIn: FieldTypeEnum.BooleanOptional,
                 amount: FieldTypeEnum.BNOptional
             });
-
+            if (parsedBody==null) {
+                throw {
+                    code: 20100,
+                    msg: "Invalid request body"
+                };
+            }
             metadata.request = parsedBody;
 
             const responseStream = res.responseStream;
 
-            console.log("Parsed body: ", parsedBody);
-
-            if (parsedBody==null) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20100,
-                    msg: "Invalid request body"
-                });
-                return;
-            }
-
-            let requestAmount: BN = parsedBody.amount;
-            if(parsedBody.exactIn) {
-                if(requestAmount==null) {
-                    await responseStream.writeParamsAndEnd({
-                        code: 20040,
-                        msg: "Invalid request body (amount not specified)!"
-                    });
-                    return;
-                }
-            }
-
-            if(parsedBody.maxFee.isNeg() || parsedBody.maxFee.isZero()) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20030,
-                    msg: "Invalid request body (maxFee too low)!"
-                });
-                return;
-            }
-
-            let parsedPR: bolt11.PaymentRequestObject & { tagsObject: bolt11.TagsObject };
-
-            try {
-                parsedPR = bolt11.decode(parsedBody.pr);
-            } catch (e) {
-                console.error(e);
-                await responseStream.writeParamsAndEnd({
-                    code: 20021,
-                    msg: "Invalid request body (pr - cannot be parsed)"
-                });
-                return;
-            }
-
-            let halfConfidence = false;
-            if(parsedPR.timeExpireDate < ((Date.now()/1000)+(this.config.authorizationTimeout+(2*60)))) {
-                if(!this.config.allowShortExpiry) {
-                    await responseStream.writeParamsAndEnd({
-                        code: 20020,
-                        msg: "Invalid request body (pr - expired)"
-                    });
-                    return;
-                } else if(parsedPR.timeExpireDate < Date.now()/1000) {
-                    await responseStream.writeParamsAndEnd({
-                        code: 20020,
-                        msg: "Invalid request body (pr - expired)"
-                    });
-                    return;
-                }
-                halfConfidence = true;
-            }
-
-            const currentTimestamp = new BN(Math.floor(Date.now()/1000));
-
-            const expiresTooSoon = parsedBody.expiryTimestamp.sub(currentTimestamp).lt(this.config.minTsSendCltv);
-            if(expiresTooSoon) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20001,
-                    msg: "Expiry time too low!"
-                });
-                return;
-            }
-
+            const currentTimestamp: BN = new BN(Math.floor(Date.now()/1000));
             const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
-            const pluginResult = await PluginManager.onSwapRequestToBtcLn(req, parsedBody, metadata);
+            //Check request params
+            this.checkAmount(parsedBody.amount, parsedBody.exactIn);
+            this.checkMaxFee(parsedBody.maxFee);
+            const {parsedPR, halfConfidence} = this.checkPaymentRequest(parsedBody.pr);
+            this.checkExpiry(parsedBody.expiryTimestamp, currentTimestamp);
+            await this.checkVaultInitialized(parsedBody.token);
+            const {baseFee, feePPM} = await this.checkPlugins(req, parsedBody, metadata);
 
-            if(pluginResult.throw) {
-                await responseStream.writeParamsAndEnd({
-                    code: 29999,
-                    msg: pluginResult.throw
-                });
-                return;
-            }
+            //Create abort controller for parallel pre-fetches
+            const abortController = this.getAbortController(responseStream);
 
-            let baseFee = pluginResult.baseFee || this.config.baseFee;
-            let feePPM = pluginResult.feePPM || this.config.feePPM;
+            //Pre-fetch
+            const {pricePrefetchPromise, signDataPrefetchPromise} = this.getToBtcPrefetches(useToken, responseStream, abortController);
 
-            const abortController = new AbortController();
-            const responseStreamAbortController = responseStream.getAbortSignal();
-            responseStreamAbortController.addEventListener("abort", () => abortController.abort(responseStreamAbortController.reason));
+            //Check amounts
+            const amount: BN = parsedBody.exactIn ? parsedBody.amount : new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
+            const {
+                amountBD,
+                networkFeeData,
+                totalInToken,
+                swapFee,
+                swapFeeInToken,
+                networkFeeInToken
+            } = await this.checkToBtcAmount(parsedBody.exactIn, amount, useToken, {baseFee, feePPM}, async (amountBD: BN) => {
+                metadata.times.requestChecked = Date.now();
 
-            if(!this.pdaExistsForToken[parsedBody.token]) {
-                const reputation = await this.swapContract.getIntermediaryReputation(this.swapContract.getAddress(), this.swapContract.toTokenAddress(parsedBody.token));
-                if(reputation!=null) {
-                    this.pdaExistsForToken[parsedBody.token] = true;
-                } else {
-                    await responseStream.writeParamsAndEnd({
-                        code: 20201,
-                        msg: "Token not supported!"
-                    });
-                    return;
-                }
-            }
+                //Check if prior payment has been made
+                await this.checkPriorPayment(parsedPR.tagsObject.payment_hash, abortController.signal);
+                metadata.times.priorPaymentChecked = Date.now();
 
-            const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken).catch(e => {
-                console.error("To BTC-LN: REST.pricePrefetch", e);
-                abortController.abort(e);
-                return null;
-            }) : null;
-            let signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
-                console.error("To BTC-LN: REST.signDataPrefetch", e);
-                abortController.abort(e);
-                return null;
-            }) : null;
+                await this.checkLiquidity(amountBD, abortController.signal);
+                metadata.times.liquidityChecked = Date.now();
 
-            if(pricePrefetchPromise!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetching swap price!");
-            if(signDataPrefetchPromise!=null) {
-                signDataPrefetchPromise = signDataPrefetchPromise.then(val => val==null || abortController.signal.aborted ? null : responseStream.writeParams({
-                    signDataPrefetch: val
-                }).then(() => val)).catch(e => {
-                    console.error("[To BTC-LN: REST.payInvoice] Send signDataPreFetch error: ", e);
-                    abortController.abort(e);
-                    return null;
-                });
-                console.log("[To BTC-LN: REST.payInvoice] Pre-fetching signature data!");
-            }
+                if(parsedBody.exactIn) parsedBody.maxFee = await this.swapPricing.getToBtcSwapAmount(parsedBody.maxFee, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
 
-            let amountBD;
-            let tooLow = false;
+                return await this.checkAndGetNetworkFee(amountBD, parsedBody.maxFee, parsedBody.expiryTimestamp, currentTimestamp, parsedBody.pr, metadata, abortController.signal);
+            }, abortController.signal, pricePrefetchPromise);
+            metadata.times.priceCalculated = Date.now();
 
+            //For exactIn swap, just save and wait for the actual invoice to be submitted
             if(parsedBody.exactIn) {
-                amountBD = await this.swapPricing.getToBtcSwapAmount(requestAmount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-
-                //Decrease by base fee
-                amountBD = amountBD.sub(baseFee);
-
-                //If it's already smaller than minimum, set it to minimum so we can calculate the network fee
-                if(amountBD.lt(this.config.min)) {
-                    amountBD = this.config.min;
-                    tooLow = true;
-                }
-
-                parsedBody.maxFee = await this.swapPricing.getToBtcSwapAmount(parsedBody.maxFee, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-
-                abortController.signal.throwIfAborted();
-            } else {
-                amountBD = new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
-
-                if(amountBD.lt(this.config.min)) {
-                    await responseStream.writeParamsAndEnd({
-                        code: 20003,
-                        msg: "Amount too low!",
-                        data: {
-                            min: this.config.min.toString(10),
-                            max: this.config.max.toString(10)
-                        }
-                    });
-                    return;
-                }
-
-                if(amountBD.gt(this.config.max)) {
-                    await responseStream.writeParamsAndEnd({
-                        code: 20004,
-                        msg: "Amount too high!",
-                        data: {
-                            min: this.config.min.toString(10),
-                            max: this.config.max.toString(10)
-                        }
-                    });
-                    return;
-                }
-            }
-
-            metadata.times.requestChecked = Date.now();
-
-            //Check if prior payment has been made
-            try {
-                const payment = await lncli.getPayment({
-                    lnd: this.LND,
-                    id: parsedPR.tagsObject.payment_hash
-                });
-
-                if(payment!=null) {
-                    await responseStream.writeParamsAndEnd({
-                        code: 20010,
-                        msg: "Already processed"
-                    });
-                    return;
-                }
-            } catch (e) {}
-
-            abortController.signal.throwIfAborted();
-
-            metadata.times.priorPaymentChecked = Date.now();
-
-            // const existingSwap = await this.storageManager.getData(parsedPR.tagsObject.payment_hash);
-            // if(existingSwap!=null && existingSwap.state!=ToBtcLnSwapState.SAVED) {
-            //     await responseStream.writeParamsAndEnd({
-            //         code: 20010,
-            //         msg: "Already processed"
-            //     });
-            //     return;
-            // }
-
-            const amountBDMtokens = amountBD.mul(new BN(1000));
-            const channelBalances = await lncli.getChannelBalance({lnd: this.LND});
-            const localBalance = new BN(channelBalances.channel_balance_mtokens);
-            if(amountBDMtokens.gt(localBalance)) {
-                await responseStream.writeParamsAndEnd({
-                    code: 20002,
-                    msg: "Not enough liquidity"
-                });
-                return;
-            }
-            metadata.times.liquidityChecked = Date.now();
-
-            const maxUsableCLTV: BN = parsedBody.expiryTimestamp.sub(currentTimestamp).sub(this.config.gracePeriod).div(this.config.bitcoinBlocktime.mul(this.config.safetyFactor));
-
-            const { current_block_height } = await lncli.getHeight({lnd: this.LND});
-
-            abortController.signal.throwIfAborted();
-
-            metadata.times.blockheightFetched = Date.now();
-
-            //Probe for a route
-            const parsedRequest = await lncli.parsePaymentRequest({
-                request: parsedBody.pr
-            });
-            console.log("[To BTC-LN: REST.payInvoice] Parsed PR: ", JSON.stringify(parsedRequest, null, 4));
-
-            metadata.times.prParsed = Date.now();
-
-            const probeReq: any = {
-                destination: parsedPR.payeeNodeKey,
-                cltv_delta: parsedPR.tagsObject.min_final_cltv_expiry,
-                mtokens: amountBDMtokens.toString(10),
-                max_fee_mtokens: parsedBody.maxFee.mul(new BN(1000)).toString(10),
-                max_timeout_height: new BN(current_block_height).add(maxUsableCLTV).toString(10),
-                payment: parsedRequest.payment,
-                total_mtokens: amountBDMtokens.toString(10),
-                routes: parsedRequest.routes
-            };
-            metadata.probeRequest = {...probeReq};
-
-            //if(hints.length>0) req.routes = [hints];
-            console.log("[To BTC-LN: REST.payInvoice] Probe for route: ", JSON.stringify(probeReq, null, 4));
-            probeReq.lnd = this.LND;
-
-            let is_snowflake: boolean = false;
-            if(parsedRequest.routes!=null) {
-                for(let route of parsedRequest.routes) {
-                    if(SNOWFLAKE_LIST.has(route[0].public_key) || SNOWFLAKE_LIST.has(route[1].public_key)) {
-                        is_snowflake = true;
-                    }
-                }
-            }
-
-            let obj;
-            if(!is_snowflake) try {
-                obj = await lncli.probeForRoute(probeReq);
-            } catch (e) {
-                console.error(e);
-            }
-
-            abortController.signal.throwIfAborted();
-
-            metadata.times.probeResult = Date.now();
-            metadata.probeResponse = {...obj};
-
-            console.log("[To BTC-LN: REST.payInvoice] Probe result: ", obj);
-
-            if(obj==null || obj.route==null) {
-                if(!this.config.allowProbeFailedSwaps) {
-                    await responseStream.writeParamsAndEnd({
-                        code: 20002,
-                        msg: "Cannot route the payment!"
-                    });
-                    return;
-                }
-
-                probeReq.is_ignoring_past_failures = true;
-
-                let routingObj;
-                try {
-                    routingObj = await lncli.getRouteToDestination(probeReq);
-                } catch (e) {
-                    console.error(e);
-                }
-
-                abortController.signal.throwIfAborted();
-
-                console.log("[To BTC-LN: REST.payInvoice] Routing result: ", routingObj);
-
-                if(routingObj==null || routingObj.route==null) {
-                    await responseStream.writeParamsAndEnd({
-                        code: 20002,
-                        msg: "Cannot route the payment!"
-                    });
-                    return;
-                }
-
-                metadata.times.routingResult = Date.now();
-                metadata.routeResponse = {...routingObj};
-
-                obj = routingObj;
-                obj.route.confidence = 0;
-            }
-
-            let actualRoutingFee: BN = new BN(obj.route.safe_fee).mul(this.config.routingFeeMultiplier);
-
-            const minRoutingFee: BN = amountBD.mul(this.config.minLnRoutingFeePPM).div(new BN(1000000)).add(this.config.minLnBaseFee);
-            if(actualRoutingFee.lt(minRoutingFee)) {
-                actualRoutingFee = minRoutingFee;
-                if(actualRoutingFee.gt(parsedBody.maxFee)) {
-                    obj.route.confidence = 0;
-                }
-            }
-
-            if(actualRoutingFee.gt(parsedBody.maxFee)) {
-                actualRoutingFee = parsedBody.maxFee;
-            }
-
-            if(parsedBody.exactIn) {
-                //Decrease by network fee
-                amountBD = amountBD.sub(actualRoutingFee);
-
-                //Decrease by percentage fee
-                amountBD = amountBD.mul(new BN(1000000)).div(feePPM.add(new BN(1000000)));
-
-                if(tooLow || amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)))) {
-                    //Compute min/max
-                    let adjustedMin = this.config.min.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    let adjustedMax = this.config.max.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    adjustedMin = adjustedMin.add(baseFee).add(actualRoutingFee);
-                    adjustedMax = adjustedMax.add(baseFee).add(actualRoutingFee);
-                    const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                    const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                    await responseStream.writeParamsAndEnd({
-                        code: 20003,
-                        msg: "Amount too low!",
-                        data: {
-                            min: minIn.toString(10),
-                            max: maxIn.toString(10)
-                        }
-                    });
-                    return;
-                }
-                if(amountBD.gt(this.config.max.mul(new BN(105)).div(new BN(100)))) {
-                    let adjustedMin = this.config.min.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    let adjustedMax = this.config.max.mul(feePPM.add(new BN(1000000))).div(new BN(1000000));
-                    adjustedMin = adjustedMin.add(baseFee).add(actualRoutingFee);
-                    adjustedMax = adjustedMax.add(baseFee).add(actualRoutingFee);
-                    const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                    const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                    await responseStream.writeParamsAndEnd({
-                        code: 20004,
-                        msg: "Amount too high!",
-                        data: {
-                            min: minIn.toString(10),
-                            max: maxIn.toString(10)
-                        }
-                    });
-                    return;
-                }
-            }
-
-            const swapFee = amountBD.mul(feePPM).div(new BN(1000000)).add(baseFee);
-
-            const prefetchedPrice = pricePrefetchPromise!=null ? await pricePrefetchPromise : null;
-            if(prefetchedPrice!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetched price: ", prefetchedPrice.toString(10));
-
-            abortController.signal.throwIfAborted();
-
-            const routingFeeInToken = await this.swapPricing.getFromBtcSwapAmount(actualRoutingFee, useToken, true, prefetchedPrice);
-            const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, prefetchedPrice);
-
-            abortController.signal.throwIfAborted();
-
-            let amountInToken: BN;
-            let total: BN;
-            if(parsedBody.exactIn) {
-                amountInToken = requestAmount.sub(swapFeeInToken).sub(routingFeeInToken);
-                total = requestAmount;
-
                 const reqId = randomBytes(32).toString("hex");
                 this.exactInAuths[reqId] = {
                     reqId,
-                    expiry: Date.now()+this.config.exactInExpiry,
+                    expiry: Date.now() + this.config.exactInExpiry,
 
                     amount: amountBD,
                     destination: parsedPR.payeeNodeKey,
                     cltvDelta: parsedPR.tagsObject.min_final_cltv_expiry,
-                    routes: parsedRequest.routes,
+                    routes: networkFeeData.routes,
 
-                    maxFee: routingFeeInToken,
+                    maxFee: networkFeeInToken,
                     swapFee: swapFeeInToken,
-                    total: total,
-                    confidence: obj.route.confidence,
-                    routingFeeSats: actualRoutingFee,
+                    total: totalInToken,
+                    confidence: networkFeeData.confidence,
+                    routingFeeSats: networkFeeData.networkFee,
                     swapFeeSats: swapFee,
 
                     token: useToken,
                     swapExpiry: parsedBody.expiryTimestamp,
                     offerer: parsedBody.offerer,
 
-                    preFetchSignData: signDataPrefetchPromise!=null ? await signDataPrefetchPromise : null,
+                    preFetchSignData: signDataPrefetchPromise != null ? await signDataPrefetchPromise : null,
                     metadata
                 };
 
-                metadata.times.priceCalculated = Date.now();
+                this.logger.info("REST: /payInvoice: created exact in swap,"+
+                    " reqId: "+reqId+
+                    " amount: "+amountBD.toString(10)+
+                    " destination: "+parsedPR.payeeNodeKey);
 
                 await responseStream.writeParamsAndEnd({
                     code: 20000,
@@ -1173,23 +1058,17 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     }
                 });
                 return;
-            } else {
-                amountInToken = await this.swapPricing.getFromBtcSwapAmount(amountBD, useToken, true, prefetchedPrice);
-                total = amountInToken.add(routingFeeInToken).add(swapFeeInToken);
-
-                abortController.signal.throwIfAborted();
             }
-
-            metadata.times.priceCalculated = Date.now();
 
             const sequence = new BN(randomBytes(8));
 
+            //Create swap data
             const payObject: T = await this.swapContract.createSwapData(
                 ChainSwapType.HTLC,
                 parsedBody.offerer,
                 this.swapContract.getAddress(),
                 useToken,
-                total,
+                totalInToken,
                 parsedPR.tagsObject.payment_hash,
                 sequence,
                 parsedBody.expiryTimestamp,
@@ -1200,52 +1079,36 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 new BN(0),
                 new BN(0)
             );
-
             abortController.signal.throwIfAborted();
-
             metadata.times.swapCreated = Date.now();
 
-            const prefetchedSignData = signDataPrefetchPromise!=null ? await signDataPrefetchPromise : null;
-            if(prefetchedSignData!=null) console.log("[To BTC-LN: REST.payInvoice] Pre-fetched signature data: ", prefetchedSignData);
-
-            abortController.signal.throwIfAborted();
-
-            const feeRateObj = await req.paramReader.getParams({
-                feeRate: FieldTypeEnum.String
-            }).catch(e => null);
-
-            abortController.signal.throwIfAborted();
-
-            const feeRate = feeRateObj?.feeRate!=null && typeof(feeRateObj.feeRate)==="string" ? feeRateObj.feeRate : null;
-            const sigData = await this.swapContract.getClaimInitSignature(
-                payObject,
-                this.config.authorizationTimeout,
-                prefetchedSignData,
-                feeRate
-            );
-
-            abortController.signal.throwIfAborted();
-
+            //Sign swap data
+            const sigData = await this.getToBtcSignatureData(payObject, req, abortController.signal, signDataPrefetchPromise);
             metadata.times.swapSigned = Date.now();
 
-            const createdSwap = new ToBtcLnSwapAbs<T>(parsedBody.pr, swapFee, actualRoutingFee, new BN(sigData.timeout));
+            //Create swap
+            const createdSwap = new ToBtcLnSwapAbs<T>(parsedBody.pr, swapFee, networkFeeData.networkFee, new BN(sigData.timeout));
             createdSwap.data = payObject;
             createdSwap.metadata = metadata;
 
             await PluginManager.swapCreate(createdSwap);
             await this.storageManager.saveData(parsedPR.tagsObject.payment_hash, sequence, createdSwap);
 
+            this.swapLogger.info(createdSwap, "REST: /payInvoice: created swap,"+
+                " amount: "+amountBD.toString(10)+
+                " invoice: "+createdSwap.pr);
+
             await responseStream.writeParamsAndEnd({
                 code: 20000,
                 msg: "Success",
                 data: {
-                    maxFee: routingFeeInToken.toString(10),
+                    maxFee: networkFeeInToken.toString(10),
                     swapFee: swapFeeInToken.toString(10),
-                    total: total.toString(10),
-                    confidence: halfConfidence ? obj.route.confidence/2000000 : obj.route.confidence/1000000,
+                    total: totalInToken.toString(10),
+                    confidence: halfConfidence ? networkFeeData.confidence/2000000 : networkFeeData.confidence/1000000,
                     address: this.swapContract.getAddress(),
 
-                    routingFeeSats: actualRoutingFee.toString(10),
+                    routingFeeSats: networkFeeData.networkFee.toString(10),
 
                     data: payObject.serialize(),
 
@@ -1268,57 +1131,34 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                     HEX_REGEX.test(val) ? val: null,
                 sequence: FieldTypeEnum.BN
             });
+            if (parsedBody==null) throw {
+                code: 20100,
+                msg: "Invalid request body/query (paymentHash/sequence)"
+            };
 
-            if (parsedBody==null) {
-                res.status(400).json({
-                    code: 20100,
-                    msg: "Invalid request body (paymentHash)"
-                });
-                return;
-            }
-
-            if(parsedBody.sequence.isNeg() || parsedBody.sequence.gte(new BN(2).pow(new BN(64)))) {
-                res.status(400).json({
-                    code: 20060,
-                    msg: "Invalid sequence"
-                });
-                return;
-            }
+            this.checkSequence(parsedBody.sequence);
 
             const data = await this.storageManager.getData(parsedBody.paymentHash, parsedBody.sequence);
 
             const isSwapFound = data!=null;
             if(isSwapFound) {
                 const isExpired = data.data.getExpiry().lt(new BN(Math.floor(Date.now()/1000)).sub(new BN(this.config.maxSkew)));
-                if(isExpired) {
-                    res.status(200).json({
-                        code: 20010,
-                        msg: "Payment expired"
-                    });
-                    return;
-                }
+                if(isExpired) throw {
+                    _httpStatus: 200,
+                    code: 20010,
+                    msg: "Payment expired"
+                };
 
                 if(data.state===ToBtcLnSwapState.NON_PAYABLE) {
-                    // const isCommited = await this.swapContract.isCommited(data.data);
-                    //
-                    // if(!isCommited) {
-                    //     res.status(400).json({
-                    //         code: 20005,
-                    //         msg: "Not committed"
-                    //     });
-                    //     return;
-                    // }
-
                     const refundSigData = await this.swapContract.getRefundSignature(data.data, this.config.authorizationTimeout);
 
                     //Double check the state after promise result
-                    if (data.state !== ToBtcLnSwapState.NON_PAYABLE) {
-                        res.status(400).json({
-                            code: 20005,
-                            msg: "Not committed"
-                        });
-                        return;
-                    }
+                    if (data.state !== ToBtcLnSwapState.NON_PAYABLE) throw {
+                        code: 20005,
+                        msg: "Not committed"
+                    };
+
+                    this.swapLogger.info(data, "REST: /getRefundAuthorization: returning refund authorization, because invoice in NON_PAYABLE state, invoice: "+data.pr);
 
                     res.status(200).json({
                         code: 20000,
@@ -1334,53 +1174,41 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
                 }
             }
 
-            const payment = await lncli.getPayment({
-                id: parsedBody.paymentHash,
-                lnd: this.LND
-            }).catch(err => {
-                console.error(err);
-            });
+            const payment = await this.getPayment(parsedBody.paymentHash);
 
-            if(payment==null) {
-                res.status(200).json({
-                    code: 20007,
-                    msg: "Payment not found"
-                });
-                return;
-            }
+            if(payment==null) throw {
+                _httpStatus: 200,
+                code: 20007,
+                msg: "Payment not found"
+            };
 
-            if(payment.is_pending) {
-                res.status(200).json({
-                    code: 20008,
-                    msg: "Payment in-flight"
-                });
-                return;
-            }
+            if(payment.is_pending) throw {
+                _httpStatus: 200,
+                code: 20008,
+                msg: "Payment in-flight"
+            };
 
-            if(payment.is_confirmed) {
-                res.status(200).json({
-                    code: 20006,
-                    msg: "Already paid",
-                    data: {
-                        secret: payment.payment.secret
-                    }
-                });
-                return;
-            }
+            if(payment.is_confirmed) throw {
+                _httpStatus: 200,
+                code: 20006,
+                msg: "Already paid",
+                data: {
+                    secret: payment.payment.secret
+                }
+            };
 
             if(payment.is_failed) {
                 //TODO: This might not be the best idea with EVM chains
                 const commitedData = await this.swapContract.getCommitedData(parsedBody.paymentHash);
 
-                if(commitedData==null) {
-                    res.status(400).json({
-                        code: 20005,
-                        msg: "Not committed"
-                    });
-                    return;
-                }
+                if(commitedData==null) throw {
+                    code: 20005,
+                    msg: "Not committed"
+                };
 
                 const refundSigData = await this.swapContract.getRefundSignature(commitedData, this.config.authorizationTimeout);
+
+                this.swapLogger.info(commitedData, "REST: /getRefundAuthorization: returning refund authorization, because invoice payment failed");
 
                 res.status(200).json({
                     code: 20000,
@@ -1398,28 +1226,7 @@ export class ToBtcLnAbs<T extends SwapData> extends SwapHandler<ToBtcLnSwapAbs<T
         restServer.post(this.path+'/getRefundAuthorization', getRefundAuthorization);
         restServer.get(this.path+'/getRefundAuthorization', getRefundAuthorization);
 
-        console.log("[To BTC-LN: REST] Started at path: ", this.path);
-    }
-
-    /**
-     * Subscribes to chain events
-     */
-    private subscribeToEvents() {
-        this.chainEvents.registerListener(this.processEvent.bind(this));
-
-        console.log("[To BTC-LN: Solana.Events] Subscribed to Solana events");
-    }
-
-    /**
-     * Starts watchdog checking lightning network payment attempts, and removing expired swaps
-     */
-    async startWatchdog() {
-        let rerun;
-        rerun = async () => {
-            await this.checkPastInvoices().catch( e => console.error(e));
-            setTimeout(rerun, this.config.swapCheckInterval);
-        };
-        await rerun();
+        this.logger.info("started at path: ", this.path);
     }
 
     async init() {

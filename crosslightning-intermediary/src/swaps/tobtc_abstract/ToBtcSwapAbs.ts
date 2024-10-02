@@ -17,9 +17,8 @@ export enum ToBtcSwapState {
     CLAIMED = 4
 }
 
-export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
+export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T, ToBtcSwapState> {
 
-    state: ToBtcSwapState;
     readonly address: string;
     readonly amount: BN;
     readonly swapFee: BN;
@@ -49,7 +48,6 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
             this.signatureExpiry = signatureExpiry;
         } else {
             super(prOrObj);
-            this.state = prOrObj.state;
             this.address = prOrObj.address;
             this.amount = new BN(prOrObj.amount);
             this.swapFee = new BN(prOrObj.swapFee);
@@ -67,7 +65,6 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
 
     serialize(): any {
         const partialSerialized = super.serialize();
-        partialSerialized.state = this.state;
         partialSerialized.address = this.address;
         partialSerialized.amount = this.amount.toString(10);
         partialSerialized.swapFee = this.swapFee.toString(10);
@@ -80,12 +77,6 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
         partialSerialized.realNetworkFee = this.realNetworkFee==null ? null : this.realNetworkFee.toString(10);
         partialSerialized.txId = this.txId;
         return partialSerialized;
-    }
-
-    async setState(newState: ToBtcSwapState) {
-        const oldState = this.state;
-        this.state = newState;
-        await PluginManager.swapStateChange(this, oldState);
     }
 
 }

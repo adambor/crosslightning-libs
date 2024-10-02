@@ -15,9 +15,8 @@ export enum ToBtcLnSwapState {
     CLAIMED = 3
 }
 
-export class ToBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
+export class ToBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T, ToBtcLnSwapState> {
 
-    state: ToBtcLnSwapState;
     readonly pr: string;
     readonly swapFee: BN;
     readonly maxFee: BN;
@@ -40,13 +39,11 @@ export class ToBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
             this.signatureExpiry = signatureExpiry;
         } else {
             super(prOrObj);
-            this.state = prOrObj.state;
             this.pr = prOrObj.pr;
             this.swapFee = new BN(prOrObj.swapFee);
             this.maxFee = new BN(prOrObj.maxFee);
             this.signatureExpiry = prOrObj.signatureExpiry==null ? null : new BN(prOrObj.signatureExpiry);
             // this.refundAuthTimeout = prOrObj.refundAuthTimeout==null ? null : new BN(prOrObj.refundAuthTimeout);
-
             this.realRoutingFee = prOrObj.realRoutingFee==null ? null : new BN(prOrObj.realRoutingFee);
             this.secret = prOrObj.secret;
         }
@@ -55,13 +52,11 @@ export class ToBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
 
     serialize(): any {
         const partialSerialized = super.serialize();
-        partialSerialized.state = this.state;
         partialSerialized.pr = this.pr;
         partialSerialized.swapFee = this.swapFee.toString(10);
         partialSerialized.maxFee = this.maxFee.toString(10);
         partialSerialized.signatureExpiry = this.signatureExpiry == null ? null : this.signatureExpiry.toString(10);
         // partialSerialized.refundAuthTimeout = this.refundAuthTimeout==null ? null : this.refundAuthTimeout.toString(10);
-
         partialSerialized.realRoutingFee = this.realRoutingFee == null ? null : this.realRoutingFee.toString(10);
         partialSerialized.secret = this.secret;
         return partialSerialized;
@@ -73,12 +68,6 @@ export class ToBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
 
     getHashBuffer(): Buffer {
         return Buffer.from(bolt11.decode(this.pr).tagsObject.payment_hash, "hex");
-    }
-
-    async setState(newState: ToBtcLnSwapState) {
-        const oldState = this.state;
-        this.state = newState;
-        await PluginManager.swapStateChange(this, oldState);
     }
 
     getOutAmount(): BN {

@@ -14,9 +14,8 @@ export enum FromBtcSwapState {
     CLAIMED = 2
 }
 
-export class FromBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
+export class FromBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T, FromBtcSwapState> {
 
-    state: FromBtcSwapState;
     readonly address: string;
     readonly amount: BN;
     readonly swapFee: BN;
@@ -35,7 +34,6 @@ export class FromBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
             this.swapFee = swapFee;
         } else {
             super(prOrObj);
-            this.state = prOrObj.state;
             this.address = prOrObj.address;
             this.amount = new BN(prOrObj.amount);
             this.swapFee = new BN(prOrObj.swapFee);
@@ -47,7 +45,6 @@ export class FromBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
 
     serialize(): any {
         const partialSerialized = super.serialize();
-        partialSerialized.state = this.state;
         partialSerialized.address = this.address;
         partialSerialized.amount = this.amount.toString(10);
         partialSerialized.swapFee = this.swapFee.toString(10);
@@ -63,12 +60,6 @@ export class FromBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
             Buffer.from(this.amount.toArray("le", 8)),
             parsedOutputScript
         ])).digest();
-    }
-
-    async setState(newState: FromBtcSwapState) {
-        const oldState = this.state;
-        this.state = newState;
-        await PluginManager.swapStateChange(this, oldState);
     }
 
 }

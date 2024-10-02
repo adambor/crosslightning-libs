@@ -1,8 +1,7 @@
 import * as BN from "bn.js";
-import {Lockable, StorageObject, SwapData} from "crosslightning-base";
+import {SwapData} from "crosslightning-base";
 import {SwapHandlerSwap} from "../SwapHandlerSwap";
-import {PluginManager} from "../../plugins/PluginManager";
-import {FromBtcSwapState, SwapHandlerType} from "../..";
+import {SwapHandlerType} from "../..";
 import * as bolt11 from "bolt11";
 
 export enum FromBtcLnSwapState {
@@ -15,9 +14,8 @@ export enum FromBtcLnSwapState {
     SETTLED = 4,
 }
 
-export class FromBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
+export class FromBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T, FromBtcLnSwapState> {
 
-    state: FromBtcLnSwapState;
     readonly pr: string;
     readonly swapFee: BN;
 
@@ -40,7 +38,6 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
             this.swapFee = swapFee;
         } else {
             super(prOrObj);
-            this.state = prOrObj.state;
             this.pr = prOrObj.pr;
             this.swapFee = new BN(prOrObj.swapFee);
             this.secret = prOrObj.secret;
@@ -54,7 +51,6 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
 
     serialize(): any {
         const partialSerialized = super.serialize();
-        partialSerialized.state = this.state;
         partialSerialized.pr = this.pr;
         partialSerialized.swapFee = this.swapFee.toString(10);
         partialSerialized.secret = this.secret;
@@ -66,14 +62,12 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T> {
         return partialSerialized;
     }
 
-    setState(newState: FromBtcLnSwapState): Promise<void> {
-        const oldState = this.state;
-        this.state = newState;
-        return PluginManager.swapStateChange(this, oldState);
-    }
-
     getInAmount(): BN {
         return new BN(bolt11.decode(this.pr).millisatoshis).add(new BN(999)).div(new BN(1000));
+    }
+
+    getSequence(): BN {
+        return null;
     }
 
 }
