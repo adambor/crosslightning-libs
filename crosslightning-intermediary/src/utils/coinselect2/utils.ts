@@ -25,6 +25,7 @@ export type CoinselectAddressTypes = "p2sh-p2wpkh" | "p2wpkh" | "p2wsh" | "p2tr"
 
 export type CoinselectTxInput = {
     script?: Buffer,
+    witness?: Buffer,
     txId: string,
     vout: number,
     type?: CoinselectAddressTypes,
@@ -51,9 +52,16 @@ const INPUT_BYTES = {
 
 function inputBytes (input: {
     script?: Buffer,
+    witness?: Buffer,
     type?: CoinselectAddressTypes
 }) {
-  return TX_INPUT_BASE + (input.script ? input.script.length : INPUT_BYTES[input.type]);
+    if(input.script==null && input.witness==null) {
+        return {length: TX_INPUT_BASE + INPUT_BYTES[input.type], isWitness: input.type!=="p2pkh"};
+    }
+    return {
+        length: TX_INPUT_BASE + (input.script?.length || 0) + ((input.witness?.length || 0)/4),
+        isWitness: input.witness!=null
+    };
 }
 
 const OUTPUT_BYTES = {
@@ -104,11 +112,12 @@ function transactionBytes (
         let isSegwit = true;
     }
     for(let input of inputs) {
-        if(!isSegwit && (input.type!=="p2pkh")) {
-          isSegwit = true;
-          size += WITNESS_OVERHEAD;
+        const {length, isWitness} = inputBytes(input);
+        size += length;
+        if(!isSegwit && isWitness) {
+            isSegwit = true;
+            size += WITNESS_OVERHEAD;
         }
-        size += inputBytes(input);
     }
     for(let output of outputs) {
         size += outputBytes(output);

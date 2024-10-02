@@ -7,6 +7,7 @@ export function accumulative (
     outputs: CoinselectTxOutput[],
     feeRate: number,
     type: CoinselectAddressTypes,
+    requiredInputs?: CoinselectTxInput[]
 ): {
     inputs?: CoinselectTxInput[],
     outputs?: CoinselectTxOutput[],
@@ -17,11 +18,21 @@ export function accumulative (
     let bytesAccum = utils.transactionBytes([], outputs, type);
     let inAccum = 0;
     const inputs = [];
+
+    if(requiredInputs!=null) for(let utxo of requiredInputs) {
+        const {length: utxoBytes} = utils.inputBytes(utxo);
+        const utxoValue = utils.uintOrNaN(utxo.value);
+
+        bytesAccum += utxoBytes;
+        inAccum += utxoValue;
+        inputs.push(utxo);
+    }
+
     const outAccum = utils.sumOrNaN(outputs);
 
     for (let i = 0; i < utxos.length; ++i) {
         const utxo = utxos[i];
-        const utxoBytes = utils.inputBytes(utxo);
+        const {length: utxoBytes} = utils.inputBytes(utxo);
         const utxoFee = feeRate * utxoBytes;
         const utxoValue = utils.uintOrNaN(utxo.value);
 

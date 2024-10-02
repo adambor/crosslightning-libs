@@ -63,16 +63,6 @@ export type ToBtcConfig = ToBtcBaseConfig & {
     onchainReservedPerChannel?: number
 };
 
-const CONFIRMATIONS_REQUIRED = 1;
-
-const ADDRESS_FORMAT_MAP = {
-    "p2wpkh": "p2wpkh",
-    "np2wpkh": "p2sh-p2wpkh",
-    "p2tr" : "p2tr"
-};
-
-const LND_CHANGE_OUTPUT_TYPE = "p2tr";
-
 export type ToBtcRequestType = {
     address: string,
     amount: BN,
@@ -88,6 +78,14 @@ export type ToBtcRequestType = {
  * Handler for to BTC swaps, utilizing PTLCs (proof-time locked contracts) using btc relay (on-chain bitcoin SPV)
  */
 export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwapAbs<T>, T, ToBtcSwapState>  {
+    protected readonly CONFIRMATIONS_REQUIRED = 1;
+    protected readonly ADDRESS_FORMAT_MAP = {
+        "p2wpkh": "p2wpkh",
+        "np2wpkh": "p2sh-p2wpkh",
+        "p2tr" : "p2tr"
+    };
+    protected readonly LND_CHANGE_OUTPUT_TYPE = "p2tr";
+
 
     readonly type = SwapHandlerType.TO_BTC;
 
@@ -132,7 +130,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      *
      * @private
      */
-    private async getSpendableUtxos(): Promise<SpendableUtxo[]> {
+    protected async getSpendableUtxos(): Promise<SpendableUtxo[]> {
         const resBlockheight = await lncli.getHeight({
             lnd: this.LND
         });
@@ -141,7 +139,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
 
         const resChainTxns = await lncli.getChainTransactions({
             lnd: this.LND,
-            after: blockheight-CONFIRMATIONS_REQUIRED
+            after: blockheight-this.CONFIRMATIONS_REQUIRED
         });
 
         const selfUTXOs: Set<string> = PluginManager.getWhitelistedTxIds();
@@ -157,7 +155,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
             lnd: this.LND
         });
 
-        return resUtxos.utxos.filter(utxo => utxo.confirmation_count>=CONFIRMATIONS_REQUIRED || selfUTXOs.has(utxo.transaction_id));
+        return resUtxos.utxos.filter(utxo => utxo.confirmation_count>=this.CONFIRMATIONS_REQUIRED || selfUTXOs.has(utxo.transaction_id));
     }
 
     /**
@@ -165,7 +163,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      *
      * @private
      */
-    private async getUtxoPool(): Promise<CoinselectTxInput[]> {
+    protected async getUtxoPool(): Promise<(CoinselectTxInput & {confirmations: number})[]> {
         const utxos = await this.getSpendableUtxos();
 
         let totalSpendable = 0;
@@ -175,9 +173,10 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
                 vout: utxo.transaction_vout,
                 txId: utxo.transaction_id,
                 value: utxo.tokens,
-                type: ADDRESS_FORMAT_MAP[utxo.address_format],
+                type: this.ADDRESS_FORMAT_MAP[utxo.address_format],
                 outputScript: Buffer.from(utxo.output_script, "hex"),
-                address: utxo.address
+                address: utxo.address,
+                confirmations: utxo.confirmation_count
             };
         });
 
@@ -192,13 +191,15 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param utxoPool
      * @param obj
      * @param satsPerVbyte
+     * @param initialOutputLength
      * @private
      * @returns true if alright, false if the coinselection doesn't leave enough funds for anchor fees
      */
-    private async isLeavingEnoughForLightningAnchors(
+    protected async isLeavingEnoughForLightningAnchors(
         utxoPool: CoinselectTxInput[],
         obj: {inputs?: CoinselectTxInput[], outputs?: CoinselectTxOutput[]},
-        satsPerVbyte: number
+        satsPerVbyte: number,
+        initialOutputLength: number = 1
     ): Promise<boolean> {
         if(obj.inputs==null || obj.outputs==null) return false;
         const spentInputs = new Set<string>();
@@ -208,7 +209,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
 
         let leavesValue: number = 0;
         utxoPool.forEach(val => {
-            const utxoEconomicalValue = (val.value - (satsPerVbyte * utils.inputBytes(val)));
+            const utxoEconomicalValue = (val.value - (satsPerVbyte * utils.inputBytes(val).length));
             if (
                 //Utxo not spent
                 !spentInputs.has(val.txId + ":" + val.vout) &&
@@ -218,9 +219,9 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
                 leavesValue += utxoEconomicalValue;
             }
         });
-        if(obj.outputs.length>1) {
-            const changeUtxo = obj.outputs[1];
-            leavesValue += changeUtxo.value - (satsPerVbyte * utils.inputBytes(changeUtxo));
+        if(obj.outputs.length>initialOutputLength) {
+            const changeUtxo = obj.outputs[obj.outputs.length-1];
+            leavesValue += changeUtxo.value - (satsPerVbyte * utils.inputBytes(changeUtxo).length);
         }
 
         const {channels} = await lncli.getChannels({lnd: this.LND});
@@ -233,7 +234,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      *
      * @private
      */
-    private getChangeAddress(): Promise<string> {
+    protected getChangeAddress(): Promise<string> {
         return new Promise((resolve, reject) => {
             this.LND.wallet.nextAddr({
                 type: 4,
@@ -276,7 +277,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
             address: targetAddress,
             value: targetAmount,
             script: bitcoin.address.toOutputScript(targetAddress, this.config.bitcoinNetwork)
-        }], satsPerVbyte, LND_CHANGE_OUTPUT_TYPE);
+        }], satsPerVbyte, this.LND_CHANGE_OUTPUT_TYPE);
 
         if(obj.inputs==null || obj.outputs==null) return null;
 
@@ -399,7 +400,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
         }
     }
 
-    private async processBtcTx(swap: ToBtcSwapAbs<T>, tx: BtcTx): Promise<boolean> {
+    protected async processBtcTx(swap: ToBtcSwapAbs<T>, tx: BtcTx): Promise<boolean> {
         tx.confirmations = tx.confirmations || 0;
 
         //Check transaction has enough confirmations
@@ -459,12 +460,12 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      *
      * @param payment
      */
-    private subscribeToPayment(payment: ToBtcSwapAbs<T>) {
+    protected subscribeToPayment(payment: ToBtcSwapAbs<T>) {
         this.swapLogger.info(payment, "subscribeToPayment(): subscribing to swap, txId: "+payment.txId+" address: "+payment.address);
         this.activeSubscriptions[payment.txId] = payment;
     }
 
-    private unsubscribePayment(payment: ToBtcSwapAbs<T>) {
+    protected unsubscribePayment(payment: ToBtcSwapAbs<T>) {
         if(payment.txId!=null) {
             if(this.activeSubscriptions[payment.txId]!=null) {
                 this.swapLogger.info(payment, "unsubscribePayment(): unsubscribing swap, txId: "+payment.txId+" address: "+payment.address);
@@ -480,7 +481,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @private
      * @throws DefinedRuntimeError will throw an error in case there isn't enough time for us to send a BTC payout tx
      */
-    private checkExpiresTooSoon(swap: ToBtcSwapAbs<T>): void {
+    protected checkExpiresTooSoon(swap: ToBtcSwapAbs<T>): void {
         const currentTimestamp = new BN(Math.floor(Date.now()/1000));
         const tsDelta = swap.data.getExpiry().sub(currentTimestamp);
         const minRequiredCLTV = this.getExpiryFromCLTV(swap.preferedConfirmationTarget, swap.data.getConfirmations());
@@ -503,7 +504,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @private
      * @throws DefinedRuntimeError will throw an error in case the actual fee is higher than quoted fee
      */
-    private checkCalculatedTxFee(quotedSatsPerVbyte: BN, actualSatsPerVbyte: number): void {
+    protected checkCalculatedTxFee(quotedSatsPerVbyte: BN, actualSatsPerVbyte: number): void {
         const feeRate = new BN(actualSatsPerVbyte);
         const swapPaysEnoughNetworkFee = quotedSatsPerVbyte.gte(feeRate);
         if(!swapPaysEnoughNetworkFee) throw {
@@ -526,7 +527,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @private
      * @throws {Error} Will throw an error if the fee sanity check doesn't pass
      */
-    private checkPsbtFee(
+    protected checkPsbtFee(
         psbt: bitcoin.Psbt,
         tx: bitcoin.Transaction,
         maxAllowedSatsPerVbyte: BN,
@@ -537,11 +538,11 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
         //Sanity check on sats/vB
         const maxAllowedFee = new BN(tx.virtualSize())
             //Considering the extra output was not added, because was detrminetal
-            .add(new BN(utils.outputBytes({type: LND_CHANGE_OUTPUT_TYPE})))
+            .add(new BN(utils.outputBytes({type: this.LND_CHANGE_OUTPUT_TYPE})))
             //Multiply by maximum allowed feerate
             .mul(maxAllowedSatsPerVbyte)
             //Possibility that extra output was not added due to it being lower than dust
-            .add(new BN(utils.dustThreshold({type: LND_CHANGE_OUTPUT_TYPE})));
+            .add(new BN(utils.dustThreshold({type: this.LND_CHANGE_OUTPUT_TYPE})));
 
         if(txFee.gt(maxAllowedFee)) throw new Error("Generated tx fee too high: "+JSON.stringify({
             maxAllowedFee: maxAllowedFee.toString(10),
@@ -613,7 +614,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param psbt
      * @private
      */
-    private async signPsbt(psbt: bitcoin.Psbt): Promise<{psbt: bitcoin.Psbt, rawTx: string}> {
+    protected async signPsbt(psbt: bitcoin.Psbt): Promise<{psbt: bitcoin.Psbt, rawTx: string}> {
         const signedPsbt = await lncli.signPsbt({
             lnd: this.LND,
             psbt: psbt.toHex()
@@ -630,7 +631,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param rawTx
      * @private
      */
-    private async sendRawTransaction(rawTx: string): Promise<void> {
+    protected async sendRawTransaction(rawTx: string): Promise<void> {
         await lncli.broadcastChainTransaction({
             lnd: this.LND,
             transaction: rawTx
@@ -794,7 +795,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param confirmationTarget
      * @param confirmations
      */
-    private getExpiryFromCLTV(confirmationTarget: number, confirmations: number): BN {
+    protected getExpiryFromCLTV(confirmationTarget: number, confirmations: number): BN {
         //Blocks = 10 + (confirmations + confirmationTarget)*2
         //Time = 3600 + (600*blocks*2)
         const cltv = this.config.minChainCltv.add(
@@ -832,7 +833,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param confirmationTarget
      * @throws {DefinedRuntimeError} will throw an error if the confirmationTarget is out of bounds
      */
-    private checkConfirmationTarget(confirmationTarget: number): void {
+    protected checkConfirmationTarget(confirmationTarget: number): void {
         if(confirmationTarget>this.config.maxConfTarget) throw {
             code: 20023,
             msg: "Invalid request body (confirmationTarget - too high)"
@@ -849,7 +850,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param confirmations
      * @throws {DefinedRuntimeError} will throw an error if the confirmations are out of bounds
      */
-    private checkRequiredConfirmations(confirmations: number): void {
+    protected checkRequiredConfirmations(confirmations: number): void {
         if(confirmations>this.config.maxConfirmations) throw {
             code: 20025,
             msg: "Invalid request body (confirmations - too high)"
@@ -866,7 +867,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param address
      * @throws {DefinedRuntimeError} will throw an error if the address is invalid
      */
-    private checkAddress(address: string): void {
+    protected checkAddress(address: string): void {
         let parsedOutputScript: Buffer;
 
         try {
@@ -890,7 +891,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param swap
      * @throws {DefinedRuntimeError} will throw an error if the swap is expired
      */
-    private checkExpired(swap: ToBtcSwapAbs<T>) {
+    protected checkExpired(swap: ToBtcSwapAbs<T>) {
         const isExpired = swap.data.getExpiry().lt(new BN(Math.floor(Date.now()/1000)).sub(new BN(this.config.maxSkew)));
         if(isExpired) throw {
             _httpStatus: 200,
@@ -1174,7 +1175,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
     /**
      * Starts watchdog checking sent bitcoin transactions
      */
-    private async startTxTimer() {
+    protected async startTxTimer() {
         let rerun;
         rerun = async () => {
             await this.processBtcTxs().catch( e => this.logger.error("startTxTimer(): call to processBtcTxs() errored", e));

@@ -7,6 +7,7 @@ export function blackjack (
     outputs: CoinselectTxOutput[],
     feeRate: number,
     type: CoinselectAddressTypes,
+    requiredInputs?: CoinselectTxInput[]
 ): {
     inputs?: CoinselectTxInput[],
     outputs?: CoinselectTxOutput[],
@@ -17,12 +18,22 @@ export function blackjack (
     let bytesAccum = utils.transactionBytes([], outputs, type);
     let inAccum = 0;
     const inputs = [];
+
+    if(requiredInputs!=null) for(let utxo of requiredInputs) {
+        const {length: utxoBytes} = utils.inputBytes(utxo);
+        const utxoValue = utils.uintOrNaN(utxo.value);
+
+        bytesAccum += utxoBytes;
+        inAccum += utxoValue;
+        inputs.push(utxo);
+    }
+
     const outAccum = utils.sumOrNaN(outputs);
     const threshold = utils.dustThreshold({type});
 
     for (let i = 0; i < utxos.length; ++i) {
         const input = utxos[i];
-        const inputBytes = utils.inputBytes(input);
+        const {length: inputBytes} = utils.inputBytes(input);
         const fee = feeRate * (bytesAccum + inputBytes);
         const inputValue = utils.uintOrNaN(input.value);
 
