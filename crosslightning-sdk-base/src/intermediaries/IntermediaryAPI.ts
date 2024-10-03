@@ -459,7 +459,8 @@ export class IntermediaryAPI {
             expiryTimestamp: init.expiryTimestamp.toString(10),
             token: init.token,
             offerer: init.offerer,
-            feeRate: init.feeRate
+            feeRate: init.feeRate,
+            amount: null
         }, {
             code: FieldTypeEnum.Number,
             msg: FieldTypeEnum.String,

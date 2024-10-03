@@ -253,7 +253,7 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
 
         while(!abortSignal.aborted && this.state===LnForGasSwapState.PR_CREATED) {
             await this.checkInvoicePaid(true);
-            if(this.state!==LnForGasSwapState.PR_CREATED) await timeoutPromise(checkIntervalSeconds*1000, abortSignal);
+            if(this.state===LnForGasSwapState.PR_CREATED) await timeoutPromise(checkIntervalSeconds*1000, abortSignal);
         }
 
         if(this.isQuoteExpired()) throw new PaymentAuthError("Swap expired");

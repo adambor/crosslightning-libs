@@ -5,13 +5,16 @@ import {Buffer} from "buffer";
 export class StreamParamEncoder extends ParamEncoder {
 
     private readonly stream: TransformStream<Buffer>;
+    private closed: boolean = false;
 
     constructor() {
         let stream = new TransformStream<Buffer>();
         let writeStream = stream.writable.getWriter();
+        writeStream.closed.then(() => this.closed = true);
         super(writeStream.write.bind(writeStream), () => {
-            if(writeStream.closed) return Promise.resolve();
-            return writeStream.close()
+            if(this.closed) return Promise.resolve();
+            this.closed = true;
+            return writeStream.close();
         });
         this.stream = stream;
     }
