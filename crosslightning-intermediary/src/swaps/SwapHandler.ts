@@ -15,6 +15,11 @@ import {PluginManager} from "../plugins/PluginManager";
 import {IIntermediaryStorage} from "../storage/IIntermediaryStorage";
 import * as BN from "bn.js";
 import {ServerParamEncoder} from "../utils/paramcoders/server/ServerParamEncoder";
+import {
+    isQuoteAmountTooHigh,
+    isQuoteAmountTooLow,
+    isQuoteThrow,
+} from "../plugins/IPlugin";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -63,17 +68,17 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
     abstract config: SwapBaseConfig;
 
     logger = {
-        debug: (msg, ...args) => console.debug("SwapHandler("+this.type+"): "+msg, ...args),
-        info: (msg, ...args) => console.info("SwapHandler("+this.type+"): "+msg, ...args),
-        warn: (msg, ...args) => console.warn("SwapHandler("+this.type+"): "+msg, ...args),
-        error: (msg, ...args) => console.error("SwapHandler("+this.type+"): "+msg, ...args)
+        debug: (msg: string, ...args: any) => console.debug("SwapHandler("+this.type+"): "+msg, ...args),
+        info: (msg: string, ...args: any) => console.info("SwapHandler("+this.type+"): "+msg, ...args),
+        warn: (msg: string, ...args: any) => console.warn("SwapHandler("+this.type+"): "+msg, ...args),
+        error: (msg: string, ...args: any) => console.error("SwapHandler("+this.type+"): "+msg, ...args)
     };
 
     protected swapLogger = {
-        debug: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg, ...args) => this.logger.debug(this.getIdentifier(swap)+": "+msg, ...args),
-        info: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg, ...args) => this.logger.info(this.getIdentifier(swap)+": "+msg, ...args),
-        warn: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg, ...args) => this.logger.warn(this.getIdentifier(swap)+": "+msg, ...args),
-        error: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg, ...args) => this.logger.error(this.getIdentifier(swap)+": "+msg, ...args)
+        debug: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg: string, ...args: any) => this.logger.debug(this.getIdentifier(swap)+": "+msg, ...args),
+        info: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg: string, ...args: any) => this.logger.info(this.getIdentifier(swap)+": "+msg, ...args),
+        warn: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg: string, ...args: any) => this.logger.warn(this.getIdentifier(swap)+": "+msg, ...args),
+        error: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg: string, ...args: any) => this.logger.error(this.getIdentifier(swap)+": "+msg, ...args)
     };
 
     protected constructor(storageDirectory: IIntermediaryStorage<V>, path: string, swapContract: SwapContract<T, any, any, any>, chainEvents: ChainEvents<T>, allowedTokens: TokenAddress[], lnd: AuthenticatedLnd, swapPricing: ISwapPrice) {
@@ -92,7 +97,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
      * Starts the watchdog checking past swaps for expiry or claim eligibility.
      */
     async startWatchdog() {
-        let rerun;
+        let rerun: () => Promise<void>;
         rerun = async () => {
             await this.processPastSwaps().catch( e => console.error(e));
             setTimeout(rerun, this.config.swapCheckInterval);
@@ -179,6 +184,67 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
         if(swap!=null) await PluginManager.swapRemove<T>(swap);
         this.swapLogger.debug(swap, "removeSwapData(): removing swap final state: "+swap.state);
         await this.storageManager.removeData(swap.getHash(), swap.getSequence());
+    }
+
+    /**
+     * Checks whether the bitcoin amount is within specified min/max bounds
+     *
+     * @param amount
+     * @protected
+     * @throws {DefinedRuntimeError} will throw an error if the amount is outside minimum/maximum bounds
+     */
+    protected checkBtcAmountInBounds(amount: BN): void {
+        if (amount.lt(this.config.min)) {
+            throw {
+                code: 20003,
+                msg: "Amount too low!",
+                data: {
+                    min: this.config.min.toString(10),
+                    max: this.config.max.toString(10)
+                }
+            };
+        }
+
+        if(amount.gt(this.config.max)) {
+            throw {
+                code: 20004,
+                msg: "Amount too high!",
+                data: {
+                    min: this.config.min.toString(10),
+                    max: this.config.max.toString(10)
+                }
+            };
+        }
+    }
+
+    /**
+     * Handles and throws plugin errors
+     *
+     * @param res Response as returned from the PluginManager.onHandlePost{To,From}BtcQuote
+     * @protected
+     * @throws {DefinedRuntimeError} will throw an error if the response is an error
+     */
+    protected handlePluginErrorResponses(res: any): void {
+        if(isQuoteThrow(res)) throw {
+            code: 29999,
+            msg: res.message
+        };
+        if(isQuoteAmountTooHigh(res)) throw {
+            code: 20004,
+            msg: "Amount too high!",
+            data: {
+                min: res.data.min.toString(10),
+                max: res.data.max.toString(10)
+            }
+        };
+        if(isQuoteAmountTooLow(res)) throw {
+            code: 20003,
+            msg: "Amount too low!",
+            data: {
+                min: res.data.min.toString(10),
+                max: res.data.max.toString(10)
+            }
+        };
     }
 
     /**

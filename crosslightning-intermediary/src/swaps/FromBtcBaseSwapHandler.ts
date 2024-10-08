@@ -9,10 +9,7 @@ import {FromBtcRequestType} from "./frombtc_abstract/FromBtcAbs";
 import {PluginManager} from "../plugins/PluginManager";
 import {
     isPluginQuote,
-    isQuoteAmountTooHigh,
-    isQuoteAmountTooLow,
-    isQuoteSetFees,
-    isQuoteThrow
+    isQuoteSetFees
 } from "../plugins/IPlugin";
 
 const secondsInYear = new BN(365*24*60*60);
@@ -57,20 +54,25 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
      * @param dummySwapData
      * @param abortController
      */
-    protected getBaseSecurityDepositPrefetch(dummySwapData: T, abortController: AbortController): Promise<BN> {
+    protected async getBaseSecurityDepositPrefetch(dummySwapData: T, abortController: AbortController): Promise<BN> {
         //Solana workaround
-        if((this.swapContract as any).getRawRefundFee!=null) {
-            return (this.swapContract as any).getRawRefundFee(dummySwapData).catch(e => {
+        if ((this.swapContract as any).getRawRefundFee != null) {
+            try {
+                return await (this.swapContract as any).getRawRefundFee(dummySwapData);
+            } catch (e) {
                 this.logger.error("getBaseSecurityDepositPrefetch(): pre-fetch error: ", e);
                 abortController.abort(e);
                 return null;
-            });
+            }
         } else {
-            return this.swapContract.getRefundFee(dummySwapData).then(result => result.mul(new BN(2))).catch(e => {
-                this.logger.error("getBaseSecurityDepositPrefetch(): pre-fetch error: ", e);
-                abortController.abort(e);
+            try {
+                const result = await this.swapContract.getRefundFee(dummySwapData);
+                return result.mul(new BN(2));
+            } catch (e1) {
+                this.logger.error("getBaseSecurityDepositPrefetch(): pre-fetch error: ", e1);
+                abortController.abort(e1);
                 return null;
-            });
+            }
         }
     }
 
@@ -80,12 +82,14 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
      * @param useToken
      * @param abortController
      */
-    protected getBalancePrefetch(useToken: TokenAddress, abortController: AbortController): Promise<BN> {
-        return this.swapContract.getBalance(useToken, true).catch(e => {
+    protected async getBalancePrefetch(useToken: TokenAddress, abortController: AbortController): Promise<BN> {
+        try {
+            return await this.swapContract.getBalance(useToken, true);
+        } catch (e) {
             this.logger.error("getBalancePrefetch(): balancePrefetch error: ", e);
             abortController.abort(e);
             return null;
-        });
+        }
     }
 
     /**
@@ -134,26 +138,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
             {baseFeeInBtc: this.config.baseFee, feePPM: this.config.feePPM},
         );
         if(res!=null) {
-            if(isQuoteThrow(res)) throw {
-                code: 29999,
-                msg: res.message
-            };
-            if(isQuoteAmountTooHigh(res)) throw {
-                code: 20004,
-                msg: "Amount too high!",
-                data: {
-                    min: res.data.min.toString(10),
-                    max: res.data.max.toString(10)
-                }
-            };
-            if(isQuoteAmountTooLow(res)) throw {
-                code: 20003,
-                msg: "Amount too low!",
-                data: {
-                    min: res.data.min.toString(10),
-                    max: res.data.max.toString(10)
-                }
-            };
+            this.handlePluginErrorResponses(res);
             if(isQuoteSetFees(res)) {
                 return {
                     baseFee: res.baseFee || this.config.baseFee,
@@ -161,29 +146,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
                 }
             }
         }
-        if(requestedAmount.input) {
-            if(requestedAmount.amount.lt(this.config.min)) {
-                throw {
-                    code: 20003,
-                    msg: "Amount too low!",
-                    data: {
-                        min: this.config.min.toString(10),
-                        max: this.config.max.toString(10)
-                    }
-                };
-            }
-
-            if(requestedAmount.amount.gt(this.config.max)) {
-                throw {
-                    code: 20004,
-                    msg: "Amount too high!",
-                    data: {
-                        min: this.config.min.toString(10),
-                        max: this.config.max.toString(10)
-                    }
-                };
-            }
-        }
+        if(requestedAmount.input) this.checkBtcAmountInBounds(requestedAmount.amount);
         return {
             baseFee: this.config.baseFee,
             feePPM: this.config.feePPM
@@ -228,26 +191,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
         );
         signal.throwIfAborted();
         if(res!=null) {
-            if(isQuoteThrow(res)) throw {
-                code: 29999,
-                msg: res.message
-            };
-            if(isQuoteAmountTooHigh(res)) throw {
-                code: 20004,
-                msg: "Amount too high!",
-                data: {
-                    min: res.data.min.toString(10),
-                    max: res.data.max.toString(10)
-                }
-            };
-            if(isQuoteAmountTooLow(res)) throw {
-                code: 20003,
-                msg: "Amount too low!",
-                data: {
-                    min: res.data.min.toString(10),
-                    max: res.data.max.toString(10)
-                }
-            };
+            this.handlePluginErrorResponses(res);
             if(isQuoteSetFees(res)) {
                 if(res.baseFee!=null) fees.baseFee = res.baseFee;
                 if(res.feePPM!=null) fees.feePPM = res.feePPM;
@@ -279,29 +223,16 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
             // amt = (amt+base_fee)/(1-fee)
             amountBD = amountBD.add(fees.baseFee).mul(new BN(1000000)).div(new BN(1000000).sub(fees.feePPM));
 
-            if(amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)))) {
-                let adjustedMin = this.config.min.mul(new BN(1000000).sub(fees.feePPM)).div(new BN(1000000)).sub(fees.baseFee);
-                let adjustedMax = this.config.max.mul(new BN(1000000).sub(fees.feePPM)).div(new BN(1000000)).sub(fees.baseFee);
+            const tooLow = amountBD.lt(this.config.min.mul(new BN(95)).div(new BN(100)));
+            const tooHigh = amountBD.gt(this.config.max.mul(new BN(105)).div(new BN(100)));
+            if(tooLow || tooHigh) {
+                const adjustedMin = this.config.min.mul(new BN(1000000).sub(fees.feePPM)).div(new BN(1000000)).sub(fees.baseFee);
+                const adjustedMax = this.config.max.mul(new BN(1000000).sub(fees.feePPM)).div(new BN(1000000)).sub(fees.baseFee);
                 const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                 const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
                 throw {
-                    code: 20003,
-                    msg: "Amount too low!",
-                    data: {
-                        min: minIn.toString(10),
-                        max: maxIn.toString(10)
-                    }
-                };
-            }
-
-            if(amountBD.gt(this.config.max.mul(new BN(105)).div(new BN(100)))) {
-                let adjustedMin = this.config.min.mul(new BN(1000000).sub(fees.feePPM)).div(new BN(1000000)).sub(fees.baseFee);
-                let adjustedMax = this.config.max.mul(new BN(1000000).sub(fees.feePPM)).div(new BN(1000000)).sub(fees.baseFee);
-                const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                throw {
-                    code: 20004,
-                    msg: "Amount too high!",
+                    code: tooLow ? 20003 : 20004,
+                    msg: tooLow ? "Amount too low!" : "Amount too high!",
                     data: {
                         min: minIn.toString(10),
                         max: maxIn.toString(10)
@@ -310,28 +241,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
             }
         } else {
             amountBD = requestedAmount.amount;
-
-            if(amountBD.lt(this.config.min)) {
-                throw {
-                    code: 20003,
-                    msg: "Amount too low!",
-                    data: {
-                        min: this.config.min.toString(10),
-                        max: this.config.max.toString(10)
-                    }
-                };
-            }
-
-            if(amountBD.gt(this.config.max)) {
-                throw {
-                    code: 20004,
-                    msg: "Amount too high!",
-                    data: {
-                        min: this.config.min.toString(10),
-                        max: this.config.max.toString(10)
-                    }
-                };
-            }
+            this.checkBtcAmountInBounds(amountBD);
         }
 
         const swapFee = fees.baseFee.add(amountBD.mul(fees.feePPM).div(new BN(1000000)));
@@ -423,7 +333,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
 
         const feeRateObj = await req.paramReader.getParams({
             feeRate: FieldTypeEnum.String
-        }).catch(e => null);
+        }).catch(() => null);
         abortSignal.throwIfAborted();
 
         const feeRate = feeRateObj?.feeRate!=null && typeof(feeRateObj.feeRate)==="string" ? feeRateObj.feeRate : null;
