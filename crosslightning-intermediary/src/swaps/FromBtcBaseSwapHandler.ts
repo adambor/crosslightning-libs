@@ -4,6 +4,16 @@ import {SwapBaseConfig, SwapHandler} from "./SwapHandler";
 import * as BN from "bn.js";
 import {IParamReader} from "../utils/paramcoders/IParamReader";
 import {FieldTypeEnum} from "../utils/paramcoders/SchemaVerifier";
+import {FromBtcLnRequestType} from "./frombtcln_abstract/FromBtcLnAbs";
+import {FromBtcRequestType} from "./frombtc_abstract/FromBtcAbs";
+import {PluginManager} from "../plugins/PluginManager";
+import {
+    isPluginQuote,
+    isQuoteAmountTooHigh,
+    isQuoteAmountTooLow,
+    isQuoteSetFees,
+    isQuoteThrow
+} from "../plugins/IPlugin";
 
 const secondsInYear = new BN(365*24*60*60);
 
@@ -98,33 +108,172 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
         }
     }
 
+
     /**
      * Checks minimums/maximums, calculates the fee & total amount
      *
-     * @param exactOut
-     * @param amount
+     * @param request
+     * @param requestedAmount
      * @param useToken
+     * @throws {DefinedRuntimeError} will throw an error if the amount is outside minimum/maximum bounds
+     */
+    protected async preCheckAmounts(
+        request: {
+            raw: Request & {paramReader: IParamReader},
+            parsed: FromBtcLnRequestType | FromBtcRequestType,
+            metadata: any
+        },
+        requestedAmount: {input: boolean, amount: BN},
+        useToken: TokenAddress
+    ): Promise<{baseFee: BN, feePPM: BN}> {
+        const res = await PluginManager.onHandlePreFromBtcQuote(
+            request,
+            requestedAmount,
+            useToken,
+            {minInBtc: this.config.min, maxInBtc: this.config.max},
+            {baseFeeInBtc: this.config.baseFee, feePPM: this.config.feePPM},
+        );
+        if(res!=null) {
+            if(isQuoteThrow(res)) throw {
+                code: 29999,
+                msg: res.message
+            };
+            if(isQuoteAmountTooHigh(res)) throw {
+                code: 20004,
+                msg: "Amount too high!",
+                data: {
+                    min: res.data.min.toString(10),
+                    max: res.data.max.toString(10)
+                }
+            };
+            if(isQuoteAmountTooLow(res)) throw {
+                code: 20003,
+                msg: "Amount too low!",
+                data: {
+                    min: res.data.min.toString(10),
+                    max: res.data.max.toString(10)
+                }
+            };
+            if(isQuoteSetFees(res)) {
+                return {
+                    baseFee: res.baseFee || this.config.baseFee,
+                    feePPM: res.feePPM || this.config.feePPM
+                }
+            }
+        }
+        if(requestedAmount.input) {
+            if(requestedAmount.amount.lt(this.config.min)) {
+                throw {
+                    code: 20003,
+                    msg: "Amount too low!",
+                    data: {
+                        min: this.config.min.toString(10),
+                        max: this.config.max.toString(10)
+                    }
+                };
+            }
+
+            if(requestedAmount.amount.gt(this.config.max)) {
+                throw {
+                    code: 20004,
+                    msg: "Amount too high!",
+                    data: {
+                        min: this.config.min.toString(10),
+                        max: this.config.max.toString(10)
+                    }
+                };
+            }
+        }
+        return {
+            baseFee: this.config.baseFee,
+            feePPM: this.config.feePPM
+        };
+    }
+
+    /**
+     * Checks minimums/maximums, calculates the fee & total amount
+     *
+     * @param request
+     * @param requestedAmount
      * @param fees
+     * @param useToken
      * @param signal
      * @param pricePrefetchPromise
      * @throws {DefinedRuntimeError} will throw an error if the amount is outside minimum/maximum bounds
      */
     protected async checkFromBtcAmount(
-        exactOut: boolean,
-        amount: BN,
-        useToken: TokenAddress,
+        request: {
+            raw: Request & {paramReader: IParamReader},
+            parsed: FromBtcLnRequestType | FromBtcRequestType,
+            metadata: any
+        },
+        requestedAmount: {input: boolean, amount: BN},
         fees: {baseFee: BN, feePPM: BN},
+        useToken: TokenAddress,
         signal: AbortSignal,
         pricePrefetchPromise?: Promise<BN>
     ): Promise<{
         amountBD: BN,
-        swapFee: BN,
-        swapFeeInToken: BN,
-        totalInToken: BN
+        swapFee: BN, //Swap fee in BTC
+        swapFeeInToken: BN, //Swap fee in token on top of what should be paid out to the user
+        totalInToken: BN //Total to be paid out to the user
     }> {
+        const res = await PluginManager.onHandlePostFromBtcQuote(
+            request,
+            requestedAmount,
+            useToken,
+            {minInBtc: this.config.min, maxInBtc: this.config.max},
+            {baseFeeInBtc: fees.baseFee, feePPM: fees.feePPM},
+            pricePrefetchPromise
+        );
+        signal.throwIfAborted();
+        if(res!=null) {
+            if(isQuoteThrow(res)) throw {
+                code: 29999,
+                msg: res.message
+            };
+            if(isQuoteAmountTooHigh(res)) throw {
+                code: 20004,
+                msg: "Amount too high!",
+                data: {
+                    min: res.data.min.toString(10),
+                    max: res.data.max.toString(10)
+                }
+            };
+            if(isQuoteAmountTooLow(res)) throw {
+                code: 20003,
+                msg: "Amount too low!",
+                data: {
+                    min: res.data.min.toString(10),
+                    max: res.data.max.toString(10)
+                }
+            };
+            if(isQuoteSetFees(res)) {
+                if(res.baseFee!=null) fees.baseFee = res.baseFee;
+                if(res.feePPM!=null) fees.feePPM = res.feePPM;
+            }
+            if(isPluginQuote(res)) {
+                if(!requestedAmount.input) {
+                    return {
+                        amountBD: res.amount.amount.add(res.swapFee.inInputTokens),
+                        swapFee: res.swapFee.inInputTokens,
+                        swapFeeInToken: res.swapFee.inOutputTokens,
+                        totalInToken: requestedAmount.amount
+                    }
+                } else {
+                    return {
+                        amountBD: requestedAmount.amount,
+                        swapFee: res.swapFee.inInputTokens,
+                        swapFeeInToken: res.swapFee.inOutputTokens,
+                        totalInToken: res.amount.amount
+                    }
+                }
+            }
+        }
+
         let amountBD: BN;
-        if(exactOut) {
-            amountBD = await this.swapPricing.getToBtcSwapAmount(amount, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+        if(!requestedAmount.input) {
+            amountBD = await this.swapPricing.getToBtcSwapAmount(requestedAmount.amount, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
             signal.throwIfAborted();
 
             // amt = (amt+base_fee)/(1-fee)
@@ -160,7 +309,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
                 };
             }
         } else {
-            amountBD = amount;
+            amountBD = requestedAmount.amount;
 
             if(amountBD.lt(this.config.min)) {
                 throw {
@@ -190,10 +339,10 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
         signal.throwIfAborted();
 
         let totalInToken: BN;
-        if(exactOut) {
-            totalInToken = amount;
+        if(!requestedAmount.input) {
+            totalInToken = requestedAmount.amount;
         } else {
-            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(amount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(requestedAmount.amount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
             totalInToken = amountInToken.sub(swapFeeInToken);
             signal.throwIfAborted();
         }

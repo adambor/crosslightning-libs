@@ -5,6 +5,15 @@ import * as BN from "bn.js";
 import {ServerParamEncoder} from "../utils/paramcoders/server/ServerParamEncoder";
 import {IParamReader} from "../utils/paramcoders/IParamReader";
 import {FieldTypeEnum} from "../utils/paramcoders/SchemaVerifier";
+import {PluginManager} from "../plugins/PluginManager";
+import {
+    isQuoteAmountTooHigh,
+    isQuoteAmountTooLow,
+    isQuoteSetFees,
+    isQuoteThrow, isToBtcPluginQuote
+} from "../plugins/IPlugin";
+import {ToBtcLnRequestType} from "./tobtcln_abstract/ToBtcLnAbs";
+import {ToBtcRequestType} from "./tobtc_abstract/ToBtcAbs";
 
 export type ToBtcBaseConfig = SwapBaseConfig & {
     gracePeriod: BN
@@ -35,12 +44,93 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
     }
 
     /**
+     * Checks minimums/maximums, calculates the fee & total amount
+     *
+     * @param request
+     * @param requestedAmount
+     * @param useToken
+     * @throws {DefinedRuntimeError} will throw an error if the amount is outside minimum/maximum bounds
+     */
+    protected async preCheckAmounts(
+        request: {
+            raw: Request & {paramReader: IParamReader},
+            parsed: ToBtcLnRequestType | ToBtcRequestType,
+            metadata: any
+        },
+        requestedAmount: {input: boolean, amount: BN},
+        useToken: TokenAddress
+    ): Promise<{baseFee: BN, feePPM: BN}> {
+        const res = await PluginManager.onHandlePreToBtcQuote(
+            request,
+            requestedAmount,
+            useToken,
+            {minInBtc: this.config.min, maxInBtc: this.config.max},
+            {baseFeeInBtc: this.config.baseFee, feePPM: this.config.feePPM},
+        );
+        if(res!=null) {
+            if(isQuoteThrow(res)) throw {
+                code: 29999,
+                msg: res.message
+            };
+            if(isQuoteAmountTooHigh(res)) throw {
+                code: 20004,
+                msg: "Amount too high!",
+                data: {
+                    min: res.data.min.toString(10),
+                    max: res.data.max.toString(10)
+                }
+            };
+            if(isQuoteAmountTooLow(res)) throw {
+                code: 20003,
+                msg: "Amount too low!",
+                data: {
+                    min: res.data.min.toString(10),
+                    max: res.data.max.toString(10)
+                }
+            };
+            if(isQuoteSetFees(res)) {
+                return {
+                    baseFee: res.baseFee || this.config.baseFee,
+                    feePPM: res.feePPM || this.config.feePPM
+                }
+            }
+        }
+        if(!requestedAmount.input) {
+            if (requestedAmount.amount.lt(this.config.min)) {
+                throw {
+                    code: 20003,
+                    msg: "Amount too low!",
+                    data: {
+                        min: this.config.min.toString(10),
+                        max: this.config.max.toString(10)
+                    }
+                };
+            }
+
+            if(requestedAmount.amount.gt(this.config.max)) {
+                throw {
+                    code: 20004,
+                    msg: "Amount too high!",
+                    data: {
+                        min: this.config.min.toString(10),
+                        max: this.config.max.toString(10)
+                    }
+                };
+            }
+        }
+        return {
+            baseFee: this.config.baseFee,
+            feePPM: this.config.feePPM
+        };
+    }
+
+    /**
      * Checks minimums/maximums, calculates network fee (based on the callback passed), swap fee & total amount
      *
-     * @param exactIn
-     * @param amount
-     * @param useToken
+     * @param request
+     * @param requestedAmount
      * @param fees
+     * @param useToken
      * @param getNetworkFee
      * @param signal
      * @param pricePrefetchPromise
@@ -48,10 +138,14 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
      *  or if we don't have enough funds (getNetworkFee callback throws)
      */
     protected async checkToBtcAmount<T extends {networkFee: BN}>(
-        exactIn: boolean,
-        amount: BN,
-        useToken: TokenAddress,
+        request: {
+            raw: Request & {paramReader: IParamReader},
+            parsed: ToBtcLnRequestType | ToBtcRequestType,
+            metadata: any
+        },
+        requestedAmount: {input: boolean, amount: BN},
         fees: {baseFee: BN, feePPM: BN},
+        useToken: TokenAddress,
         getNetworkFee: (amount: BN) => Promise<T>,
         signal: AbortSignal,
         pricePrefetchPromise?: Promise<BN>
@@ -64,10 +158,69 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
         networkFeeInToken: BN,
         totalInToken: BN
     }> {
+        const res = await PluginManager.onHandlePostToBtcQuote<T>(
+            request,
+            requestedAmount,
+            useToken,
+            {minInBtc: this.config.min, maxInBtc: this.config.max},
+            {baseFeeInBtc: fees.baseFee, feePPM: fees.feePPM, networkFeeGetter: getNetworkFee},
+            pricePrefetchPromise
+        );
+        signal.throwIfAborted();
+        if(res!=null) {
+            if(isQuoteThrow(res)) throw {
+                code: 29999,
+                msg: res.message
+            };
+            if(isQuoteAmountTooHigh(res)) throw {
+                code: 20004,
+                msg: "Amount too high!",
+                data: {
+                    min: res.data.min.toString(10),
+                    max: res.data.max.toString(10)
+                }
+            };
+            if(isQuoteAmountTooLow(res)) throw {
+                code: 20003,
+                msg: "Amount too low!",
+                data: {
+                    min: res.data.min.toString(10),
+                    max: res.data.max.toString(10)
+                }
+            };
+            if(isQuoteSetFees(res)) {
+                if(res.baseFee!=null) fees.baseFee = res.baseFee;
+                if(res.feePPM!=null) fees.feePPM = res.feePPM;
+            }
+            if(isToBtcPluginQuote(res)) {
+                if(requestedAmount.input) {
+                    return {
+                        amountBD: res.amount.amount,
+                        swapFee: res.swapFee.inOutputTokens,
+                        swapFeeInToken: res.swapFee.inInputTokens,
+                        networkFee: res.networkFee.inOutputTokens,
+                        networkFeeInToken: res.networkFee.inInputTokens,
+                        networkFeeData: res.networkFeeData,
+                        totalInToken: requestedAmount.amount
+                    }
+                } else {
+                    return {
+                        amountBD: requestedAmount.amount,
+                        swapFee: res.swapFee.inOutputTokens,
+                        swapFeeInToken: res.swapFee.inInputTokens,
+                        networkFee: res.networkFee.inOutputTokens,
+                        networkFeeInToken: res.networkFee.inInputTokens,
+                        networkFeeData: res.networkFeeData,
+                        totalInToken: res.amount.amount.add(res.swapFee.inInputTokens).add(res.networkFee.inInputTokens)
+                    }
+                }
+            }
+        }
+
         let amountBD: BN;
         let tooLow = false;
-        if(exactIn) {
-            amountBD = await this.swapPricing.getToBtcSwapAmount(amount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+        if(requestedAmount.input) {
+            amountBD = await this.swapPricing.getToBtcSwapAmount(requestedAmount.amount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
             signal.throwIfAborted();
 
             //Decrease by base fee
@@ -79,7 +232,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
                 tooLow = true;
             }
         } else {
-            amountBD = amount;
+            amountBD = requestedAmount.amount;
 
             if (amountBD.lt(this.config.min)) {
                 throw {
@@ -108,7 +261,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
         this.logger.debug("checkToBtcAmount(): network fee calculated, amount: "+amountBD.toString(10)+" fee: "+resp.networkFee.toString(10));
         signal.throwIfAborted();
 
-        if(exactIn) {
+        if(requestedAmount.input) {
             //Decrease by network fee
             amountBD = amountBD.sub(resp.networkFee);
 
@@ -157,10 +310,10 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
         signal.throwIfAborted();
 
         let total: BN;
-        if(exactIn) {
-            total = amount;
+        if(requestedAmount.input) {
+            total = requestedAmount.amount;
         } else {
-            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(amount, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(requestedAmount.amount, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
             signal.throwIfAborted();
             total = amountInToken.add(swapFeeInToken).add(networkFeeInToken);
         }

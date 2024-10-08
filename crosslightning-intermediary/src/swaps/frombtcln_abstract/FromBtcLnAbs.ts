@@ -418,30 +418,6 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
     }
 
     /**
-     * Checks if the request should be processed by calling plugins
-     *
-     * @param req
-     * @param parsedBody
-     * @param metadata
-     * @throws {DefinedRuntimeError} will throw an error if the plugin cancelled the request
-     */
-    private async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: FromBtcLnRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
-        const pluginResult = await PluginManager.onSwapRequestFromBtcLn(req, parsedBody, metadata);
-
-        if(pluginResult.throw) {
-            throw {
-                code: 29999,
-                msg: pluginResult.throw
-            };
-        }
-
-        return {
-            baseFee: pluginResult.baseFee || this.config.baseFee,
-            feePPM: pluginResult.feePPM || this.config.feePPM
-        };
-    }
-
-    /**
      * Checks if we have enough inbound liquidity to be able to receive an LN payment (without MPP)
      *
      * @param amountBD
@@ -680,12 +656,18 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
             }
             metadata.request = parsedBody;
 
+            const requestedAmount = {input: !parsedBody.exactOut, amount: parsedBody.amount};
+            const request = {
+                raw: req,
+                parsed: parsedBody,
+                metadata
+            };
+            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
+
             //Check request params
             this.checkDescriptionHash(parsedBody.descriptionHash);
-            const {baseFee, feePPM} = await this.checkPlugins(req, parsedBody, metadata);
+            const fees = await this.preCheckAmounts(request, requestedAmount, useToken);
             metadata.times.requestChecked = Date.now();
-
-            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
             //Create abortController for parallel prefetches
             const responseStream = res.responseStream;
@@ -709,7 +691,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
                 swapFee,
                 swapFeeInToken,
                 totalInToken
-            } = await this.checkFromBtcAmount(parsedBody.exactOut, parsedBody.amount, useToken, {baseFee, feePPM}, abortController.signal, pricePrefetchPromise);
+            } = await this.checkFromBtcAmount(request, requestedAmount, fees, useToken, abortController.signal, pricePrefetchPromise);
             metadata.times.priceCalculated = Date.now();
 
             //Check if we have enough funds to honor the request

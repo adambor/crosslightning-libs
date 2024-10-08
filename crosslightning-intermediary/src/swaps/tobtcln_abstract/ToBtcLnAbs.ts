@@ -17,7 +17,7 @@ import {
     TokenAddress
 } from "crosslightning-base";
 import {AuthenticatedLnd, pay} from "lightning";
-import {expressHandlerWrapper, HEX_REGEX, isDefinedRuntimeError} from "../../utils/Utils";
+import {expressHandlerWrapper, handleLndError, HEX_REGEX, isDefinedRuntimeError} from "../../utils/Utils";
 import {PluginManager} from "../../plugins/PluginManager";
 import {IIntermediaryStorage} from "../../storage/IIntermediaryStorage";
 import {randomBytes} from "crypto";
@@ -129,8 +129,13 @@ export type ToBtcLnRequestType = {
  * Swap handler handling to BTCLN swaps using submarine swaps
  */
 export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs<T>, T, ToBtcLnSwapState> {
+    protected readonly LIGHTNING_LIQUIDITY_CACHE_TIMEOUT = 5*1000;
 
     activeSubscriptions: Set<string> = new Set<string>();
+    lightningLiquidityCache: {
+        liquidityMTokens: BN,
+        timestamp: number
+    };
 
     readonly type = SwapHandlerType.TO_BTCLN;
 
@@ -593,29 +598,29 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         }
     }
 
-    /**
-     * Checks if the request should be processed by calling plugins
-     *
-     * @param req
-     * @param parsedBody
-     * @param metadata
-     * @throws {DefinedRuntimeError} will throw an error if the plugin cancelled the request
-     */
-    private async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: ToBtcLnRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
-        const pluginResult = await PluginManager.onSwapRequestToBtcLn(req, parsedBody, metadata);
-
-        if(pluginResult.throw) {
-            throw {
-                code: 29999,
-                msg: pluginResult.throw
-            };
-        }
-
-        return {
-            baseFee: pluginResult.baseFee || this.config.baseFee,
-            feePPM: pluginResult.feePPM || this.config.feePPM
-        };
-    }
+    // /**
+    //  * Checks if the request should be processed by calling plugins
+    //  *
+    //  * @param req
+    //  * @param parsedBody
+    //  * @param metadata
+    //  * @throws {DefinedRuntimeError} will throw an error if the plugin cancelled the request
+    //  */
+    // private async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: ToBtcLnRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
+    //     const pluginResult = await PluginManager.onSwapRequestToBtcLn(req, parsedBody, metadata);
+    //
+    //     if(pluginResult.throw) {
+    //         throw {
+    //             code: 29999,
+    //             msg: pluginResult.throw
+    //         };
+    //     }
+    //
+    //     return {
+    //         baseFee: pluginResult.baseFee || this.config.baseFee,
+    //         feePPM: pluginResult.feePPM || this.config.feePPM
+    //     };
+    // }
 
     /**
      * Checks if the prior payment with the same paymentHash exists
@@ -638,13 +643,19 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
      *
      * @param amount
      * @param abortSignal
+     * @param useCached Whether to use cached liquidity values
      * @throws {DefinedRuntimeError} will throw an error if there isn't enough liquidity
      */
-    private async checkLiquidity(amount: BN, abortSignal: AbortSignal): Promise<void> {
+    private async checkLiquidity(amount: BN, abortSignal: AbortSignal, useCached: boolean = false): Promise<void> {
         const amountBDMtokens = amount.mul(new BN(1000));
-        const channelBalances = await lncli.getChannelBalance({lnd: this.LND});
-        const localBalance = new BN(channelBalances.channel_balance_mtokens);
-        if(amountBDMtokens.gt(localBalance)) {
+        if(!useCached || this.lightningLiquidityCache==null || this.lightningLiquidityCache.timestamp<Date.now()-this.LIGHTNING_LIQUIDITY_CACHE_TIMEOUT) {
+            const channelBalances = await lncli.getChannelBalance({lnd: this.LND});
+            this.lightningLiquidityCache = {
+                liquidityMTokens: new BN(channelBalances.channel_balance_mtokens),
+                timestamp: Date.now()
+            }
+        }
+        if(amountBDMtokens.gt(this.lightningLiquidityCache.liquidityMTokens)) {
             throw {
                 code: 20002,
                 msg: "Not enough liquidity"
@@ -710,7 +721,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         if(!is_snowflake) try {
             obj = await lncli.probeForRoute(probeReq);
         } catch (e) {
-            //TODO: Properly handle error, such that only probe failed error is consumed, and e.g. network errors are thrown
+            handleLndError(e);
         }
         abortSignal.throwIfAborted();
 
@@ -736,7 +747,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             try {
                 routingObj = await lncli.getRouteToDestination(probeReq);
             } catch (e) {
-                //TODO: Properly handle error, such that only routing failed error is consumed, and e.g. network errors are thrown
+                handleLndError(e);
             }
             abortSignal.throwIfAborted();
 
@@ -973,18 +984,29 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             }
             metadata.request = parsedBody;
 
+            const request = {
+                raw: req,
+                parsed: parsedBody,
+                metadata
+            };
+            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
+
             const responseStream = res.responseStream;
 
             const currentTimestamp: BN = new BN(Math.floor(Date.now()/1000));
-            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
             //Check request params
             this.checkAmount(parsedBody.amount, parsedBody.exactIn);
             this.checkMaxFee(parsedBody.maxFee);
-            const {parsedPR, halfConfidence} = this.checkPaymentRequest(parsedBody.pr);
             this.checkExpiry(parsedBody.expiryTimestamp, currentTimestamp);
             await this.checkVaultInitialized(parsedBody.token);
-            const {baseFee, feePPM} = await this.checkPlugins(req, parsedBody, metadata);
+            const {parsedPR, halfConfidence} = this.checkPaymentRequest(parsedBody.pr);
+            const requestedAmount = {
+                input: !!parsedBody.exactIn,
+                amount: !!parsedBody.exactIn ? parsedBody.amount : new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000))
+            };
+            const fees = await this.preCheckAmounts(request, requestedAmount, useToken);
+            metadata.times.requestChecked = Date.now();
 
             //Create abort controller for parallel pre-fetches
             const abortController = this.getAbortController(responseStream);
@@ -992,8 +1014,11 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             //Pre-fetch
             const {pricePrefetchPromise, signDataPrefetchPromise} = this.getToBtcPrefetches(useToken, responseStream, abortController);
 
+            //Check if prior payment has been made
+            await this.checkPriorPayment(parsedPR.tagsObject.payment_hash, abortController.signal);
+            metadata.times.priorPaymentChecked = Date.now();
+
             //Check amounts
-            const amount: BN = parsedBody.exactIn ? parsedBody.amount : new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
             const {
                 amountBD,
                 networkFeeData,
@@ -1001,19 +1026,16 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
                 swapFee,
                 swapFeeInToken,
                 networkFeeInToken
-            } = await this.checkToBtcAmount(parsedBody.exactIn, amount, useToken, {baseFee, feePPM}, async (amountBD: BN) => {
-                metadata.times.requestChecked = Date.now();
-
-                //Check if prior payment has been made
-                await this.checkPriorPayment(parsedPR.tagsObject.payment_hash, abortController.signal);
-                metadata.times.priorPaymentChecked = Date.now();
-
-                await this.checkLiquidity(amountBD, abortController.signal);
+            } = await this.checkToBtcAmount(request, requestedAmount, fees, useToken, async (amountBD: BN) => {
+                //Check if we have enough liquidity to process the swap
+                await this.checkLiquidity(amountBD, abortController.signal, true);
                 metadata.times.liquidityChecked = Date.now();
 
-                if(parsedBody.exactIn) parsedBody.maxFee = await this.swapPricing.getToBtcSwapAmount(parsedBody.maxFee, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+                const maxFee = parsedBody.exactIn ?
+                    await this.swapPricing.getToBtcSwapAmount(parsedBody.maxFee, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise) :
+                    parsedBody.maxFee;
 
-                return await this.checkAndGetNetworkFee(amountBD, parsedBody.maxFee, parsedBody.expiryTimestamp, currentTimestamp, parsedBody.pr, metadata, abortController.signal);
+                return await this.checkAndGetNetworkFee(amountBD, maxFee, parsedBody.expiryTimestamp, currentTimestamp, parsedBody.pr, metadata, abortController.signal);
             }, abortController.signal, pricePrefetchPromise);
             metadata.times.priceCalculated = Date.now();
 

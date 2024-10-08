@@ -85,11 +85,20 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
         "p2tr" : "p2tr"
     };
     protected readonly LND_CHANGE_OUTPUT_TYPE = "p2tr";
-
+    protected readonly UTXO_CACHE_TIMEOUT = 5*1000;
+    protected readonly CHANNEL_COUNT_CACHE_TIMEOUT = 30*1000;
 
     readonly type = SwapHandlerType.TO_BTC;
 
     activeSubscriptions: {[txId: string]: ToBtcSwapAbs<T>} = {};
+    cachedUtxos: {
+        utxos: (CoinselectTxInput & {confirmations: number})[],
+        timestamp: number
+    };
+    cachedChannelCount: {
+        count: number,
+        timestamp: number
+    };
     bitcoinRpc: BitcoinRpc<BtcBlock>;
 
     readonly config: ToBtcConfig;
@@ -163,26 +172,33 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      *
      * @private
      */
-    protected async getUtxoPool(): Promise<(CoinselectTxInput & {confirmations: number})[]> {
-        const utxos = await this.getSpendableUtxos();
+    protected async getUtxoPool(useCached: boolean = false): Promise<(CoinselectTxInput & {confirmations: number})[]> {
+        if(!useCached || this.cachedUtxos==null || this.cachedUtxos.timestamp<Date.now()-this.UTXO_CACHE_TIMEOUT) {
+            const utxos = await this.getSpendableUtxos();
 
-        let totalSpendable = 0;
-        const utxoPool = utxos.map(utxo => {
-            totalSpendable += utxo.tokens;
-            return {
-                vout: utxo.transaction_vout,
-                txId: utxo.transaction_id,
-                value: utxo.tokens,
-                type: this.ADDRESS_FORMAT_MAP[utxo.address_format],
-                outputScript: Buffer.from(utxo.output_script, "hex"),
-                address: utxo.address,
-                confirmations: utxo.confirmation_count
+            let totalSpendable = 0;
+            const utxoPool = utxos.map(utxo => {
+                totalSpendable += utxo.tokens;
+                return {
+                    vout: utxo.transaction_vout,
+                    txId: utxo.transaction_id,
+                    value: utxo.tokens,
+                    type: this.ADDRESS_FORMAT_MAP[utxo.address_format],
+                    outputScript: Buffer.from(utxo.output_script, "hex"),
+                    address: utxo.address,
+                    confirmations: utxo.confirmation_count
+                };
+            });
+
+            this.cachedUtxos = {
+                utxos: utxoPool,
+                timestamp: Date.now()
             };
-        });
 
-        this.logger.info("getUtxoPool(): total spendable value: "+totalSpendable+" num utxos: "+utxoPool.length);
+            this.logger.info("getUtxoPool(): total spendable value: "+totalSpendable+" num utxos: "+utxoPool.length);
+        }
 
-        return utxoPool;
+        return this.cachedUtxos.utxos;
     }
 
     /**
@@ -191,6 +207,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param utxoPool
      * @param obj
      * @param satsPerVbyte
+     * @param useCached Whether to use a cached channel count
      * @param initialOutputLength
      * @private
      * @returns true if alright, false if the coinselection doesn't leave enough funds for anchor fees
@@ -199,6 +216,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
         utxoPool: CoinselectTxInput[],
         obj: {inputs?: CoinselectTxInput[], outputs?: CoinselectTxOutput[]},
         satsPerVbyte: number,
+        useCached: boolean = false,
         initialOutputLength: number = 1
     ): Promise<boolean> {
         if(obj.inputs==null || obj.outputs==null) return false;
@@ -224,9 +242,15 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
             leavesValue += changeUtxo.value - (satsPerVbyte * utils.inputBytes(changeUtxo).length);
         }
 
-        const {channels} = await lncli.getChannels({lnd: this.LND});
+        if(!useCached || this.cachedChannelCount==null || this.cachedChannelCount.timestamp<Date.now()-this.CHANNEL_COUNT_CACHE_TIMEOUT) {
+            const {channels} = await lncli.getChannels({lnd: this.LND});
+            this.cachedChannelCount = {
+                count: channels.length,
+                timestamp: Date.now()
+            }
+        }
 
-        return leavesValue > channels.length*this.config.onchainReservedPerChannel;
+        return leavesValue > this.cachedChannelCount.count*this.config.onchainReservedPerChannel;
     }
 
     /**
@@ -252,12 +276,13 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
     /**
      * Computes bitcoin on-chain network fee, takes channel reserve & network fee multiplier into consideration
      *
-     * @param targetAddress
-     * @param targetAmount
+     * @param targetAddress Bitcoin address to send the funds to
+     * @param targetAmount Amount of funds to send to the address
+     * @param estimate Whether the chain fee should be just estimated and therefore cached utxo set could be used
      * @private
      * @returns Fee estimate & inputs/outputs to use when constructing transaction, or null in case of not enough funds
      */
-    private async getChainFee(targetAddress: string, targetAmount: number): Promise<{
+    private async getChainFee(targetAddress: string, targetAmount: number, estimate: boolean = false): Promise<{
         satsPerVbyte: number,
         fee: number,
         inputs: CoinselectTxInput[],
@@ -271,7 +296,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
 
         if(satsPerVbyte==null) return null;
 
-        const utxoPool: CoinselectTxInput[] = await this.getUtxoPool();
+        const utxoPool: CoinselectTxInput[] = await this.getUtxoPool(estimate);
 
         let obj = coinSelect(utxoPool, [{
             address: targetAddress,
@@ -281,7 +306,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
 
         if(obj.inputs==null || obj.outputs==null) return null;
 
-        if(!await this.isLeavingEnoughForLightningAnchors(utxoPool, obj, satsPerVbyte)) return null;
+        if(!await this.isLeavingEnoughForLightningAnchors(utxoPool, obj, satsPerVbyte, estimate)) return null;
 
         this.logger.info("getChainFee(): fee estimated,"+
             " target: "+targetAddress+
@@ -681,6 +706,8 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
         await this.sendRawTransaction(rawTx);
         if(swap.metadata!=null) swap.metadata.times.payTxSent = Date.now();
         this.swapLogger.info(swap, "sendBitcoinPayment(): btc transaction generated, signed & broadcasted, txId: "+tx.getId()+" address: "+swap.address);
+        //Invalidate the UTXO cache
+        this.cachedUtxos = null;
 
         await swap.setState(ToBtcSwapState.BTC_SENT);
         await this.storageManager.saveData(swap.getHash(), swap.getSequence(), swap);
@@ -900,27 +927,27 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
         };
     }
 
-    /**
-     * Checks if the request should be processed by calling plugins
-     *
-     * @param req
-     * @param parsedBody
-     * @param metadata
-     * @throws {DefinedRuntimeError} will throw an error if the plugin cancelled the request
-     */
-    private async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: ToBtcRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
-        const pluginResult = await PluginManager.onSwapRequestToBtc(req, parsedBody, metadata);
-
-        if(pluginResult.throw) throw {
-            code: 29999,
-            msg: pluginResult.throw
-        };
-
-        return {
-            baseFee: pluginResult.baseFee || this.config.baseFee,
-            feePPM: pluginResult.feePPM || this.config.feePPM
-        };
-    }
+    // /**
+    //  * Checks if the request should be processed by calling plugins
+    //  *
+    //  * @param req
+    //  * @param parsedBody
+    //  * @param metadata
+    //  * @throws {DefinedRuntimeError} will throw an error if the plugin cancelled the request
+    //  */
+    // private async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: ToBtcRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
+    //     const pluginResult = await PluginManager.onSwapRequestToBtc(req, parsedBody, metadata);
+    //
+    //     if(pluginResult.throw) throw {
+    //         code: 29999,
+    //         msg: pluginResult.throw
+    //     };
+    //
+    //     return {
+    //         baseFee: pluginResult.baseFee || this.config.baseFee,
+    //         feePPM: pluginResult.feePPM || this.config.feePPM
+    //     };
+    // }
 
     /**
      * Checks & returns the network fee needed for a transaction
@@ -930,7 +957,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @throws {DefinedRuntimeError} will throw an error if there are not enough BTC funds
      */
     private async checkAndGetNetworkFee(address: string, amount: BN): Promise<{ networkFee: BN, satsPerVbyte: BN }> {
-        let chainFeeResp = await this.getChainFee(address, amount.toNumber());
+        let chainFeeResp = await this.getChainFee(address, amount.toNumber(), true);
 
         const hasEnoughFunds = chainFeeResp!=null;
         if(!hasEnoughFunds) throw {
@@ -991,6 +1018,14 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
             };
             metadata.request = parsedBody;
 
+            const requestedAmount = {input: !!parsedBody.exactIn, amount: parsedBody.amount};
+            const request = {
+                raw: req,
+                parsed: parsedBody,
+                metadata
+            };
+            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
+
             const responseStream = res.responseStream;
 
             this.checkNonceValid(parsedBody.nonce);
@@ -998,14 +1033,12 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
             this.checkRequiredConfirmations(parsedBody.confirmations);
             this.checkAddress(parsedBody.address);
             await this.checkVaultInitialized(parsedBody.token);
-            const {baseFee, feePPM} = await this.checkPlugins(req, parsedBody, metadata);
+            const fees = await this.preCheckAmounts(request, requestedAmount, useToken);
 
             metadata.times.requestChecked = Date.now();
 
             //Initialize abort controller for the parallel async operations
             const abortController = this.getAbortController(responseStream);
-
-            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
             const {pricePrefetchPromise, signDataPrefetchPromise} = this.getToBtcPrefetches(useToken, responseStream, abortController);
 
@@ -1016,7 +1049,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
                 swapFee,
                 swapFeeInToken,
                 networkFeeInToken
-            } = await this.checkToBtcAmount(parsedBody.exactIn, parsedBody.amount, useToken, {baseFee, feePPM}, async (amount: BN) => {
+            } = await this.checkToBtcAmount(request, requestedAmount, fees, useToken, async (amount: BN) => {
                 metadata.times.amountsChecked = Date.now();
                 const resp = await this.checkAndGetNetworkFee(parsedBody.address, amount);
                 metadata.times.chainFeeCalculated = Date.now();

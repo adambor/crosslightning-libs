@@ -236,30 +236,6 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
     }
 
     /**
-     * Checks if the request should be processed by calling plugins
-     *
-     * @param req
-     * @param parsedBody
-     * @param metadata
-     * @throws {DefinedRuntimeError} will throw an error if the plugin cancelled the request
-     */
-    private async checkPlugins(req: Request & {paramReader: IParamReader}, parsedBody: FromBtcRequestType, metadata: any): Promise<{baseFee: BN, feePPM: BN}> {
-        const pluginResult = await PluginManager.onSwapRequestFromBtc(req, parsedBody, metadata);
-
-        if(pluginResult.throw) {
-            throw {
-                code: 29999,
-                msg: pluginResult.throw
-            };
-        }
-
-        return {
-            baseFee: pluginResult.baseFee || this.config.baseFee,
-            feePPM: pluginResult.feePPM || this.config.feePPM
-        };
-    }
-
-    /**
      * Calculates the requested claimer bounty, based on client's request
      *
      * @param req
@@ -361,12 +337,18 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
             };
             metadata.request = parsedBody;
 
+            const requestedAmount = {input: !parsedBody.exactOut, amount: parsedBody.amount};
+            const request = {
+                raw: req,
+                parsed: parsedBody,
+                metadata
+            };
+            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
+
             //Check request params
             this.checkSequence(parsedBody.sequence);
-            const {baseFee, feePPM} = await this.checkPlugins(req, parsedBody, metadata);
+            const fees = await this.preCheckAmounts(request, requestedAmount, useToken);
             metadata.times.requestChecked = Date.now();
-
-            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
 
             //Create abortController for parallel prefetches
             const responseStream = res.responseStream;
@@ -387,7 +369,7 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
                 swapFee,
                 swapFeeInToken,
                 totalInToken
-            } = await this.checkFromBtcAmount(parsedBody.exactOut, parsedBody.amount, useToken, {baseFee, feePPM}, abortController.signal, pricePrefetchPromise);
+            } = await this.checkFromBtcAmount(request, requestedAmount, fees, useToken, abortController.signal, pricePrefetchPromise);
             metadata.times.priceCalculated = Date.now();
 
             //Check if we have enough funds to honor the request
