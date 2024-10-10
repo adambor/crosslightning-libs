@@ -699,7 +699,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
         const txFee = this.checkPsbtFee(psbt, tx, swap.satsPerVbyte, coinselectResult.satsPerVbyte);
 
         swap.txId = tx.getId();
-        swap.realNetworkFee = txFee;
+        swap.setRealNetworkFee(txFee);
         await swap.setState(ToBtcSwapState.BTC_SENDING);
         await this.storageManager.saveData(swap.getHash(), swap.getSequence(), swap);
 
@@ -1087,7 +1087,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
             const sigData = await this.getToBtcSignatureData(payObject, req, abortController.signal, signDataPrefetchPromise);
             metadata.times.swapSigned = Date.now();
 
-            const createdSwap = new ToBtcSwapAbs<T>(parsedBody.address, amountBD, swapFee, networkFeeData.networkFee, networkFeeData.satsPerVbyte, parsedBody.nonce, parsedBody.confirmationTarget, new BN(sigData.timeout));
+            const createdSwap = new ToBtcSwapAbs<T>(parsedBody.address, amountBD, swapFee, swapFeeInToken, networkFeeData.networkFee, networkFeeInToken, networkFeeData.satsPerVbyte, parsedBody.nonce, parsedBody.confirmationTarget, new BN(sigData.timeout));
             createdSwap.data = payObject;
             createdSwap.metadata = metadata;
 

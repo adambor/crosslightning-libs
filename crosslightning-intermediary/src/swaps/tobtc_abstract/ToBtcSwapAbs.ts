@@ -1,10 +1,8 @@
 import * as BN from "bn.js";
-import {createHash} from "crypto";
-import * as bitcoin from "bitcoinjs-lib";
-import {Lockable, StorageObject, SwapData} from "crosslightning-base";
-import {SwapHandlerSwap} from "../SwapHandlerSwap";
-import {PluginManager} from "../../plugins/PluginManager";
-import {FromBtcLnSwapState, SwapHandlerType} from "../..";
+import {SwapData} from "crosslightning-base";
+import {SwapHandlerType} from "../..";
+import {ToBtcBaseSwap} from "../ToBtcBaseSwap";
+import {deserializeBN, serializeBN} from "../../utils/Utils";
 
 export enum ToBtcSwapState {
     REFUNDED = -3,
@@ -17,31 +15,26 @@ export enum ToBtcSwapState {
     CLAIMED = 4
 }
 
-export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T, ToBtcSwapState> {
+export class ToBtcSwapAbs<T extends SwapData> extends ToBtcBaseSwap<T, ToBtcSwapState> {
 
     readonly address: string;
     readonly amount: BN;
-    readonly swapFee: BN;
-    readonly networkFee: BN;
     readonly satsPerVbyte: BN;
     readonly nonce: BN;
     readonly preferedConfirmationTarget: number;
     readonly signatureExpiry: BN;
 
-    realNetworkFee: BN;
     txId: string;
 
-    constructor(address: string, amount: BN, swapFee: BN, networkFee: BN, satsPerVbyte: BN, nonce: BN, preferedConfirmationTarget: number, signatureExpiry: BN);
+    constructor(address: string, amount: BN, swapFee: BN, swapFeeInToken: BN, networkFee: BN, networkFeeInToken: BN, satsPerVbyte: BN, nonce: BN, preferedConfirmationTarget: number, signatureExpiry: BN);
     constructor(obj: any);
 
-    constructor(prOrObj: string | any, amount?: BN, swapFee?: BN, networkFee?: BN, satsPerVbyte?: BN, nonce?: BN, preferedConfirmationTarget?: number, signatureExpiry?: BN) {
+    constructor(prOrObj: string | any, amount?: BN, swapFee?: BN, swapFeeInToken?: BN, networkFee?: BN, networkFeeInToken?: BN, satsPerVbyte?: BN, nonce?: BN, preferedConfirmationTarget?: number, signatureExpiry?: BN) {
         if(typeof(prOrObj)==="string") {
-            super();
+            super(swapFee, swapFeeInToken, networkFee, networkFeeInToken);
             this.state = ToBtcSwapState.SAVED;
             this.address = prOrObj;
             this.amount = amount;
-            this.swapFee = swapFee;
-            this.networkFee = networkFee;
             this.satsPerVbyte = satsPerVbyte;
             this.nonce = nonce;
             this.preferedConfirmationTarget = preferedConfirmationTarget;
@@ -50,15 +43,15 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T, ToBtcSw
             super(prOrObj);
             this.address = prOrObj.address;
             this.amount = new BN(prOrObj.amount);
-            this.swapFee = new BN(prOrObj.swapFee);
-            this.networkFee = new BN(prOrObj.networkFee);
             this.satsPerVbyte = new BN(prOrObj.satsPerVbyte);
             this.nonce = new BN(prOrObj.nonce);
             this.preferedConfirmationTarget = prOrObj.preferedConfirmationTarget;
-            this.signatureExpiry = prOrObj.signatureExpiry==null ? null : new BN(prOrObj.signatureExpiry);
+            this.signatureExpiry = deserializeBN(prOrObj.signatureExpiry);
 
-            this.realNetworkFee = prOrObj.realNetworkFee==null ? null : new BN(prOrObj.realNetworkFee);
             this.txId = prOrObj.txId;
+
+            //Compatibility
+            this.quotedNetworkFee ??= deserializeBN(prOrObj.networkFee);
         }
         this.type = SwapHandlerType.TO_BTC;
     }
@@ -67,16 +60,29 @@ export class ToBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T, ToBtcSw
         const partialSerialized = super.serialize();
         partialSerialized.address = this.address;
         partialSerialized.amount = this.amount.toString(10);
-        partialSerialized.swapFee = this.swapFee.toString(10);
-        partialSerialized.networkFee = this.networkFee.toString(10);
         partialSerialized.satsPerVbyte = this.satsPerVbyte.toString(10);
         partialSerialized.nonce = this.nonce.toString(10);
         partialSerialized.preferedConfirmationTarget = this.preferedConfirmationTarget;
-        partialSerialized.signatureExpiry = this.signatureExpiry==null ? null : this.signatureExpiry.toString(10);
+        partialSerialized.signatureExpiry = serializeBN(this.signatureExpiry);
 
-        partialSerialized.realNetworkFee = this.realNetworkFee==null ? null : this.realNetworkFee.toString(10);
         partialSerialized.txId = this.txId;
         return partialSerialized;
+    }
+
+    isInitiated(): boolean {
+        return this.state!==ToBtcSwapState.SAVED;
+    }
+
+    isFailed(): boolean {
+        return this.state===ToBtcSwapState.NON_PAYABLE || this.state===ToBtcSwapState.REFUNDED || this.state===ToBtcSwapState.CANCELED;
+    }
+
+    isSuccess(): boolean {
+        return this.state===ToBtcSwapState.CLAIMED;
+    }
+
+    getOutputAmount(): BN {
+        return this.amount;
     }
 
 }

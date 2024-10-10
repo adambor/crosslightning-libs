@@ -1,8 +1,8 @@
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
-import {SwapHandlerSwap} from "../SwapHandlerSwap";
 import {SwapHandlerType} from "../..";
 import * as bolt11 from "bolt11";
+import {FromBtcBaseSwap} from "../FromBtcBaseSwap";
 
 export enum FromBtcLnSwapState {
     REFUNDED = -2,
@@ -14,37 +14,35 @@ export enum FromBtcLnSwapState {
     SETTLED = 4,
 }
 
-export class FromBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T, FromBtcLnSwapState> {
+export class FromBtcLnSwapAbs<T extends SwapData> extends FromBtcBaseSwap<T, FromBtcLnSwapState> {
 
     readonly pr: string;
-    readonly swapFee: BN;
 
     nonce: number;
     prefix: string;
     timeout: string;
     signature: string;
-    feeRate: any;
+    feeRate: string;
 
     secret: string;
 
-    constructor(pr: string, swapFee: BN);
+    constructor(pr: string, swapFee: BN, swapFeeInToken: BN);
     constructor(obj: any);
 
-    constructor(prOrObj: string | any, swapFee?: BN) {
+    constructor(prOrObj: string | any, swapFee?: BN, swapFeeInToken?: BN) {
         if(typeof(prOrObj)==="string") {
-            super();
+            super(swapFee, swapFeeInToken);
             this.state = FromBtcLnSwapState.CREATED;
             this.pr = prOrObj;
-            this.swapFee = swapFee;
         } else {
             super(prOrObj);
             this.pr = prOrObj.pr;
-            this.swapFee = new BN(prOrObj.swapFee);
             this.secret = prOrObj.secret;
             this.nonce = prOrObj.nonce;
             this.prefix = prOrObj.prefix;
             this.timeout = prOrObj.timeout;
             this.signature = prOrObj.signature;
+            this.feeRate = prOrObj.feeRate;
         }
         this.type = SwapHandlerType.FROM_BTCLN;
     }
@@ -52,22 +50,33 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends SwapHandlerSwap<T, Fro
     serialize(): any {
         const partialSerialized = super.serialize();
         partialSerialized.pr = this.pr;
-        partialSerialized.swapFee = this.swapFee.toString(10);
         partialSerialized.secret = this.secret;
         partialSerialized.nonce = this.nonce;
-        partialSerialized.feeRate = this.feeRate==null ? null : this.feeRate.toString();
         partialSerialized.prefix = this.prefix;
         partialSerialized.timeout = this.timeout;
         partialSerialized.signature = this.signature;
+        partialSerialized.feeRate = this.feeRate;
         return partialSerialized;
-    }
-
-    getInAmount(): BN {
-        return new BN(bolt11.decode(this.pr).millisatoshis).add(new BN(999)).div(new BN(1000));
     }
 
     getSequence(): BN {
         return null;
+    }
+
+    isInitiated(): boolean {
+        return this.state!==FromBtcLnSwapState.CREATED;
+    }
+
+    isFailed(): boolean {
+        return this.state===FromBtcLnSwapState.CANCELED || this.state===FromBtcLnSwapState.REFUNDED;
+    }
+
+    isSuccess(): boolean {
+        return this.state===FromBtcLnSwapState.SETTLED;
+    }
+
+    getTotalInputAmount(): BN {
+        return new BN(bolt11.decode(this.pr).millisatoshis).add(new BN(999)).div(new BN(1000));
     }
 
 }

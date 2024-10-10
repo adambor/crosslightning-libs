@@ -1,10 +1,10 @@
 import * as BN from "bn.js";
 import * as bitcoin from "bitcoinjs-lib";
 import {createHash} from "crypto";
-import {Lockable, StorageObject, SwapData} from "crosslightning-base";
-import {SwapHandlerSwap} from "../SwapHandlerSwap";
-import {PluginManager} from "../../plugins/PluginManager";
+import {SwapData} from "crosslightning-base";
 import {SwapHandlerType} from "../SwapHandler";
+import {deserializeBN, serializeBN} from "../../utils/Utils";
+import {FromBtcBaseSwap} from "../FromBtcBaseSwap";
 
 export enum FromBtcSwapState {
     REFUNDED = -2,
@@ -14,30 +14,27 @@ export enum FromBtcSwapState {
     CLAIMED = 2
 }
 
-export class FromBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T, FromBtcSwapState> {
+export class FromBtcSwapAbs<T extends SwapData> extends FromBtcBaseSwap<T, FromBtcSwapState> {
 
     readonly address: string;
     readonly amount: BN;
-    readonly swapFee: BN;
     authorizationExpiry: BN;
     txId: string;
 
-    constructor(address: string, amount: BN, swapFee: BN);
+    constructor(address: string, amount: BN, swapFee: BN, swapFeeInToken: BN);
     constructor(obj: any);
 
-    constructor(prOrObj: string | any, amount?: BN, swapFee?: BN) {
+    constructor(prOrObj: string | any, amount?: BN, swapFee?: BN, swapFeeInToken?: BN) {
         if(typeof(prOrObj)==="string") {
-            super();
+            super(swapFee, swapFeeInToken);
             this.state = FromBtcSwapState.CREATED;
             this.address = prOrObj;
             this.amount = amount;
-            this.swapFee = swapFee;
         } else {
             super(prOrObj);
             this.address = prOrObj.address;
             this.amount = new BN(prOrObj.amount);
-            this.swapFee = new BN(prOrObj.swapFee);
-            this.authorizationExpiry = prOrObj.authorizationExpiry==null ? null : new BN(prOrObj.authorizationExpiry);
+            this.authorizationExpiry = deserializeBN(prOrObj.authorizationExpiry);
             this.txId = prOrObj.txId;
         }
         this.type = SwapHandlerType.FROM_BTC;
@@ -47,8 +44,7 @@ export class FromBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T, FromB
         const partialSerialized = super.serialize();
         partialSerialized.address = this.address;
         partialSerialized.amount = this.amount.toString(10);
-        partialSerialized.swapFee = this.swapFee.toString(10);
-        partialSerialized.authorizationExpiry = this.authorizationExpiry==null ? null : this.authorizationExpiry.toString(10);
+        partialSerialized.authorizationExpiry = serializeBN(this.authorizationExpiry);
         partialSerialized.txId = this.txId;
         return partialSerialized;
     }
@@ -60,6 +56,22 @@ export class FromBtcSwapAbs<T extends SwapData> extends SwapHandlerSwap<T, FromB
             Buffer.from(this.amount.toArray("le", 8)),
             parsedOutputScript
         ])).digest();
+    }
+
+    isInitiated(): boolean {
+        return this.state!==FromBtcSwapState.CREATED;
+    }
+
+    isFailed(): boolean {
+        return this.state===FromBtcSwapState.CANCELED || this.state===FromBtcSwapState.REFUNDED;
+    }
+
+    isSuccess(): boolean {
+        return this.state===FromBtcSwapState.CLAIMED;
+    }
+
+    getTotalInputAmount(): BN {
+        return this.amount;
     }
 
 }

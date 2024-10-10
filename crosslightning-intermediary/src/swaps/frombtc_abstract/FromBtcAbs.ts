@@ -25,7 +25,6 @@ import {serverParamDecoder} from "../../utils/paramcoders/server/ServerParamDeco
 import {IParamReader} from "../../utils/paramcoders/IParamReader";
 import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
 import {FromBtcBaseConfig, FromBtcBaseSwapHandler} from "../FromBtcBaseSwapHandler";
-import {randomUUID} from "node:crypto";
 
 export type FromBtcConfig = FromBtcBaseConfig & {
     bitcoinNetwork: bitcoin.networks.Network
@@ -376,7 +375,7 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
             await this.checkBalance(totalInToken, balancePrefetch, abortController.signal);
             metadata.times.balanceChecked = Date.now();
 
-            //Create swap
+            //Create swap receive bitcoin address
             const {address: receiveAddress} = await lncli.createChainAddress({
                 lnd: this.LND,
                 format: "p2wpkh"
@@ -426,7 +425,7 @@ export class FromBtcAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromB
             const sigData = await this.getFromBtcSignatureData(data, req, abortController.signal, signDataPrefetchPromise);
             metadata.times.swapSigned = Date.now();
 
-            const createdSwap: FromBtcSwapAbs<T> = new FromBtcSwapAbs<T>(receiveAddress, amountBD, swapFee);
+            const createdSwap: FromBtcSwapAbs<T> = new FromBtcSwapAbs<T>(receiveAddress, amountBD, swapFee, swapFeeInToken);
             createdSwap.data = data;
             createdSwap.metadata = metadata;
             createdSwap.authorizationExpiry = new BN(sigData.timeout);

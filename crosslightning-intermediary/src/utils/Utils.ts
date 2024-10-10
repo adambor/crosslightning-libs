@@ -1,6 +1,7 @@
 import {ParamsDictionary, Request, Response} from "express";
 import * as QueryString from "qs";
 import {ServerParamEncoder} from "./paramcoders/server/ServerParamEncoder";
+import * as BN from "bn.js";
 
 export type DefinedRuntimeError = {
     code: number;
@@ -82,6 +83,14 @@ export function shuffle(array: any[]) {
         [array[currentIndex], array[randomIndex]] = [
             array[randomIndex], array[currentIndex]];
     }
+}
+
+export function serializeBN(bn: BN | null): string | null {
+    return bn==null ? null : bn.toString(10);
+}
+
+export function deserializeBN(str: string | null): BN | null {
+    return str==null ? null : new BN(str);
 }
 
 /**

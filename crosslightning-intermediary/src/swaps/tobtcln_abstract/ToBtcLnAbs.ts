@@ -94,12 +94,12 @@ type ExactInAuthorization = {
     cltvDelta: number,
     routes: LNRoutes,
 
-    maxFee: BN,
-    swapFee: BN,
+    quotedNetworkFeeInToken: BN,
+    swapFeeInToken: BN,
     total: BN,
     confidence: number,
-    routingFeeSats: BN,
-    swapFeeSats: BN,
+    quotedNetworkFee: BN,
+    swapFee: BN,
 
     token: TokenAddress,
     swapExpiry: BN,
@@ -306,8 +306,8 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         if(lnPaymentStatus.is_confirmed) {
             //Save pre-image & real network fee
             swap.secret = lnPaymentStatus.payment.secret;
-            swap.realRoutingFee = new BN(lnPaymentStatus.payment.fee_mtokens).div(new BN(1000));
-            this.swapLogger.info(swap, "processPaymentResult(): invoice paid, secret: "+swap.secret+" realRoutingFee: "+swap.realRoutingFee.toString(10)+" invoice: "+swap.pr);
+            swap.setRealNetworkFee(new BN(lnPaymentStatus.payment.fee_mtokens).div(new BN(1000)));
+            this.swapLogger.info(swap, "processPaymentResult(): invoice paid, secret: "+swap.secret+" realRoutingFee: "+swap.realNetworkFee.toString(10)+" invoice: "+swap.pr);
             await swap.setState(ToBtcLnSwapState.PAID);
             await this.storageManager.saveData(swap.data.getHash(), swap.data.getSequence(), swap);
 
@@ -391,7 +391,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
         };
 
         //Compute max cltv delta
-        const maxFee = swap.maxFee;
+        const maxFee = swap.quotedNetworkFee;
         const maxUsableCLTVdelta = expiryTimestamp.sub(currentTimestamp).sub(this.config.gracePeriod).div(this.config.bitcoinBlocktime.mul(this.config.safetyFactor));
 
         await swap.setState(ToBtcLnSwapState.COMMITED);
@@ -905,7 +905,14 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             metadata.times.swapSigned = Date.now();
 
             //Create swap
-            const createdSwap = new ToBtcLnSwapAbs<T>(parsedBody.pr, parsedAuth.swapFeeSats, parsedAuth.routingFeeSats, new BN(sigData.timeout));
+            const createdSwap = new ToBtcLnSwapAbs<T>(
+                parsedBody.pr,
+                parsedAuth.swapFee,
+                parsedAuth.swapFeeInToken,
+                parsedAuth.quotedNetworkFee,
+                parsedAuth.quotedNetworkFeeInToken,
+                new BN(sigData.timeout)
+            );
             createdSwap.data = payObject;
             createdSwap.metadata = metadata;
 
@@ -921,13 +928,13 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
                 code: 20000,
                 msg: "Success",
                 data: {
-                    maxFee: parsedAuth.maxFee.toString(10),
-                    swapFee: parsedAuth.swapFee.toString(10),
+                    maxFee: parsedAuth.quotedNetworkFeeInToken.toString(10),
+                    swapFee: parsedAuth.swapFeeInToken.toString(10),
                     total: parsedAuth.total.toString(10),
                     confidence: halfConfidence ? parsedAuth.confidence/2000000 : parsedAuth.confidence/1000000,
                     address: this.swapContract.getAddress(),
 
-                    routingFeeSats: parsedAuth.routingFeeSats.toString(10),
+                    routingFeeSats: parsedAuth.quotedNetworkFee.toString(10),
 
                     data: payObject.serialize(),
 
@@ -1051,12 +1058,12 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
                     cltvDelta: parsedPR.tagsObject.min_final_cltv_expiry,
                     routes: networkFeeData.routes,
 
-                    maxFee: networkFeeInToken,
-                    swapFee: swapFeeInToken,
+                    quotedNetworkFeeInToken: networkFeeInToken,
+                    swapFeeInToken,
                     total: totalInToken,
                     confidence: networkFeeData.confidence,
-                    routingFeeSats: networkFeeData.networkFee,
-                    swapFeeSats: swapFee,
+                    quotedNetworkFee: networkFeeData.networkFee,
+                    swapFee,
 
                     token: useToken,
                     swapExpiry: parsedBody.expiryTimestamp,
@@ -1109,7 +1116,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             metadata.times.swapSigned = Date.now();
 
             //Create swap
-            const createdSwap = new ToBtcLnSwapAbs<T>(parsedBody.pr, swapFee, networkFeeData.networkFee, new BN(sigData.timeout));
+            const createdSwap = new ToBtcLnSwapAbs<T>(parsedBody.pr, swapFee, swapFeeInToken, networkFeeData.networkFee, networkFeeInToken, new BN(sigData.timeout));
             createdSwap.data = payObject;
             createdSwap.metadata = metadata;
 

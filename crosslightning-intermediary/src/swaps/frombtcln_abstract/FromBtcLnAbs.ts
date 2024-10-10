@@ -716,7 +716,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
             metadata.times.invoiceCreated = Date.now();
             metadata.invoiceResponse = {...hodlInvoice};
 
-            const createdSwap = new FromBtcLnSwapAbs<T>(hodlInvoice.request, swapFee);
+            const createdSwap = new FromBtcLnSwapAbs<T>(hodlInvoice.request, swapFee, swapFeeInToken);
 
             //Pre-compute the security deposit
             const expiryTimeout = this.config.minCltv.mul(this.config.bitcoinBlocktime.div(this.config.safetyFactor)).sub(this.config.gracePeriod);
