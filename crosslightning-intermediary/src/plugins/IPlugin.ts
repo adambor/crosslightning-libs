@@ -104,11 +104,6 @@ export interface IPlugin<T extends SwapData> {
     onSwapCreate?(swap: SwapHandlerSwap<T>): Promise<void>;
     onSwapRemove?(swap: SwapHandlerSwap<T>): Promise<void>;
 
-    // onSwapRequestToBtcLn?(req: Request & {paramReader: IParamReader}, requestData: ToBtcLnRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}>;
-    // onSwapRequestToBtc?(req: Request & {paramReader: IParamReader}, requestData: ToBtcRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}>;
-    // onSwapRequestFromBtcLn?(req: Request & {paramReader: IParamReader}, requestData: FromBtcLnRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}>;
-    // onSwapRequestFromBtc?(req: Request & {paramReader: IParamReader}, requestData: FromBtcRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}>;
-
     onHandlePreFromBtcQuote?(
         request: {
             raw: Request & {paramReader: IParamReader},

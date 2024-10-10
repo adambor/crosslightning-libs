@@ -206,10 +206,10 @@ export class PluginManager {
         token: TokenAddress,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN}
-    ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh | PluginQuote> {
+    ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh> {
         for(let plugin of PluginManager.plugins.values()) {
             try {
-                if(plugin.onHandlePostFromBtcQuote!=null) {
+                if(plugin.onHandlePreFromBtcQuote!=null) {
                     const result = await plugin.onHandlePreFromBtcQuote(request, requestedAmount, token, constraints, fees);
                     if(result!=null) {
                         if(isQuoteSetFees(result)) return result;
@@ -239,7 +239,7 @@ export class PluginManager {
     ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh | (ToBtcPluginQuote & {networkFeeData: T})> {
         for(let plugin of PluginManager.plugins.values()) {
             try {
-                if(plugin.onHandlePostFromBtcQuote!=null) {
+                if(plugin.onHandlePostToBtcQuote!=null) {
                     let networkFeeData: T;
                     const result = await plugin.onHandlePostToBtcQuote(request, requestedAmount, token, constraints, {
                         baseFeeInBtc: fees.baseFeeInBtc,
@@ -280,10 +280,10 @@ export class PluginManager {
         token: TokenAddress,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN}
-    ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh | PluginQuote> {
+    ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh> {
         for(let plugin of PluginManager.plugins.values()) {
             try {
-                if(plugin.onHandlePostFromBtcQuote!=null) {
+                if(plugin.onHandlePreToBtcQuote!=null) {
                     const result = await plugin.onHandlePreToBtcQuote(request, requestedAmount, token, constraints, fees);
                     if(result!=null) {
                         if(isQuoteSetFees(result)) return result;
