@@ -441,6 +441,7 @@ export class ToBtcLnAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcLn
             } catch (e) {
                 this.swapLogger.error(swap, "processInitialized(): lightning payment error", e);
                 if(isDefinedRuntimeError(e)) {
+                    if(swap.metadata!=null) swap.metadata.payError = e;
                     await swap.setState(ToBtcLnSwapState.NON_PAYABLE);
                     await this.storageManager.saveData(swap.data.getHash(), swap.data.getSequence(), swap);
                     return;

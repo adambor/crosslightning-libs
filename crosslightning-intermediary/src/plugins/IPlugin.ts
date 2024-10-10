@@ -24,12 +24,14 @@ export function isQuoteThrow(obj: any): obj is QuoteThrow {
 
 export type QuoteSetFees = {
     type: "fees"
-    baseFee: BN,
-    feePPM: BN
+    baseFee?: BN,
+    feePPM?: BN
 };
 
 export function isQuoteSetFees(obj: any): obj is QuoteSetFees {
-    return obj.type==="fees" && BN.isBN(obj.baseFee) && BN.isBN(obj.feePPM);
+    return obj.type==="fees" &&
+        (obj.baseFee==null || BN.isBN(obj.baseFee)) &&
+        (obj.feePPM==null || BN.isBN(obj.feePPM));
 }
 
 export type QuoteAmountTooLow = {
