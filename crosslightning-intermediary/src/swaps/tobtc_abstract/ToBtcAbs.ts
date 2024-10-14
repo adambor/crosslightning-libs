@@ -215,7 +215,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
     protected async isLeavingEnoughForLightningAnchors(
         utxoPool: CoinselectTxInput[],
         obj: {inputs?: CoinselectTxInput[], outputs?: CoinselectTxOutput[]},
-        satsPerVbyte: number,
+        satsPerVbyte: BN,
         useCached: boolean = false,
         initialOutputLength: number = 1
     ): Promise<boolean> {
@@ -225,21 +225,23 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
             spentInputs.add(txIn.txId+":"+txIn.vout);
         });
 
-        let leavesValue: number = 0;
+        let leavesValue: BN = new BN(0);
         utxoPool.forEach(val => {
-            const utxoEconomicalValue = (val.value - (satsPerVbyte * utils.inputBytes(val).length));
+            const utxoEconomicalValue: BN = new BN(val.value).sub(satsPerVbyte.mul(new BN(utils.inputBytes(val).length)));
             if (
                 //Utxo not spent
                 !spentInputs.has(val.txId + ":" + val.vout) &&
                 //Only economical utxos at current fees
-                utxoEconomicalValue > 0
+                !utxoEconomicalValue.isNeg()
             ) {
-                leavesValue += utxoEconomicalValue;
+                leavesValue = leavesValue.add(utxoEconomicalValue);
             }
         });
         if(obj.outputs.length>initialOutputLength) {
             const changeUtxo = obj.outputs[obj.outputs.length-1];
-            leavesValue += changeUtxo.value - (satsPerVbyte * utils.inputBytes(changeUtxo).length);
+            leavesValue = leavesValue.add(
+                new BN(changeUtxo.value).sub(satsPerVbyte.mul(new BN(utils.inputBytes(changeUtxo).length)))
+            );
         }
 
         if(!useCached || this.cachedChannelCount==null || this.cachedChannelCount.timestamp<Date.now()-this.CHANNEL_COUNT_CACHE_TIMEOUT) {
@@ -250,7 +252,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
             }
         }
 
-        return leavesValue > this.cachedChannelCount.count*this.config.onchainReservedPerChannel;
+        return leavesValue.gt(new BN(this.config.onchainReservedPerChannel).mul(new BN(this.cachedChannelCount.count)));
     }
 
     /**
@@ -279,22 +281,26 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @param targetAddress Bitcoin address to send the funds to
      * @param targetAmount Amount of funds to send to the address
      * @param estimate Whether the chain fee should be just estimated and therefore cached utxo set could be used
+     * @param multiplierPPM Multiplier for the sats/vB returned from the fee estimator in PPM (parts per million)
      * @private
      * @returns Fee estimate & inputs/outputs to use when constructing transaction, or null in case of not enough funds
      */
-    private async getChainFee(targetAddress: string, targetAmount: number, estimate: boolean = false): Promise<{
-        satsPerVbyte: number,
-        fee: number,
+    private async getChainFee(targetAddress: string, targetAmount: number, estimate: boolean = false, multiplierPPM?: BN): Promise<{
+        satsPerVbyte: BN,
+        networkFee: BN,
         inputs: CoinselectTxInput[],
         outputs: CoinselectTxOutput[]
     } | null> {
-        let satsPerVbyte: number | null = this.config.feeEstimator==null
+        let feeRate: number | null = this.config.feeEstimator==null
             ? await lncli.getChainFeeRate({lnd: this.LND})
                 .then(res => res.tokens_per_vbyte)
                 .catch(e => this.logger.error("getChainFee(): LND getChainFeeRate error", e))
             : await this.config.feeEstimator.estimateFee();
 
-        if(satsPerVbyte==null) return null;
+        if(feeRate==null) return null;
+
+        let satsPerVbyte = new BN(Math.ceil(feeRate));
+        if(multiplierPPM!=null) satsPerVbyte = satsPerVbyte.mul(multiplierPPM).div(new BN(1000000));
 
         const utxoPool: CoinselectTxInput[] = await this.getUtxoPool(estimate);
 
@@ -302,7 +308,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
             address: targetAddress,
             value: targetAmount,
             script: bitcoin.address.toOutputScript(targetAddress, this.config.bitcoinNetwork)
-        }], satsPerVbyte, this.LND_CHANGE_OUTPUT_TYPE);
+        }], satsPerVbyte.toNumber(), this.LND_CHANGE_OUTPUT_TYPE);
 
         if(obj.inputs==null || obj.outputs==null) return null;
 
@@ -314,10 +320,11 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
             " fee: "+obj.fee+
             " sats/vB: "+satsPerVbyte+
             " inputs: "+obj.inputs.length+
-            " outputs: "+obj.outputs.length);
+            " outputs: "+obj.outputs.length+
+            " multiplier: "+(multiplierPPM==null ? 1 : multiplierPPM.toNumber()/1000000));
 
         return {
-            fee: obj.fee,
+            networkFee: new BN(obj.fee),
             satsPerVbyte,
             outputs: obj.outputs,
             inputs: obj.inputs
@@ -529,14 +536,13 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @private
      * @throws DefinedRuntimeError will throw an error in case the actual fee is higher than quoted fee
      */
-    protected checkCalculatedTxFee(quotedSatsPerVbyte: BN, actualSatsPerVbyte: number): void {
-        const feeRate = new BN(actualSatsPerVbyte);
-        const swapPaysEnoughNetworkFee = quotedSatsPerVbyte.gte(feeRate);
+    protected checkCalculatedTxFee(quotedSatsPerVbyte: BN, actualSatsPerVbyte: BN): void {
+        const swapPaysEnoughNetworkFee = quotedSatsPerVbyte.gte(actualSatsPerVbyte);
         if(!swapPaysEnoughNetworkFee) throw {
             code: 90003,
             msg: "Fee changed too much!",
             data: {
-                quotedFee: feeRate.toString(10),
+                quotedFee: actualSatsPerVbyte.toString(10),
                 actualFee: quotedSatsPerVbyte.toString(10)
             }
         };
@@ -556,7 +562,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
         psbt: bitcoin.Psbt,
         tx: bitcoin.Transaction,
         maxAllowedSatsPerVbyte: BN,
-        actualSatsPerVbyte: number
+        actualSatsPerVbyte: BN
     ): BN {
         const txFee = new BN(psbt.getFee());
 
@@ -574,7 +580,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
             actualFee: txFee.toString(10),
             psbtHex: psbt.toHex(),
             maxAllowedSatsPerVbyte: maxAllowedSatsPerVbyte.toString(10),
-            actualSatsPerVbyte: actualSatsPerVbyte
+            actualSatsPerVbyte: actualSatsPerVbyte.toString(10)
         }));
 
         return txFee;
@@ -957,7 +963,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
      * @throws {DefinedRuntimeError} will throw an error if there are not enough BTC funds
      */
     private async checkAndGetNetworkFee(address: string, amount: BN): Promise<{ networkFee: BN, satsPerVbyte: BN }> {
-        let chainFeeResp = await this.getChainFee(address, amount.toNumber(), true);
+        let chainFeeResp = await this.getChainFee(address, amount.toNumber(), true, this.config.networkFeeMultiplierPPM);
 
         const hasEnoughFunds = chainFeeResp!=null;
         if(!hasEnoughFunds) throw {
@@ -965,14 +971,7 @@ export class ToBtcAbs<T extends SwapData> extends ToBtcBaseSwapHandler<ToBtcSwap
             msg: "Not enough liquidity"
         };
 
-        const multiplier = this.config.networkFeeMultiplierPPM.toNumber()/1000000;
-
-        const networkFee = new BN(chainFeeResp.fee);
-        const satsPerVbyte = new BN(Math.ceil(chainFeeResp.satsPerVbyte*multiplier));
-
-        this.logger.debug("checkAndGetNetworkFee(): adjusted sats/vB: "+satsPerVbyte.toString(10));
-
-        return { networkFee, satsPerVbyte };
+        return chainFeeResp;
     }
 
     startRestServer(restServer: Express) {
