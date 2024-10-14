@@ -249,7 +249,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
 
         savedSwap.txIds.init = (event as any).meta?.txId;
         if(savedSwap.metadata!=null) savedSwap.metadata.times.initTxReceived = Date.now();
-        if(savedSwap.state===FromBtcLnSwapState.CREATED) {
+        if(savedSwap.state===FromBtcLnSwapState.RECEIVED) {
             await savedSwap.setState(FromBtcLnSwapState.COMMITED);
             savedSwap.data = swapData;
             await this.storageManager.saveData(paymentHash, null, savedSwap);
