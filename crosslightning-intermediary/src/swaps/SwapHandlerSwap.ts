@@ -58,10 +58,10 @@ export abstract class SwapHandlerSwap<T extends SwapData, S = any> extends Locka
      *
      * @param newState
      */
-    async setState(newState: S): Promise<void> {
+    setState(newState: S): Promise<void> {
         const oldState = this.state;
         this.state = newState;
-        await PluginManager.swapStateChange(this, oldState);
+        return PluginManager.swapStateChange(this, oldState);
     }
 
     getHash(): string {
