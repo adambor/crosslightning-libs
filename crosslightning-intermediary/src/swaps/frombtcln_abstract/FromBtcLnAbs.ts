@@ -7,12 +7,10 @@ import {FromBtcLnSwapAbs, FromBtcLnSwapState} from "./FromBtcLnSwapAbs";
 import {MultichainData, SwapHandlerType} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
 import {
-    ChainEvents,
     ChainSwapType,
     ClaimEvent,
     InitializeEvent,
     RefundEvent,
-    SwapContract,
     SwapData,
     TokenAddress
 } from "crosslightning-base";
@@ -586,6 +584,7 @@ export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromB
             msg: "Invoice expired/canceled"
         };
 
+        //TODO: Fix this by providing chain identifier as part of the invoice description
         let validAddress = false;
         for(let key in this.chains.chains) {
             const swapContract = this.chains.chains[key].swapContract;
@@ -729,7 +728,7 @@ export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromB
             metadata.times.invoiceCreated = Date.now();
             metadata.invoiceResponse = {...hodlInvoice};
 
-            const createdSwap = new FromBtcLnSwapAbs(hodlInvoice.request, swapFee, swapFeeInToken);
+            const createdSwap = new FromBtcLnSwapAbs(chainIdentifier, hodlInvoice.request, swapFee, swapFeeInToken);
 
             //Pre-compute the security deposit
             const expiryTimeout = this.config.minCltv.mul(this.config.bitcoinBlocktime.div(this.config.safetyFactor)).sub(this.config.gracePeriod);
@@ -824,15 +823,17 @@ export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromB
 
             const invoice: any =  await this.checkInvoiceStatus(parsedBody.paymentHash);
 
-            const swap: FromBtcLnSwapAbs<T> = await this.storageManager.getData(parsedBody.paymentHash, null);
+            const swap: FromBtcLnSwapAbs = await this.storageManager.getData(parsedBody.paymentHash, null);
             if (swap==null) throw {
                 _httpStatus: 200,
                 code: 10001,
                 msg: "Invoice expired/canceled"
             };
 
+            const swapContract = this.getContract(swap.chainIdentifier);
+
             if (swap.state === FromBtcLnSwapState.RECEIVED) {
-                if (await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature)) throw {
+                if (await swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature)) throw {
                     _httpStatus: 200,
                     code: 10001,
                     msg: "Invoice expired/canceled"
@@ -865,7 +866,7 @@ export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromB
                 code: 10000,
                 msg: "Success",
                 data: {
-                    address: this.swapContract.getAddress(),
+                    address: swapContract.getAddress(),
                     data: swap.serialize().data,
                     nonce: swap.nonce,
                     prefix: swap.prefix,

@@ -170,6 +170,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData,
      * @param pricePrefetchPromise
      * @throws {DefinedRuntimeError} will throw an error if the amount is outside minimum/maximum bounds
      */
+    //TODO: Use chainIdentifier for pricing!!!
     protected async checkFromBtcAmount(
         request: {
             raw: Request & {paramReader: IParamReader},

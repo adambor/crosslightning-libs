@@ -111,7 +111,12 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S>, S = an
     }
 
     protected getContract(identifier: string): SwapContract<any, any, any, any> {
-        return this.chains.chains[identifier]?.swapContract;
+        if(this.chains.chains[identifier]==null)
+            throw {
+                code: 20200,
+                msg: "Invalid chain specified!"
+            };
+        return this.chains.chains[identifier].swapContract;
     }
 
     protected abstract processPastSwaps(): Promise<void>;

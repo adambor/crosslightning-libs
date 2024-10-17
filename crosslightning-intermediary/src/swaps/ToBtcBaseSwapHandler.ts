@@ -21,19 +21,22 @@ export type ToBtcBaseConfig = SwapBaseConfig & {
 export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S>, S> extends SwapHandler<V, S> {
 
     readonly pdaExistsForToken: {
-        [token: string]: boolean
+        [chainIdentifier: string]: {
+            [token: string]: boolean
+        }
     } = {};
 
     abstract config: ToBtcBaseConfig;
 
     protected async checkVaultInitialized(chainIdentifier: string, token: string): Promise<void> {
-        if(!this.pdaExistsForToken[token]) {
-            this.logger.debug("checkVaultInitialized(): checking vault exists for token: "+token);
+        if(!this.pdaExistsForToken[chainIdentifier] || !this.pdaExistsForToken[chainIdentifier][token]) {
+            this.logger.debug("checkVaultInitialized(): checking vault exists for chain: "+chainIdentifier+" token: "+token);
             const swapContract = this.getContract(chainIdentifier);
             const reputation = await swapContract.getIntermediaryReputation(swapContract.getAddress(), swapContract.toTokenAddress(token));
-            this.logger.debug("checkVaultInitialized(): vault state, token: "+token+" exists: "+(reputation!=null));
+            this.logger.debug("checkVaultInitialized(): vault state, chain: "+chainIdentifier+" token: "+token+" exists: "+(reputation!=null));
             if(reputation!=null) {
-                this.pdaExistsForToken[token] = true;
+                if(this.pdaExistsForToken[chainIdentifier]==null) this.pdaExistsForToken[chainIdentifier] = {};
+                this.pdaExistsForToken[chainIdentifier][token] = true;
             } else {
                 throw {
                     code: 20201,
@@ -98,6 +101,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S
      * @throws {DefinedRuntimeError} will throw an error if the amount is outside minimum/maximum bounds,
      *  or if we don't have enough funds (getNetworkFee callback throws)
      */
+    //TODO: Use chainIdentifier for pricing!!!
     protected async checkToBtcAmount<T extends {networkFee: BN}>(
         request: {
             raw: Request & {paramReader: IParamReader},

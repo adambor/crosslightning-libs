@@ -5,12 +5,10 @@ import {FromBtcSwapAbs, FromBtcSwapState} from "./FromBtcSwapAbs";
 import {MultichainData, SwapHandlerType} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
 import {
-    ChainEvents,
     ChainSwapType,
     ClaimEvent,
     InitializeEvent,
     RefundEvent,
-    SwapContract,
     SwapData,
     TokenAddress
 } from "crosslightning-base";
