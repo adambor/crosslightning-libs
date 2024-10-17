@@ -14,7 +14,7 @@ export enum FromBtcLnSwapState {
     SETTLED = 4,
 }
 
-export class FromBtcLnSwapAbs<T extends SwapData> extends FromBtcBaseSwap<T, FromBtcLnSwapState> {
+export class FromBtcLnSwapAbs<T extends SwapData = SwapData> extends FromBtcBaseSwap<T, FromBtcLnSwapState> {
 
     readonly pr: string;
 

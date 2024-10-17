@@ -2,7 +2,7 @@ import {SwapData} from "crosslightning-base";
 import {SwapHandlerSwap} from "./SwapHandlerSwap";
 import * as BN from "bn.js";
 
-export abstract class FromBtcBaseSwap<T extends SwapData, S> extends SwapHandlerSwap<T, S> {
+export abstract class FromBtcBaseSwap<T extends SwapData, S = any> extends SwapHandlerSwap<T, S> {
 
     getInputAmount(): BN {
         return this.getTotalInputAmount().sub(this.getSwapFee().inInputToken);

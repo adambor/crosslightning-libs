@@ -14,21 +14,21 @@ export enum FromBtcSwapState {
     CLAIMED = 2
 }
 
-export class FromBtcSwapAbs<T extends SwapData> extends FromBtcBaseSwap<T, FromBtcSwapState> {
+export class FromBtcSwapAbs<T extends SwapData = SwapData> extends FromBtcBaseSwap<T, FromBtcSwapState> {
 
     readonly address: string;
     readonly amount: BN;
     authorizationExpiry: BN;
     txId: string;
 
-    constructor(address: string, amount: BN, swapFee: BN, swapFeeInToken: BN);
+    constructor(chainIdentifier: string, address: string, amount: BN, swapFee: BN, swapFeeInToken: BN);
     constructor(obj: any);
 
-    constructor(prOrObj: string | any, amount?: BN, swapFee?: BN, swapFeeInToken?: BN) {
+    constructor(prOrObj: string | any, address?: string, amount?: BN, swapFee?: BN, swapFeeInToken?: BN) {
         if(typeof(prOrObj)==="string") {
-            super(swapFee, swapFeeInToken);
+            super(prOrObj, swapFee, swapFeeInToken);
             this.state = FromBtcSwapState.CREATED;
-            this.address = prOrObj;
+            this.address = address;
             this.amount = amount;
         } else {
             super(prOrObj);

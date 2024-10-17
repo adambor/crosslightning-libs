@@ -4,8 +4,9 @@ import {PluginManager} from "../plugins/PluginManager";
 import * as BN from "bn.js";
 import {deserializeBN, serializeBN} from "../utils/Utils";
 
-export abstract class SwapHandlerSwap<T extends SwapData, S = any> extends Lockable implements StorageObject {
+export abstract class SwapHandlerSwap<T extends SwapData = SwapData, S = any> extends Lockable implements StorageObject {
 
+    chainIdentifier: string;
     state: S;
 
     type: SwapHandlerType;
@@ -23,18 +24,20 @@ export abstract class SwapHandlerSwap<T extends SwapData, S = any> extends Locka
     readonly swapFee: BN;
     readonly swapFeeInToken: BN;
 
-    protected constructor(swapFee: BN, swapFeeInToken: BN);
+    protected constructor(chainIdentifier: string, swapFee: BN, swapFeeInToken: BN);
     protected constructor(obj: any);
 
-    protected constructor(obj?: any | BN, swapFeeInToken?: BN) {
+    protected constructor(obj?: any | string, swapFee?: BN, swapFeeInToken?: BN) {
         super();
-        if(BN.isBN(obj) && BN.isBN(swapFeeInToken)) {
-            this.swapFee = obj;
+        if(typeof(obj)==="string" && BN.isBN(swapFee) && BN.isBN(swapFeeInToken)) {
+            this.chainIdentifier = obj;
+            this.swapFee = swapFee;
             this.swapFeeInToken = swapFeeInToken;
             return;
         } else {
             this.data = obj.data==null ? null : SwapData.deserialize(obj.data);
             this.metadata = obj.metadata;
+            this.chainIdentifier = obj.chainIdentifier;
             this.txIds = obj.txIds || {};
             this.state = obj.state;
             this.swapFee = deserializeBN(obj.swapFee);
@@ -46,6 +49,7 @@ export abstract class SwapHandlerSwap<T extends SwapData, S = any> extends Locka
         return {
             state: this.state,
             data: this.data==null ? null : this.data.serialize(),
+            chainIdentifier: this.chainIdentifier,
             metadata: this.metadata,
             txIds: this.txIds,
             swapFee: serializeBN(this.swapFee),
@@ -78,7 +82,7 @@ export abstract class SwapHandlerSwap<T extends SwapData, S = any> extends Locka
      */
     getIdentifier(): string {
         if(this.getSequence()!=null) {
-            return this.getHash()+"_"+this.getSequence().toString(16);
+            return this.chainIdentifier+"_"+this.getHash()+"_"+this.getSequence().toString(16);
         }
         return this.getHash();
     }

@@ -1,10 +1,10 @@
 import * as BN from "bn.js";
-import {Express} from "express";
+import {Express, Request} from "express";
 import * as lncli from "ln-service";
 import {createHash} from "crypto";
 import * as bolt11 from "bolt11";
 import {FromBtcLnSwapAbs, FromBtcLnSwapState} from "./FromBtcLnSwapAbs";
-import {SwapHandlerType} from "../SwapHandler";
+import {MultichainData, SwapHandlerType} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";
 import {
     ChainEvents,
@@ -44,28 +44,28 @@ export type FromBtcLnRequestType = {
 /**
  * Swap handler handling from BTCLN swaps using submarine swaps
  */
-export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs<T>, T, FromBtcLnSwapState> {
+export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromBtcLnSwapState> {
 
     readonly type = SwapHandlerType.FROM_BTCLN;
 
     readonly config: FromBtcLnConfig;
 
     constructor(
-        storageDirectory: IIntermediaryStorage<FromBtcLnSwapAbs<T>>,
+        storageDirectory: IIntermediaryStorage<FromBtcLnSwapAbs>,
         path: string,
-        swapContract: SwapContract<T, any, any, any>,
-        chainEvents: ChainEvents<T>,
+        chains: MultichainData,
         allowedTokens: TokenAddress[],
         lnd: AuthenticatedLnd,
         swapPricing: ISwapPrice,
         config: FromBtcLnConfig
     ) {
-        super(storageDirectory, path, swapContract, chainEvents, allowedTokens, lnd, swapPricing);
+        super(storageDirectory, path, chains, allowedTokens, lnd, swapPricing);
         this.config = config;
         this.config.invoiceTimeoutSeconds = this.config.invoiceTimeoutSeconds || 90;
     }
 
-    protected async processPastSwap(swap: FromBtcLnSwapAbs<T>): Promise<"REFUND" | "SETTLE" | "CANCEL" | null> {
+    protected async processPastSwap(swap: FromBtcLnSwapAbs): Promise<"REFUND" | "SETTLE" | "CANCEL" | null> {
+        const swapContract = this.getContract(swap.chainIdentifier);
         if(swap.state===FromBtcLnSwapState.CREATED) {
             //Check if already paid
             const parsedPR = bolt11.decode(swap.pr);
@@ -105,9 +105,9 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         if(swap.state===FromBtcLnSwapState.RECEIVED) {
             const parsedPR = bolt11.decode(swap.pr);
 
-            const isAuthorizationExpired = await this.swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature);
+            const isAuthorizationExpired = await swapContract.isInitAuthorizationExpired(swap.data, swap.timeout, swap.prefix, swap.signature);
             if(isAuthorizationExpired) {
-                const isCommited = await this.swapContract.isCommited(swap.data);
+                const isCommited = await swapContract.isCommited(swap.data);
 
                 if(!isCommited) {
                     this.swapLogger.info(swap, "processPastSwap(state=RECEIVED): swap not committed before authorization expiry, cancelling the LN invoice, invoice: "+swap.pr);
@@ -128,7 +128,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
             const isExpired = expiryTime!=null && expiryTime.lt(currentTime);
             if(!isExpired) return null;
 
-            const isCommited = await this.swapContract.isCommited(swap.data);
+            const isCommited = await swapContract.isCommited(swap.data);
             if(isCommited) {
                 this.swapLogger.info(swap, "processPastSwap(state=COMMITED): swap timed out, refunding to self, invoice: "+swap.pr);
                 return "REFUND";
@@ -142,13 +142,14 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         if(swap.state===FromBtcLnSwapState.CANCELED) return "CANCEL";
     }
 
-    protected async refundSwaps(refundSwaps: FromBtcLnSwapAbs<T>[]) {
+    protected async refundSwaps(refundSwaps: FromBtcLnSwapAbs[]) {
         for(let refundSwap of refundSwaps) {
-            const unlock = refundSwap.lock(this.swapContract.refundTimeout);
+            const swapContract = this.getContract(refundSwap.chainIdentifier);
+            const unlock = refundSwap.lock(swapContract.refundTimeout);
             if(unlock==null) continue;
 
             this.swapLogger.debug(refundSwap, "refundSwaps(): initiate refund of swap");
-            await this.swapContract.refund(refundSwap.data, true, false, true);
+            await swapContract.refund(refundSwap.data, true, false, true);
             this.swapLogger.info(refundSwap, "refundsSwaps(): swap refunded, invoice: "+refundSwap.pr);
 
             await refundSwap.setState(FromBtcLnSwapState.REFUNDED);
@@ -156,7 +157,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         }
     }
 
-    protected async cancelInvoices(swaps: FromBtcLnSwapAbs<T>[]) {
+    protected async cancelInvoices(swaps: FromBtcLnSwapAbs[]) {
         for(let swap of swaps) {
             //Refund
             const paymentHash = swap.data.getHash();
@@ -173,7 +174,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         }
     }
 
-    protected async settleInvoices(swaps: FromBtcLnSwapAbs<T>[]) {
+    protected async settleInvoices(swaps: FromBtcLnSwapAbs[]) {
         for(let swap of swaps) {
             try {
                 await lncli.settleHodlInvoice({
@@ -195,9 +196,9 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
      */
     protected async processPastSwaps() {
 
-        const settleInvoices: FromBtcLnSwapAbs<T>[] = [];
-        const cancelInvoices: FromBtcLnSwapAbs<T>[] = [];
-        const refundSwaps: FromBtcLnSwapAbs<T>[] = [];
+        const settleInvoices: FromBtcLnSwapAbs[] = [];
+        const cancelInvoices: FromBtcLnSwapAbs[] = [];
+        const refundSwaps: FromBtcLnSwapAbs[] = [];
 
         const queriedData = await this.storageManager.query([
             {
@@ -231,19 +232,20 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         await this.settleInvoices(settleInvoices);
     }
 
-    protected async processInitializeEvent(event: InitializeEvent<T>): Promise<void> {
+    protected async processInitializeEvent(chainIdentifier: string, event: InitializeEvent<SwapData>): Promise<void> {
         //Only process HTLC requests
         if (event.swapType !== ChainSwapType.HTLC) return;
 
         const swapData = await event.swapData();
 
-        if (!this.swapContract.areWeOfferer(swapData)) return;
+        const swapContract = this.getContract(chainIdentifier);
+        if (!swapContract.areWeOfferer(swapData)) return;
         if (swapData.isPayIn()) return;
 
         const paymentHash = event.paymentHash;
 
         const savedSwap = await this.storageManager.getData(paymentHash, null);
-        if (savedSwap==null) return;
+        if (savedSwap==null || savedSwap.chainIdentifier!==chainIdentifier) return;
 
         this.swapLogger.info(savedSwap, "SC: InitializeEvent: HTLC initialized by the client, invoice: "+savedSwap.pr);
 
@@ -256,7 +258,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         }
     }
 
-    protected async processClaimEvent(event: ClaimEvent<T>): Promise<void> {
+    protected async processClaimEvent(chainIdentifier: string, event: ClaimEvent<SwapData>): Promise<void> {
         //Claim
         //This is the important part, we need to catch the claim TX, else we may lose money
         const secret: Buffer = Buffer.from(event.secret, "hex");
@@ -265,7 +267,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         const paymentHashHex = paymentHash.toString("hex");
 
         const savedSwap = await this.storageManager.getData(paymentHashHex, null);
-        if (savedSwap==null) return ;
+        if (savedSwap==null || savedSwap.chainIdentifier!==chainIdentifier) return;
 
         savedSwap.txIds.claim = (event as any).meta?.txId;
         if(savedSwap.metadata!=null) savedSwap.metadata.times.claimTxReceived = Date.now();
@@ -290,13 +292,13 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
 
     }
 
-    protected async processRefundEvent(event: RefundEvent<T>): Promise<void> {
+    protected async processRefundEvent(chainIdentifier: string, event: RefundEvent<SwapData>): Promise<void> {
         //Refund
         //Try to get the hash from the refundMap
         if (event.paymentHash == null) return;
 
         const savedSwap = await this.storageManager.getData(event.paymentHash, null);
-        if (savedSwap==null) return;
+        if (savedSwap==null || savedSwap.chainIdentifier!==chainIdentifier) return;
 
         savedSwap.txIds.refund = (event as any).meta?.txId;
 
@@ -324,7 +326,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
      * @param invoiceData
      * @param invoice
      */
-    private async htlcReceived(invoiceData: FromBtcLnSwapAbs<T>, invoice: any) {
+    private async htlcReceived(invoiceData: FromBtcLnSwapAbs, invoice: any) {
         this.swapLogger.debug(invoiceData, "htlcReceived(): invoice: "+invoice);
         if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcReceived = Date.now();
 
@@ -335,9 +337,9 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         const abortController = new AbortController();
 
         //Pre-fetch data
-        const balancePrefetch: Promise<BN> = this.getBalancePrefetch(useToken, abortController);
+        const balancePrefetch: Promise<BN> = this.getBalancePrefetch(invoiceData.chainIdentifier, useToken, abortController);
         const blockheightPrefetch = this.getBlockheightPrefetch(abortController);
-        const signDataPrefetchPromise: Promise<any> = this.getSignDataPrefetch(abortController);
+        const signDataPrefetchPromise: Promise<any> = this.getSignDataPrefetch(invoiceData.chainIdentifier, abortController);
 
         let expiryTimeout: BN;
         try {
@@ -355,10 +357,12 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
             throw e;
         }
 
+        const swapContract = this.getContract(invoiceData.chainIdentifier);
+
         //Create real swap data
-        const payInvoiceObject: T = await this.swapContract.createSwapData(
+        const payInvoiceObject: SwapData = await swapContract.createSwapData(
             ChainSwapType.HTLC,
-            this.swapContract.getAddress(),
+            swapContract.getAddress(),
             invoice.description,
             useToken,
             sendAmount,
@@ -376,7 +380,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcSwapCreated = Date.now();
 
         //Sign swap data
-        const sigData = await this.swapContract.getInitSignature(
+        const sigData = await swapContract.getInitSignature(
             payInvoiceObject,
             this.config.authorizationTimeout,
             signDataPrefetchPromise==null ? null : await signDataPrefetchPromise,
@@ -531,7 +535,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
      *
      * @param invoiceData
      */
-    private async cancelSwapAndInvoice(invoiceData: FromBtcLnSwapAbs<T>): Promise<void> {
+    private async cancelSwapAndInvoice(invoiceData: FromBtcLnSwapAbs): Promise<void> {
         if(invoiceData.state!==FromBtcLnSwapState.CREATED) return;
         await invoiceData.setState(FromBtcLnSwapState.CANCELED);
         const paymentHash = invoiceData.data.getHash();
@@ -543,10 +547,11 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
         this.swapLogger.info(invoiceData, "cancelSwapAndInvoice(): swap removed & invoice cancelled, invoice: ", invoiceData.pr);
     };
 
-    private getDummySwapData(useToken: TokenAddress, address: string, paymentHash: string) {
-        return this.swapContract.createSwapData(
+    private getDummySwapData(chainIdentifier: string, useToken: TokenAddress, address: string, paymentHash: string) {
+        const swapContract = this.getContract(chainIdentifier);
+        return swapContract.createSwapData(
             ChainSwapType.HTLC,
-            this.swapContract.getAddress(),
+            swapContract.getAddress(),
             address,
             useToken,
             null,
@@ -581,7 +586,12 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
             msg: "Invoice expired/canceled"
         };
 
-        if(!this.swapContract.isValidAddress(invoice.description)) throw {
+        let validAddress = false;
+        for(let key in this.chains.chains) {
+            const swapContract = this.chains.chains[key].swapContract;
+            validAddress ||= swapContract.isValidAddress(invoice.description);
+        }
+        if(!validAddress) throw {
             _httpStatus: 200,
             code: 10001,
             msg: "Invoice expired/canceled"
@@ -620,7 +630,11 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
                 times: {[key: string]: number}
             } = {request: {}, times: {}};
 
+            const chainIdentifier = req.query.chain as string ?? this.chains.default;
+            const swapContract = this.getContract(chainIdentifier);
+
             metadata.times.requestReceived = Date.now();
+
             /**
              * address: string              solana address of the recipient
              * paymentHash: string          payment hash of the to-be-created invoice
@@ -632,11 +646,10 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
              *Sent later:
              * feeRate: string              Fee rate to use for the init signature
              */
-
             const parsedBody: FromBtcLnRequestType = await req.paramReader.getParams({
                 address: (val: string) => val!=null &&
                             typeof(val)==="string" &&
-                            this.swapContract.isValidAddress(val) ? val : null,
+                            swapContract.isValidAddress(val) ? val : null,
                 paymentHash: (val: string) => val!=null &&
                             typeof(val)==="string" &&
                             val.length===64 &&
@@ -662,7 +675,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
                 parsed: parsedBody,
                 metadata
             };
-            const useToken = this.swapContract.toTokenAddress(parsedBody.token);
+            const useToken = swapContract.toTokenAddress(parsedBody.token);
 
             //Check request params
             this.checkDescriptionHash(parsedBody.descriptionHash);
@@ -674,13 +687,13 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
             const abortController = this.getAbortController(responseStream);
 
             //Pre-fetch data
-            const {pricePrefetchPromise, securityDepositPricePrefetchPromise} = this.getFromBtcPricePrefetches(useToken, abortController);
-            const balancePrefetch: Promise<BN> = this.getBalancePrefetch(useToken, abortController);
+            const {pricePrefetchPromise, securityDepositPricePrefetchPromise} = this.getFromBtcPricePrefetches(chainIdentifier, useToken, abortController);
+            const balancePrefetch: Promise<BN> = this.getBalancePrefetch(chainIdentifier, useToken, abortController);
             const channelsPrefetch: Promise<{channels: any[]}> = this.getChannelsPrefetch(abortController);
 
-            const dummySwapData = await this.getDummySwapData(useToken, parsedBody.address, parsedBody.paymentHash);
+            const dummySwapData = await this.getDummySwapData(chainIdentifier, useToken, parsedBody.address, parsedBody.paymentHash);
             abortController.signal.throwIfAborted();
-            const baseSDPromise: Promise<BN> = this.getBaseSecurityDepositPrefetch(dummySwapData, abortController);
+            const baseSDPromise: Promise<BN> = this.getBaseSecurityDepositPrefetch(chainIdentifier, dummySwapData, abortController);
 
             //Asynchronously send the node's public key to the client
             this.sendPublicKeyAsync(responseStream);
@@ -716,21 +729,21 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
             metadata.times.invoiceCreated = Date.now();
             metadata.invoiceResponse = {...hodlInvoice};
 
-            const createdSwap = new FromBtcLnSwapAbs<T>(hodlInvoice.request, swapFee, swapFeeInToken);
+            const createdSwap = new FromBtcLnSwapAbs(hodlInvoice.request, swapFee, swapFeeInToken);
 
             //Pre-compute the security deposit
             const expiryTimeout = this.config.minCltv.mul(this.config.bitcoinBlocktime.div(this.config.safetyFactor)).sub(this.config.gracePeriod);
             const totalSecurityDeposit = await this.getSecurityDeposit(
-                amountBD, swapFee, expiryTimeout,
+                chainIdentifier, amountBD, swapFee, expiryTimeout,
                 baseSDPromise, securityDepositPricePrefetchPromise,
                 abortController.signal, metadata
             );
             metadata.times.securityDepositCalculated = Date.now();
 
             //Create swap data
-            createdSwap.data = await this.swapContract.createSwapData(
+            createdSwap.data = await swapContract.createSwapData(
                 ChainSwapType.HTLC,
-                this.swapContract.getAddress(),
+                swapContract.getAddress(),
                 parsedBody.address,
                 useToken,
                 totalInToken,
@@ -768,7 +781,7 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
                     pr: hodlInvoice.request,
                     swapFee: swapFeeInToken.toString(10),
                     total: totalInToken.toString(10),
-                    intermediaryKey: this.swapContract.getAddress(),
+                    intermediaryKey: swapContract.getAddress(),
                     securityDeposit: totalSecurityDeposit.toString(10)
                 }
             });
@@ -781,9 +794,9 @@ export class FromBtcLnAbs<T extends SwapData> extends FromBtcBaseSwapHandler<Fro
              */
             const parsedBody = verifySchema({...req.body, ...req.query}, {
                 paymentHash: (val: string) => val!=null &&
-                typeof(val)==="string" &&
-                val.length===64 &&
-                HEX_REGEX.test(val) ? val: null,
+                    typeof(val)==="string" &&
+                    val.length===64 &&
+                    HEX_REGEX.test(val) ? val: null,
             });
 
             await this.checkInvoiceStatus(parsedBody.paymentHash);

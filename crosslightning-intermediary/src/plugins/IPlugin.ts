@@ -12,6 +12,7 @@ import {AuthenticatedLnd} from "lightning";
 import {IParamReader} from "../utils/paramcoders/IParamReader";
 import * as BN from "bn.js";
 import {Command} from "crosslightning-server-base";
+import {Request} from "express";
 
 export type QuoteThrow = {
     type: "throw",

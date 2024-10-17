@@ -21,6 +21,7 @@ import {IParamReader} from "../utils/paramcoders/IParamReader";
 import * as BN from "bn.js";
 import * as fs from "fs";
 import {getLogger} from "../utils/Utils";
+import {Request} from "express";
 
 export type FailSwapResponse = {
     type: "fail",
@@ -112,7 +113,7 @@ export class PluginManager {
         }
     }
 
-    static async serviceInitialize<T extends SwapData>(handler: SwapHandler<any, T>) {
+    static async serviceInitialize(handler: SwapHandler<any>) {
         for(let plugin of PluginManager.plugins.values()) {
             try {
                 await plugin.onServiceInitialize(handler);
