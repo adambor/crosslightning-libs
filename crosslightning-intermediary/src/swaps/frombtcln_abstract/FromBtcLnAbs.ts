@@ -584,13 +584,17 @@ export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromB
             msg: "Invoice expired/canceled"
         };
 
-        //TODO: Fix this by providing chain identifier as part of the invoice description
-        let validAddress = false;
-        for(let key in this.chains.chains) {
-            const swapContract = this.chains.chains[key].swapContract;
-            validAddress ||= swapContract.isValidAddress(invoice.description);
+        const arr = invoice.description.split("-");
+        let chainIdentifier: string;
+        let address: string;
+        if(arr.length>1) {
+            chainIdentifier = arr[0];
+            address = arr[1];
+        } else {
+            chainIdentifier = this.chains.default;
+            address = invoice.description;
         }
-        if(!validAddress) throw {
+        if(!this.getContract(chainIdentifier).isValidAddress(address)) throw {
             _httpStatus: 200,
             code: 10001,
             msg: "Invoice expired/canceled"
@@ -713,7 +717,7 @@ export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromB
 
             //Create swap
             const hodlInvoiceObj: any = {
-                description: parsedBody.address,
+                description: chainIdentifier+"-"+parsedBody.address,
                 cltv_delta: this.config.minCltv.add(new BN(5)).toString(10),
                 expires_at: new Date(Date.now()+(this.config.invoiceTimeoutSeconds*1000)).toISOString(),
                 id: parsedBody.paymentHash,
