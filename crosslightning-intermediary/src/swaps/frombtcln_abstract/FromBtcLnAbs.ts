@@ -892,16 +892,9 @@ export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromB
         await PluginManager.serviceInitialize(this);
     }
 
-    getInfo(): { swapFeePPM: number, swapBaseFee: number, min: number, max: number, data?: any, tokens: string[] } {
+    getInfoData(): any {
         return {
-            swapFeePPM: this.config.feePPM.toNumber(),
-            swapBaseFee: this.config.baseFee.toNumber(),
-            min: this.config.min.toNumber(),
-            max: this.config.max.toNumber(),
-            data: {
-                minCltv: this.config.minCltv.toNumber()
-            },
-            tokens: Array.from<string>(this.allowedTokens)
+            minCltv: this.config.minCltv.toNumber()
         };
     }
 

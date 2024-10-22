@@ -470,22 +470,13 @@ export class FromBtcAbs extends FromBtcBaseSwapHandler<FromBtcSwapAbs, FromBtcSw
         await PluginManager.serviceInitialize(this);
     }
 
-    /**
-     * Returns swap handler info
-     */
-    getInfo(): { swapFeePPM: number, swapBaseFee: number, min: number, max: number, data?: any, tokens: string[] } {
+    getInfoData(): any {
         return {
-            swapFeePPM: this.config.feePPM.toNumber(),
-            swapBaseFee: this.config.baseFee.toNumber(),
-            min: this.config.min.toNumber(),
-            max: this.config.max.toNumber(),
-            data: {
-                confirmations: this.config.confirmations,
+            confirmations: this.config.confirmations,
 
-                cltv: this.config.swapCsvDelta,
-                timestampCltv: this.config.swapTsCsvDelta.toNumber()
-            },
-            tokens: Array.from<string>(this.allowedTokens)
+            cltv: this.config.swapCsvDelta,
+            timestampCltv: this.config.swapTsCsvDelta.toNumber()
         };
     }
+
 }

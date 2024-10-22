@@ -1,6 +1,7 @@
 import * as BN from "bn.js";
 import {TokenAddress} from "crosslightning-base";
 
+//TODO: Specify the chain for token price
 export interface ISwapPrice {
 
     preFetchPrice?(token: TokenAddress): Promise<BN>;

@@ -1228,24 +1228,17 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
         await PluginManager.serviceInitialize(this);
     }
 
-    getInfo(): { swapFeePPM: number, swapBaseFee: number, min: number, max: number, data?: any, tokens: string[] } {
+    getInfoData(): any {
         return {
-            swapFeePPM: this.config.feePPM.toNumber(),
-            swapBaseFee: this.config.baseFee.toNumber(),
-            min: this.config.min.toNumber(),
-            max: this.config.max.toNumber(),
-            data: {
-                minCltv: this.config.minChainCltv.toNumber(),
+            minCltv: this.config.minChainCltv.toNumber(),
 
-                minConfirmations: this.config.minConfirmations,
-                maxConfirmations: this.config.maxConfirmations,
+            minConfirmations: this.config.minConfirmations,
+            maxConfirmations: this.config.maxConfirmations,
 
-                minConfTarget: this.config.minConfTarget,
-                maxConfTarget: this.config.maxConfTarget,
+            minConfTarget: this.config.minConfTarget,
+            maxConfTarget: this.config.maxConfTarget,
 
-                maxOutputScriptLen: OUTPUT_SCRIPT_MAX_LENGTH
-            },
-            tokens: Array.from<string>(this.allowedTokens)
+            maxOutputScriptLen: OUTPUT_SCRIPT_MAX_LENGTH
         };
     }
 

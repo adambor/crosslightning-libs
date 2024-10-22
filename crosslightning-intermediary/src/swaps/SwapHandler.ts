@@ -28,6 +28,7 @@ export enum SwapHandlerType {
     FROM_BTCLN = "FROM_BTCLN",
 }
 
+//TODO: Add per-chain tokens to the response
 export type SwapHandlerInfoType = {
     swapFeePPM: number,
     swapBaseFee: number,
@@ -183,9 +184,9 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S>, S = an
     abstract startRestServer(restServer: Express): void;
 
     /**
-     * Returns swap handler info
+     * Returns data to be returned in swap handler info
      */
-    abstract getInfo(): SwapHandlerInfoType;
+    abstract getInfoData(): any;
 
     /**
      * Remove swap data
@@ -350,6 +351,17 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S>, S = an
                 msg: "Invalid sequence"
             };
         }
+    }
+
+    getInfo(): SwapHandlerInfoType {
+        return {
+            swapFeePPM: this.config.feePPM.toNumber(),
+            swapBaseFee: this.config.baseFee.toNumber(),
+            min: this.config.min.toNumber(),
+            max: this.config.max.toNumber(),
+            data: this.getInfoData(),
+            tokens: Array.from<string>(this.allowedTokens)
+        };
     }
 
 }
