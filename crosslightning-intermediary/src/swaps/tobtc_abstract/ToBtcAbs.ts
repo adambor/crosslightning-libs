@@ -29,6 +29,7 @@ import {serverParamDecoder} from "../../utils/paramcoders/server/ServerParamDeco
 import {IParamReader} from "../../utils/paramcoders/IParamReader";
 import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
 import {ToBtcBaseConfig, ToBtcBaseSwapHandler} from "../ToBtcBaseSwapHandler";
+import {PromiseQueue} from "promise-queue-ts";
 
 const OUTPUT_SCRIPT_MAX_LENGTH = 200;
 
@@ -98,6 +99,7 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
         timestamp: number
     };
     bitcoinRpc: BitcoinRpc<BtcBlock>;
+    sendBtcQueue: PromiseQueue = new PromiseQueue();
 
     readonly config: ToBtcConfig;
 
@@ -678,47 +680,49 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
      * @private
      * @throws DefinedRuntimeError will throw an error in case the payment cannot be initiated
      */
-    //TODO: Make sure that bitcoin payouts are processed sequentially to avoid race conditions between multiple payouts
-    private async sendBitcoinPayment(swap: ToBtcSwapAbs) {
-        //Run checks
-        this.checkExpiresTooSoon(swap);
-        if(swap.metadata!=null) swap.metadata.times.payCLTVChecked = Date.now();
+    private sendBitcoinPayment(swap: ToBtcSwapAbs) {
+        //Make sure that bitcoin payouts are processed sequentially to avoid race conditions between multiple payouts,
+        // e.g. that 2 payouts share the same input and would effectively double-spend each other
+        return this.sendBtcQueue.enqueue<void>(async () => {
+            //Run checks
+            this.checkExpiresTooSoon(swap);
+            if(swap.metadata!=null) swap.metadata.times.payCLTVChecked = Date.now();
 
-        const coinselectResult = await this.getChainFee(swap.address, swap.amount.toNumber());
-        if(coinselectResult==null) throw {
-            code: 90002,
-            msg: "Failed to run coinselect algorithm (not enough funds?)"
-        }
-        if(swap.metadata!=null) swap.metadata.times.payChainFee = Date.now();
+            const coinselectResult = await this.getChainFee(swap.address, swap.amount.toNumber());
+            if(coinselectResult==null) throw {
+                code: 90002,
+                msg: "Failed to run coinselect algorithm (not enough funds?)"
+            }
+            if(swap.metadata!=null) swap.metadata.times.payChainFee = Date.now();
 
-        //TODO: Here we can maybe retry with a bit different confirmation target
-        this.checkCalculatedTxFee(swap.satsPerVbyte, coinselectResult.satsPerVbyte);
+            this.checkCalculatedTxFee(swap.satsPerVbyte, coinselectResult.satsPerVbyte);
 
-        //Construct payment PSBT
-        let unsignedPsbt = await this.getPsbt(swap.address, swap.amount, swap.data.getEscrowNonce(), coinselectResult);
-        this.swapLogger.debug(swap, "sendBitcoinPayment(): generated psbt: "+unsignedPsbt.toHex());
+            //Construct payment PSBT
+            let unsignedPsbt = await this.getPsbt(swap.address, swap.amount, swap.data.getEscrowNonce(), coinselectResult);
+            this.swapLogger.debug(swap, "sendBitcoinPayment(): generated psbt: "+unsignedPsbt.toHex());
 
-        //Sign the PSBT
-        const {psbt, rawTx} = await this.signPsbt(unsignedPsbt);
-        if(swap.metadata!=null) swap.metadata.times.paySignPSBT = Date.now();
-        this.swapLogger.debug(swap, "sendBitcoinPayment(): signed raw transaction: "+rawTx);
+            //Sign the PSBT
+            const {psbt, rawTx} = await this.signPsbt(unsignedPsbt);
+            if(swap.metadata!=null) swap.metadata.times.paySignPSBT = Date.now();
+            this.swapLogger.debug(swap, "sendBitcoinPayment(): signed raw transaction: "+rawTx);
 
-        const tx = bitcoin.Transaction.fromHex(rawTx);
-        const txFee = this.checkPsbtFee(psbt, tx, swap.satsPerVbyte, coinselectResult.satsPerVbyte);
+            const tx = bitcoin.Transaction.fromHex(rawTx);
+            const txFee = this.checkPsbtFee(psbt, tx, swap.satsPerVbyte, coinselectResult.satsPerVbyte);
 
-        swap.txId = tx.getId();
-        swap.setRealNetworkFee(txFee);
-        await swap.setState(ToBtcSwapState.BTC_SENDING);
-        await this.storageManager.saveData(swap.getHash(), swap.getSequence(), swap);
+            swap.txId = tx.getId();
+            swap.setRealNetworkFee(txFee);
+            await swap.setState(ToBtcSwapState.BTC_SENDING);
+            await this.storageManager.saveData(swap.getHash(), swap.getSequence(), swap);
 
-        await this.sendRawTransaction(rawTx);
-        if(swap.metadata!=null) swap.metadata.times.payTxSent = Date.now();
-        this.swapLogger.info(swap, "sendBitcoinPayment(): btc transaction generated, signed & broadcasted, txId: "+tx.getId()+" address: "+swap.address);
-        //Invalidate the UTXO cache
-        this.cachedUtxos = null;
+            await this.sendRawTransaction(rawTx);
+            if(swap.metadata!=null) swap.metadata.times.payTxSent = Date.now();
+            this.swapLogger.info(swap, "sendBitcoinPayment(): btc transaction generated, signed & broadcasted, txId: "+tx.getId()+" address: "+swap.address);
+            //Invalidate the UTXO cache
+            this.cachedUtxos = null;
 
-        await swap.setState(ToBtcSwapState.BTC_SENT);
-        await this.storageManager.saveData(swap.getHash(), swap.getSequence(), swap);
+            await swap.setState(ToBtcSwapState.BTC_SENT);
+            await this.storageManager.saveData(swap.getHash(), swap.getSequence(), swap);
+        });
     }
 
     /**
