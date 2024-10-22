@@ -299,7 +299,8 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
 
         if(lnPaymentStatus.is_failed) {
             this.swapLogger.info(swap, "processPaymentResult(): invoice payment failed, cancelling swap, invoice: "+swap.pr);
-            await this.removeSwapData(swap, ToBtcLnSwapState.CANCELED);
+            await swap.setState(ToBtcLnSwapState.NON_PAYABLE);
+            await this.storageManager.saveData(swap.data.getHash(), swap.data.getSequence(), swap);
             return;
         }
 
@@ -1213,32 +1214,39 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
                 }
             };
 
-            //TODO: Fix this by providing chain identifier as part of the invoice description, or maybe just do it the proper
-            // way and just keep storing the data until the HTLC expiry
-            if(payment.is_failed) {
-                //TODO: This might not be the best idea with EVM chains
-                const commitedData = await this.swapContract.getCommitedData(parsedBody.paymentHash);
+            if(payment.is_failed) throw {
+                _httpStatus: 200,
+                code: 20010,
+                msg: "Payment expired"
+            };
 
-                if(commitedData==null) throw {
-                    code: 20005,
-                    msg: "Not committed"
-                };
-
-                const refundSigData = await this.swapContract.getRefundSignature(commitedData, this.config.authorizationTimeout);
-
-                this.swapLogger.info(commitedData, "REST: /getRefundAuthorization: returning refund authorization, because invoice payment failed");
-
-                res.status(200).json({
-                    code: 20000,
-                    msg: "Success",
-                    data: {
-                        address: this.swapContract.getAddress(),
-                        prefix: refundSigData.prefix,
-                        timeout: refundSigData.timeout,
-                        signature: refundSigData.signature
-                    }
-                });
-            }
+            // NOTE: Fixed by not removing swap data until the HTLC is either expired, claimed or refunded.
+            // //TODO_old: Fix this by providing chain identifier as part of the invoice description, or maybe just do it the proper
+            // // way and just keep storing the data until the HTLC expiry
+            // if(payment.is_failed) {
+            //     //TODO_old: This might not be the best idea with EVM chains
+            //     const commitedData = await this.swapContract.getCommitedData(parsedBody.paymentHash);
+            //
+            //     if(commitedData==null) throw {
+            //         code: 20005,
+            //         msg: "Not committed"
+            //     };
+            //
+            //     const refundSigData = await this.swapContract.getRefundSignature(commitedData, this.config.authorizationTimeout);
+            //
+            //     this.swapLogger.info(commitedData, "REST: /getRefundAuthorization: returning refund authorization, because invoice payment failed");
+            //
+            //     res.status(200).json({
+            //         code: 20000,
+            //         msg: "Success",
+            //         data: {
+            //             address: this.swapContract.getAddress(),
+            //             prefix: refundSigData.prefix,
+            //             timeout: refundSigData.timeout,
+            //             signature: refundSigData.signature
+            //         }
+            //     });
+            // }
         });
 
         restServer.post(this.path+'/getRefundAuthorization', getRefundAuthorization);
