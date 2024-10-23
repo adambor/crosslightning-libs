@@ -88,8 +88,10 @@ export interface IPlugin<T extends SwapData> {
         swapPricing: ISwapPrice,
         tokens: {
             [ticker: string]: {
-                addresses: {[chainId: string]: TokenAddress},
-                decimals: number
+                [chainId: string]: {
+                    address: TokenAddress,
+                    decimals: number
+                }
             }
         },
 
