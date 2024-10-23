@@ -1,5 +1,5 @@
 import * as BN from "bn.js";
-import {Express, Request} from "express";
+import {Express, Request, Response} from "express";
 import * as lncli from "ln-service";
 import {createHash} from "crypto";
 import * as bolt11 from "bolt11";
@@ -660,7 +660,7 @@ export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromB
                 amount: FieldTypeEnum.BN,
                 token: (val: string) => val!=null &&
                         typeof(val)==="string" &&
-                        this.allowedTokens.has(val) ? val : null,
+                        this.isTokenSupported(chainIdentifier, val) ? val : null,
                 descriptionHash: FieldTypeEnum.StringOptional,
                 exactOut: FieldTypeEnum.BooleanOptional
             });
@@ -674,6 +674,7 @@ export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromB
 
             const requestedAmount = {input: !parsedBody.exactOut, amount: parsedBody.amount};
             const request = {
+                chainIdentifier,
                 raw: req,
                 parsed: parsedBody,
                 metadata

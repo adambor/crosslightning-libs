@@ -1,4 +1,4 @@
-import {SwapBaseConfig, SwapHandler} from "./SwapHandler";
+import {RequestData, SwapBaseConfig, SwapHandler} from "./SwapHandler";
 import {SwapHandlerSwap} from "./SwapHandlerSwap";
 import {SwapData, TokenAddress} from "crosslightning-base";
 import * as BN from "bn.js";
@@ -55,11 +55,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S
      * @throws {DefinedRuntimeError} will throw an error if the amount is outside minimum/maximum bounds
      */
     protected async preCheckAmounts(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: ToBtcLnRequestType | ToBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         useToken: TokenAddress
     ): Promise<{baseFee: BN, feePPM: BN}> {
@@ -101,13 +97,8 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S
      * @throws {DefinedRuntimeError} will throw an error if the amount is outside minimum/maximum bounds,
      *  or if we don't have enough funds (getNetworkFee callback throws)
      */
-    //TODO: Use chainIdentifier for pricing!!!
     protected async checkToBtcAmount<T extends {networkFee: BN}>(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: ToBtcLnRequestType | ToBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         fees: {baseFee: BN, feePPM: BN},
         useToken: TokenAddress,
@@ -123,6 +114,8 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S
         networkFeeInToken: BN,
         totalInToken: BN
     }> {
+        const chainIdentifier = request.chainIdentifier;
+
         const res = await PluginManager.onHandlePostToBtcQuote<T>(
             request,
             requestedAmount,
@@ -166,7 +159,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S
         let amountBD: BN;
         let tooLow = false;
         if(requestedAmount.input) {
-            amountBD = await this.swapPricing.getToBtcSwapAmount(requestedAmount.amount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+            amountBD = await this.swapPricing.getToBtcSwapAmount(requestedAmount.amount, useToken, chainIdentifier, null, pricePrefetchPromise);
             signal.throwIfAborted();
 
             //Decrease by base fee
@@ -201,8 +194,12 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S
                 let adjustedMax = this.config.max.mul(fees.feePPM.add(new BN(1000000))).div(new BN(1000000));
                 adjustedMin = adjustedMin.add(fees.baseFee).add(resp.networkFee);
                 adjustedMax = adjustedMax.add(fees.baseFee).add(resp.networkFee);
-                const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+                const minIn = await this.swapPricing.getFromBtcSwapAmount(
+                    adjustedMin, useToken, chainIdentifier, null, pricePrefetchPromise
+                );
+                const maxIn = await this.swapPricing.getFromBtcSwapAmount(
+                    adjustedMax, useToken, chainIdentifier, null, pricePrefetchPromise
+                );
                 throw {
                     code: tooLow ? 20003 : 2004,
                     msg: tooLow ? "Amount too low!" : "Amount too high!",
@@ -216,15 +213,21 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S
 
         const swapFee = fees.baseFee.add(amountBD.mul(fees.feePPM).div(new BN(1000000)));
 
-        const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(resp.networkFee, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-        const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+        const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(
+            resp.networkFee, useToken, chainIdentifier, true, pricePrefetchPromise
+        );
+        const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(
+            swapFee, useToken, chainIdentifier, true, pricePrefetchPromise
+        );
         signal.throwIfAborted();
 
         let total: BN;
         if(requestedAmount.input) {
             total = requestedAmount.amount;
         } else {
-            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(requestedAmount.amount, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(
+                requestedAmount.amount, useToken, chainIdentifier, true, pricePrefetchPromise
+            );
             signal.throwIfAborted();
             total = amountInToken.add(swapFeeInToken).add(networkFeeInToken);
         }
@@ -245,11 +248,11 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S
         signDataPrefetchPromise?: Promise<any>
     } {
         //Fetch pricing & signature data in parallel
-        const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(token).catch(e => {
+        const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice(token, chainIdentifier).catch(e => {
             this.logger.error("getToBtcPrefetches(): pricePrefetch error", e);
             abortController.abort(e);
             return null;
-        }) : null;
+        });
 
         return {
             pricePrefetchPromise,

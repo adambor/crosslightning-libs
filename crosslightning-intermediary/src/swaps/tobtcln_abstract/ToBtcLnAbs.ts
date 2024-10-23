@@ -1,5 +1,5 @@
 import * as BN from "bn.js";
-import {Express, Request} from "express";
+import {Express, Request, Response} from "express";
 import * as bolt11 from "bolt11";
 import * as lncli from "ln-service";
 import {ToBtcLnSwapAbs, ToBtcLnSwapState} from "./ToBtcLnSwapAbs";
@@ -962,7 +962,7 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
                 expiryTimestamp: FieldTypeEnum.BN,
                 token: (val: string) => val!=null &&
                         typeof(val)==="string" &&
-                        this.allowedTokens.has(val) ? val : null,
+                        this.isTokenSupported(chainIdentifier, val) ? val : null,
                 offerer: (val: string) => val!=null &&
                         typeof(val)==="string" &&
                         swapContract.isValidAddress(val) ? val : null,
@@ -978,6 +978,7 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
             metadata.request = parsedBody;
 
             const request = {
+                chainIdentifier,
                 raw: req,
                 parsed: parsedBody,
                 metadata
@@ -1025,7 +1026,7 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
                 metadata.times.liquidityChecked = Date.now();
 
                 const maxFee = parsedBody.exactIn ?
-                    await this.swapPricing.getToBtcSwapAmount(parsedBody.maxFee, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise) :
+                    await this.swapPricing.getToBtcSwapAmount(parsedBody.maxFee, useToken, chainIdentifier, null, pricePrefetchPromise) :
                     parsedBody.maxFee;
 
                 return await this.checkAndGetNetworkFee(amountBD, maxFee, parsedBody.expiryTimestamp, currentTimestamp, parsedBody.pr, metadata, abortController.signal);

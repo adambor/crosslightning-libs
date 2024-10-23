@@ -1,4 +1,4 @@
-import {Express, Request} from "express";
+import {Express, Request, Response} from "express";
 import * as BN from "bn.js";
 import * as bitcoin from "bitcoinjs-lib";
 import * as lncli from "ln-service";
@@ -992,7 +992,7 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
                 nonce: FieldTypeEnum.BN,
                 token: (val: string) => val!=null &&
                         typeof(val)==="string" &&
-                        this.allowedTokens.has(val) ? val : null,
+                        this.isTokenSupported(chainIdentifier, val) ? val : null,
                 offerer: (val: string) => val!=null &&
                         typeof(val)==="string" &&
                         swapContract.isValidAddress(val) ? val : null,
@@ -1006,6 +1006,7 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
 
             const requestedAmount = {input: !!parsedBody.exactIn, amount: parsedBody.amount};
             const request = {
+                chainIdentifier,
                 raw: req,
                 parsed: parsedBody,
                 metadata

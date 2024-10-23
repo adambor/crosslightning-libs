@@ -1,4 +1,4 @@
-import {BitcoinRpc, BtcRelay, ChainEvents, SwapContract, SwapData, SwapEvent, TokenAddress} from "crosslightning-base";
+import {BitcoinRpc, BtcRelay, ChainEvents, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
 import {
     IPlugin, isPluginQuote, isQuoteAmountTooHigh, isQuoteAmountTooLow, isQuoteSetFees,
     isQuoteThrow, isToBtcPluginQuote, PluginQuote,
@@ -10,18 +10,16 @@ import {
 import {
     FromBtcLnRequestType,
     FromBtcRequestType,
-    ISwapPrice,
+    ISwapPrice, RequestData,
     SwapHandler,
     ToBtcLnRequestType,
     ToBtcRequestType
 } from "..";
 import {SwapHandlerSwap} from "../swaps/SwapHandlerSwap";
 import {AuthenticatedLnd} from "lightning";
-import {IParamReader} from "../utils/paramcoders/IParamReader";
 import * as BN from "bn.js";
 import * as fs from "fs";
 import {getLogger} from "../utils/Utils";
-import {Request} from "express";
 
 export type FailSwapResponse = {
     type: "fail",
@@ -164,11 +162,7 @@ export class PluginManager {
     }
 
     static async onHandlePostFromBtcQuote(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: FromBtcLnRequestType | FromBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         token: TokenAddress,
         constraints: {minInBtc: BN, maxInBtc: BN},
@@ -198,11 +192,7 @@ export class PluginManager {
     }
 
     static async onHandlePreFromBtcQuote(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: FromBtcLnRequestType | FromBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         token: TokenAddress,
         constraints: {minInBtc: BN, maxInBtc: BN},
@@ -227,11 +217,7 @@ export class PluginManager {
     }
 
     static async onHandlePostToBtcQuote<T extends {networkFee: BN}>(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: ToBtcLnRequestType | ToBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         token: TokenAddress,
         constraints: {minInBtc: BN, maxInBtc: BN},
@@ -272,11 +258,7 @@ export class PluginManager {
     }
 
     static async onHandlePreToBtcQuote(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: ToBtcLnRequestType | ToBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         token: TokenAddress,
         constraints: {minInBtc: BN, maxInBtc: BN},

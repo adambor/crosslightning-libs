@@ -1,4 +1,4 @@
-import {Express} from "express";
+import {Express, Request, Response} from "express";
 import {ISwapPrice} from "./ISwapPrice";
 import {
     ChainEvents,
@@ -20,6 +20,7 @@ import {
     isQuoteAmountTooLow,
     isQuoteThrow,
 } from "../plugins/IPlugin";
+import {IParamReader} from "../utils/paramcoders/IParamReader";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -28,13 +29,13 @@ export enum SwapHandlerType {
     FROM_BTCLN = "FROM_BTCLN",
 }
 
-//TODO: Add per-chain tokens to the response
 export type SwapHandlerInfoType = {
     swapFeePPM: number,
     swapBaseFee: number,
     min: number,
     max: number,
     tokens: string[],
+    chainTokens: {[chainId: string]: string[]};
     data?: any,
 };
 
@@ -59,8 +60,16 @@ export type MultichainData = {
 
 export type ChainData<T extends SwapData = SwapData> = {
     swapContract: SwapContract<T, any, any, any>,
-    chainEvents: ChainEvents<T>
+    chainEvents: ChainEvents<T>,
+    allowedTokens: TokenAddress[]
 }
+
+export type RequestData<T> = {
+    chainIdentifier: string,
+    raw: Request & {paramReader: IParamReader},
+    parsed: T,
+    metadata: any
+};
 
 /**
  * An abstract class defining a singular swap service
@@ -73,7 +82,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S>, S = an
     readonly path: string;
 
     readonly chains: MultichainData;
-    readonly allowedTokens: Set<string>;
+    readonly allowedTokens: {[chainId: string]: Set<string>};
     readonly swapPricing: ISwapPrice;
     readonly LND: AuthenticatedLnd;
 
@@ -93,14 +102,31 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S>, S = an
         error: (swap: SwapHandlerSwap | SwapEvent<SwapData> | SwapData, msg: string, ...args: any) => this.logger.error(this.getIdentifier(swap)+": "+msg, ...args)
     };
 
-    protected constructor(storageDirectory: IIntermediaryStorage<V>, path: string, chains: MultichainData, allowedTokens: TokenAddress[], lnd: AuthenticatedLnd, swapPricing: ISwapPrice) {
+    protected constructor(
+        storageDirectory: IIntermediaryStorage<V>,
+        path: string,
+        chainsData: MultichainData,
+        allowedTokens: TokenAddress[] | null,
+        lnd: AuthenticatedLnd,
+        swapPricing: ISwapPrice
+    ) {
         this.storageManager = storageDirectory;
-        this.chains = chains;
+        this.chains = chainsData;
         if(this.chains.chains[this.chains.default]==null) throw new Error("Invalid default chain specified");
         this.path = path;
-        this.allowedTokens = new Set<string>(allowedTokens.map(e => e.toString()));
         this.LND = lnd;
         this.swapPricing = swapPricing;
+        this.allowedTokens = {};
+        for(let chainId in chainsData.chains) {
+            this.allowedTokens[chainId] = new Set<string>(chainsData.chains[chainId].allowedTokens.map(e => e.toString()));
+        }
+        if(allowedTokens!=null && allowedTokens.length>0) {
+            if(this.allowedTokens[chainsData.default]==null) this.allowedTokens[chainsData.default] = new Set();
+            const allowedTokensSet = this.allowedTokens[chainsData.default];
+            allowedTokens.forEach(token => {
+                allowedTokensSet.add(token.toString());
+            })
+        }
     }
 
     protected getDefaultChain(): ChainData {
@@ -353,14 +379,32 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S>, S = an
         }
     }
 
+    /**
+     * Checks whether a given token is supported on a specified chain
+     *
+     * @param chainId
+     * @param token
+     * @protected
+     */
+    protected isTokenSupported(chainId: string, token: string): boolean {
+        const chainTokens = this.allowedTokens[chainId];
+        if(chainTokens) return false;
+        return chainTokens.has(token);
+    }
+
     getInfo(): SwapHandlerInfoType {
+        const chainTokens: {[chainId: string]: string[]} = {};
+        for(let chainId in this.allowedTokens) {
+            chainTokens[chainId] = Array.from<string>(this.allowedTokens[chainId]);
+        }
         return {
             swapFeePPM: this.config.feePPM.toNumber(),
             swapBaseFee: this.config.baseFee.toNumber(),
             min: this.config.min.toNumber(),
             max: this.config.max.toNumber(),
             data: this.getInfoData(),
-            tokens: Array.from<string>(this.allowedTokens)
+            tokens: Array.from<string>(this.allowedTokens[this.chains.default]),
+            chainTokens
         };
     }
 
