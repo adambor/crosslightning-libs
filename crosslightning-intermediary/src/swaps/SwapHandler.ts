@@ -1,6 +1,7 @@
 import {Express, Request, Response} from "express";
 import {ISwapPrice} from "./ISwapPrice";
 import {
+    BtcRelay,
     ChainEvents,
     ClaimEvent,
     InitializeEvent, RefundEvent,
@@ -61,7 +62,8 @@ export type MultichainData = {
 export type ChainData<T extends SwapData = SwapData> = {
     swapContract: SwapContract<T, any, any, any>,
     chainEvents: ChainEvents<T>,
-    allowedTokens: TokenAddress[]
+    allowedTokens: TokenAddress[],
+    btcRelay?: BtcRelay<any, any, any>
 }
 
 export type RequestData<T> = {

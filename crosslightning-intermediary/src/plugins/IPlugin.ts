@@ -1,18 +1,16 @@
-import {BitcoinRpc, BtcRelay, ChainEvents, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
+import {BitcoinRpc, SwapData, TokenAddress} from "crosslightning-base";
 import {
     FromBtcLnRequestType,
     FromBtcRequestType,
-    ISwapPrice,
+    ISwapPrice, MultichainData, RequestData,
     SwapHandler,
     ToBtcLnRequestType,
     ToBtcRequestType
 } from "..";
 import {SwapHandlerSwap} from "../swaps/SwapHandlerSwap";
 import {AuthenticatedLnd} from "lightning";
-import {IParamReader} from "../utils/paramcoders/IParamReader";
 import * as BN from "bn.js";
 import {Command} from "crosslightning-server-base";
-import {Request} from "express";
 
 export type QuoteThrow = {
     type: "throw",
@@ -82,16 +80,17 @@ export interface IPlugin<T extends SwapData> {
 
     //Needs to be called by implementation
     onEnable(
-        swapContract: SwapContract<T, any, any, any>,
-        btcRelay: BtcRelay<any, any, any>,
-        chainEvents: ChainEvents<T>,
+        chainsData: MultichainData,
 
         bitcoinRpc: BitcoinRpc<any>,
         lnd: AuthenticatedLnd,
 
         swapPricing: ISwapPrice,
         tokens: {
-            [ticker: string]: {address: TokenAddress, decimals: number}
+            [ticker: string]: {
+                addresses: {[chainId: string]: TokenAddress},
+                decimals: number
+            }
         },
 
         directory: string
@@ -108,22 +107,14 @@ export interface IPlugin<T extends SwapData> {
     onSwapRemove?(swap: SwapHandlerSwap<T>): Promise<void>;
 
     onHandlePreFromBtcQuote?(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: FromBtcLnRequestType | FromBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         token: TokenAddress,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN}
     ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh>;
     onHandlePostFromBtcQuote?(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: FromBtcLnRequestType | FromBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         token: TokenAddress,
         constraints: {minInBtc: BN, maxInBtc: BN},
@@ -132,22 +123,14 @@ export interface IPlugin<T extends SwapData> {
     ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh | PluginQuote>;
 
     onHandlePreToBtcQuote?(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: ToBtcLnRequestType | ToBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         token: TokenAddress,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN}
     ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh>;
     onHandlePostToBtcQuote?(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: ToBtcLnRequestType | ToBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         token: TokenAddress,
         constraints: {minInBtc: BN, maxInBtc: BN},

@@ -1,4 +1,4 @@
-import {BitcoinRpc, BtcRelay, ChainEvents, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
+import {BitcoinRpc, SwapData, TokenAddress} from "crosslightning-base";
 import {
     IPlugin, isPluginQuote, isQuoteAmountTooHigh, isQuoteAmountTooLow, isQuoteSetFees,
     isQuoteThrow, isToBtcPluginQuote, PluginQuote,
@@ -10,7 +10,7 @@ import {
 import {
     FromBtcLnRequestType,
     FromBtcRequestType,
-    ISwapPrice, RequestData,
+    ISwapPrice, MultichainData, RequestData,
     SwapHandler,
     ToBtcLnRequestType,
     ToBtcRequestType
@@ -63,16 +63,17 @@ export class PluginManager {
     }
 
     static async enable<T extends SwapData>(
-        swapContract: SwapContract<T, any, any, any>,
-        btcRelay: BtcRelay<any, any, any>,
-        chainEvents: ChainEvents<T>,
+        chainsData: MultichainData,
 
         bitcoinRpc: BitcoinRpc<any>,
         lnd: AuthenticatedLnd,
 
         swapPricing: ISwapPrice,
         tokens: {
-            [ticker: string]: {address: TokenAddress, decimals: number}
+            [ticker: string]: {
+                addresses: {[chainId: string]: TokenAddress},
+                decimals: number
+            }
         },
 
         directory: string
@@ -86,9 +87,7 @@ export class PluginManager {
                     fs.mkdirSync(directory+"/"+name);
                 } catch (e) {}
                 await plugin.onEnable(
-                    swapContract,
-                    btcRelay,
-                    chainEvents,
+                    chainsData,
                     bitcoinRpc,
                     lnd,
                     swapPricing,
