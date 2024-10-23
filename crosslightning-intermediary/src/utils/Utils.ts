@@ -1,4 +1,4 @@
-import {ParamsDictionary, Request, Response} from "express";
+import {Request, Response} from "express";
 import * as QueryString from "qs";
 import {ServerParamEncoder} from "./paramcoders/server/ServerParamEncoder";
 import * as BN from "bn.js";
@@ -20,15 +20,15 @@ export function isDefinedRuntimeError(obj: any): obj is DefinedRuntimeError {
 }
 
 export function expressHandlerWrapper(func: (
-    req: Request<ParamsDictionary, any, any, QueryString.ParsedQs, Record<string, any>>,
-    res: Response<any, Record<string, any>, number>
+    req: Request,
+    res: Response
 ) => Promise<void>) : ((
-    req: Request<ParamsDictionary, any, any, QueryString.ParsedQs, Record<string, any>>,
-    res: Response<any, Record<string, any>, number> & {responseStream: ServerParamEncoder}
+    req: Request,
+    res: Response & {responseStream: ServerParamEncoder}
 ) => void) {
     return (
-        req: Request<ParamsDictionary, any, any, QueryString.ParsedQs, Record<string, any>>,
-        res: Response<any, Record<string, any>, number> & {responseStream: ServerParamEncoder}
+        req: Request,
+        res: Response & {responseStream: ServerParamEncoder}
     ) => {
         (async () => {
             try {
