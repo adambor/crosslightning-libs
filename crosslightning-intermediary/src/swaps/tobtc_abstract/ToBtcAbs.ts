@@ -473,6 +473,7 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
 
         for(let txId in this.activeSubscriptions) {
             const swap: ToBtcSwapAbs = this.activeSubscriptions[txId];
+            //TODO: RBF the transaction if it's already taking too long to confirm
             try {
                 let tx: BtcTx = await this.bitcoinRpc.getTransaction(txId);
                 if(tx==null) continue;
