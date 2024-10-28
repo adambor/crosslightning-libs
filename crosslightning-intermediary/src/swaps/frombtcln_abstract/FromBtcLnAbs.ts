@@ -52,12 +52,11 @@ export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromB
         storageDirectory: IIntermediaryStorage<FromBtcLnSwapAbs>,
         path: string,
         chains: MultichainData,
-        allowedTokens: TokenAddress[],
         lnd: AuthenticatedLnd,
         swapPricing: ISwapPrice,
         config: FromBtcLnConfig
     ) {
-        super(storageDirectory, path, chains, allowedTokens, lnd, swapPricing);
+        super(storageDirectory, path, chains, lnd, swapPricing);
         this.config = config;
         this.config.invoiceTimeoutSeconds = this.config.invoiceTimeoutSeconds || 90;
     }

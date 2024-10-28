@@ -51,12 +51,11 @@ export class FromBtcAbs extends FromBtcBaseSwapHandler<FromBtcSwapAbs, FromBtcSw
         storageDirectory: IIntermediaryStorage<FromBtcSwapAbs>,
         path: string,
         chains: MultichainData,
-        allowedTokens: TokenAddress[],
         lnd: AuthenticatedLnd,
         swapPricing: ISwapPrice,
         config: FromBtcConfig
     ) {
-        super(storageDirectory, path, chains, allowedTokens, lnd, swapPricing);
+        super(storageDirectory, path, chains, lnd, swapPricing);
         const anyConfig = config as any;
         anyConfig.swapTsCsvDelta = new BN(config.swapCsvDelta).mul(config.bitcoinBlocktime.div(config.safetyFactor));
         this.config = anyConfig;

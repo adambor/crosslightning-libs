@@ -62,7 +62,7 @@ export type MultichainData = {
 export type ChainData<T extends SwapData = SwapData> = {
     swapContract: SwapContract<T, any, any, any>,
     chainEvents: ChainEvents<T>,
-    allowedTokens: TokenAddress[],
+    allowedTokens: string[],
     btcRelay?: BtcRelay<any, any, any>
 }
 
@@ -76,7 +76,7 @@ export type RequestData<T> = {
 /**
  * An abstract class defining a singular swap service
  */
-export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S>, S = any> {
+export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S> = SwapHandlerSwap, S = any> {
 
     abstract readonly type: SwapHandlerType;
 
@@ -108,7 +108,6 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S>, S = an
         storageDirectory: IIntermediaryStorage<V>,
         path: string,
         chainsData: MultichainData,
-        allowedTokens: TokenAddress[] | null,
         lnd: AuthenticatedLnd,
         swapPricing: ISwapPrice
     ) {
@@ -121,13 +120,6 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S>, S = an
         this.allowedTokens = {};
         for(let chainId in chainsData.chains) {
             this.allowedTokens[chainId] = new Set<string>(chainsData.chains[chainId].allowedTokens.map(e => e.toString()));
-        }
-        if(allowedTokens!=null && allowedTokens.length>0) {
-            if(this.allowedTokens[chainsData.default]==null) this.allowedTokens[chainsData.default] = new Set();
-            const allowedTokensSet = this.allowedTokens[chainsData.default];
-            allowedTokens.forEach(token => {
-                allowedTokensSet.add(token.toString());
-            })
         }
     }
 

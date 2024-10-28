@@ -148,12 +148,11 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
         storageDirectory: IIntermediaryStorage<ToBtcLnSwapAbs>,
         path: string,
         chainData: MultichainData,
-        allowedTokens: TokenAddress[],
         lnd: AuthenticatedLnd,
         swapPricing: ISwapPrice,
         config: ToBtcLnConfig
     ) {
-        super(storageDirectory, path, chainData, allowedTokens, lnd, swapPricing);
+        super(storageDirectory, path, chainData, lnd, swapPricing);
         const anyConfig = config as any;
         anyConfig.minTsSendCltv = config.gracePeriod.add(config.bitcoinBlocktime.mul(config.minSendCltv).mul(config.safetyFactor));
         this.config = anyConfig;

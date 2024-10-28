@@ -107,13 +107,12 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
         storageDirectory: IIntermediaryStorage<ToBtcSwapAbs>,
         path: string,
         chainData: MultichainData,
-        allowedTokens: TokenAddress[],
         lnd: AuthenticatedLnd,
         swapPricing: ISwapPrice,
         bitcoinRpc: BitcoinRpc<BtcBlock>,
         config: ToBtcConfig
     ) {
-        super(storageDirectory, path, chainData, allowedTokens, lnd, swapPricing);
+        super(storageDirectory, path, chainData, lnd, swapPricing);
         this.bitcoinRpc = bitcoinRpc;
         this.config = config;
         this.config.onchainReservedPerChannel = this.config.onchainReservedPerChannel || 40000;
