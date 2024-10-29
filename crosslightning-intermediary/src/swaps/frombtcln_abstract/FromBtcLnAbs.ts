@@ -324,7 +324,7 @@ export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromB
      * @param invoice
      */
     private async htlcReceived(invoiceData: FromBtcLnSwapAbs, invoice: any) {
-        this.swapLogger.debug(invoiceData, "htlcReceived(): invoice: "+invoice);
+        this.swapLogger.debug(invoiceData, "htlcReceived(): invoice: ", invoice);
         if(invoiceData.metadata!=null) invoiceData.metadata.times.htlcReceived = Date.now();
 
         const useToken: TokenAddress = invoiceData.data.getToken();
