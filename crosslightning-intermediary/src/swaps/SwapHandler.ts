@@ -382,7 +382,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S> = SwapH
      */
     protected isTokenSupported(chainId: string, token: string): boolean {
         const chainTokens = this.allowedTokens[chainId];
-        if(chainTokens) return false;
+        if(chainTokens==null) return false;
         return chainTokens.has(token);
     }
 
