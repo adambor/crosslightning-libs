@@ -14,6 +14,16 @@ export class RequestTimeoutError extends Error {
 
 }
 
+export class RequestParsingError extends Error {
+
+    constructor() {
+        super("Request cannot be parsed");
+        // Set the prototype explicitly.
+        Object.setPrototypeOf(this, RequestParsingError.prototype);
+    }
+
+}
+
 export const serverParamDecoder = (timeoutMillis: number) => (req: Request, res: Response, next: () => void) => {
 
     let timeout;
@@ -27,18 +37,24 @@ export const serverParamDecoder = (timeoutMillis: number) => (req: Request, res:
             dataBuffers.push(data)
         });
         req.on("end", () => {
-            const body = JSON.parse(Buffer.concat(dataBuffers).toString());
-            const paramReader: IParamReader = {
-                getParams: <T extends RequestSchema>(schema: T) => {
-                    return Promise.resolve(verifySchema(body, schema));
-                },
-                getExistingParamsOrNull: <T extends RequestSchema>(schema: T) => {
-                    return verifySchema(body, schema);
-                }
-            };
-            (req as any).paramReader = paramReader;
+            try {
+                const body = JSON.parse(Buffer.concat(dataBuffers).toString());
+                const paramReader: IParamReader = {
+                    getParams: <T extends RequestSchema>(schema: T) => {
+                        return Promise.resolve(verifySchema(body, schema));
+                    },
+                    getExistingParamsOrNull: <T extends RequestSchema>(schema: T) => {
+                        return verifySchema(body, schema);
+                    }
+                };
+                (req as any).paramReader = paramReader;
+                next();
+            } catch (e) {
+                console.error("ServerParamDecoder: error reading legacy (non-streaming) http request", e);
+                req.destroy(new RequestParsingError());
+                res.destroy(new RequestParsingError());
+            }
             clearTimeout(timeout);
-            next();
         });
         req.on("error", (e) => {
             console.error("ServerParamDecoder: error reading legacy (non-streaming) http request",e);
@@ -54,17 +70,39 @@ export const serverParamDecoder = (timeoutMillis: number) => (req: Request, res:
     }
 
     const decoder = new ParamDecoder();
-    req.on("data", decoder.onData.bind(decoder));
+    req.on("data", (data: Buffer) => {
+        try {
+            decoder.onData(data);
+        } catch (e) {
+            console.error("ServerParamDecoder: error reading streaming http request: on(\"data\")", e);
+            req.destroy(new RequestParsingError());
+            res.destroy(new RequestParsingError());
+        }
+    });
     req.on("end", () => {
-        decoder.onEnd();
+        try {
+            decoder.onEnd();
+        } catch (e) {
+            console.error("ServerParamDecoder: error reading streaming http request: on(\"end\")", e);
+            req.destroy(new RequestParsingError());
+            res.destroy(new RequestParsingError());
+        }
         clearTimeout(timeout);
     });
     req.on("error", (e) => {
-        decoder.onError(e);
+        try {
+            decoder.onError(e);
+        } catch(e) {
+            console.error("ServerParamDecoder: error reading streaming http request: on(\"error\")", e);
+        }
     });
 
     timeout = setTimeout(() => {
-        decoder.onEnd();
+        try {
+            decoder.onEnd();
+        } catch(e) {
+            console.error("ServerParamDecoder: error reading streaming http request: timeout", e);
+        }
         req.destroy(new RequestTimeoutError());
         res.destroy(new RequestTimeoutError());
     }, timeoutMillis);
