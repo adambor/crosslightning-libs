@@ -104,7 +104,7 @@ export const booleanParser: (optional?: boolean) => ConfigParser<boolean> = (opt
     return data;
 };
 
-export function objectParser<T, V extends ConfigTemplate<T>>(template: V, validator?: (data: ParsedConfig<T, V>) => void, optional?: boolean): ConfigParser<ParsedConfig<T, V>>{
+export function objectParser<T, V extends ConfigTemplate<T>>(template: V, validator?: (data: ParsedConfig<T, V>) => void, optional?: boolean): ConfigParser<ParsedConfig<T, V>> {
     return (data: any) => {
         if(data==null) {
             if(optional) {
@@ -168,7 +168,7 @@ export function dictionaryParser<T>(parser: ConfigParser<T>, validator?: (data: 
     };
 }
 
-export function dictionaryParserWithKeys<K extends string, T>(parser: ConfigParser<T>, keys: K[], validator?: (data: {[key in K]: T}) => void, optional?: boolean): ConfigParser<{[key in K]: T}>{
+export function dictionaryParserWithKeys<K extends string[], T>(parser: ConfigParser<T>, keys: K, validator?: (data: {[key in K[number]]: T}) => void, optional?: boolean): ConfigParser<{[key in K[number]]: T}>{
     return (data: any) => {
         if(data==null) {
             if(optional) {
