@@ -251,7 +251,7 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
         let lastSuccessfulSignature: {signature: string, slot: number} = await this.processSignatures(signatures);
 
         if(lastSuccessfulSignature!=null) {
-            await this.saveLastSignature(lastSuccessfulSignature.signature, lastSignature.slot);
+            await this.saveLastSignature(lastSuccessfulSignature.signature, lastSuccessfulSignature.slot);
         }
     }
 
