@@ -3,9 +3,10 @@ import {EventEmitter} from "events";
 import * as BN from "bn.js";
 import {Buffer} from "buffer";
 import {ISwapWrapper, ISwapWrapperOptions} from "./ISwapWrapper";
-import {SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
+import {SignatureData, SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
 import {isPriceInfoType, PriceInfoType} from "../prices/abstract/ISwapPrice";
 import {getLogger, LoggerType, timeoutPromise} from "../utils/Utils";
+import {ChainType} from "./Swapper";
 
 export type ISwapInit<T extends SwapData> = {
     pricingInfo: PriceInfoType,
@@ -53,13 +54,14 @@ export type SCToken<T = TokenAddress> = {
 export type Token = BtcToken | SCToken;
 
 export abstract class ISwap<
-    T extends SwapData = SwapData,
-    S extends number = number,
-    TXType = any
+    T extends ChainType = ChainType,
+    S extends number = number
 > {
+    readonly chainIdentifier: string;
+
     protected logger: LoggerType;
     protected readonly abstract TYPE: SwapType;
-    protected readonly wrapper: ISwapWrapper<T, ISwap<T, S, TXType>, ISwapWrapperOptions, TXType>;
+    protected readonly wrapper: ISwapWrapper<T, ISwap<T, S>, ISwapWrapperOptions>;
     expiry?: number;
     readonly url: string;
 
@@ -67,10 +69,8 @@ export abstract class ISwap<
 
     pricingInfo: PriceInfoType;
 
-    data: T;
-    prefix?: string;
-    timeout?: string;
-    signature?: string;
+    data: T["Data"];
+    signatureData?: SignatureData;
     feeRate?: any;
 
     protected swapFee: BN;
@@ -89,11 +89,12 @@ export abstract class ISwap<
     events: EventEmitter = new EventEmitter();
 
     protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>>, obj: any);
-    protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>>, swapInit: ISwapInit<T>);
+    protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>>, swapInit: ISwapInit<T["Data"]>);
     protected constructor(
         wrapper: ISwapWrapper<T, ISwap<T, S>>,
-        swapInitOrObj: ISwapInit<T> | any,
+        swapInitOrObj: ISwapInit<T["Data"]> | any,
     ) {
+        this.chainIdentifier = wrapper.chainIdentifier;
         this.wrapper = wrapper;
         if(isISwapInit(swapInitOrObj)) {
             Object.assign(this, swapInitOrObj);
@@ -115,9 +116,11 @@ export abstract class ISwap<
             this.data = swapInitOrObj.data!=null ? new wrapper.swapDataDeserializer(swapInitOrObj.data) : null;
             this.swapFee = swapInitOrObj.swapFee==null ? null : new BN(swapInitOrObj.swapFee);
             this.swapFeeBtc = swapInitOrObj.swapFeeBtc==null ? null : new BN(swapInitOrObj.swapFeeBtc);
-            this.prefix = swapInitOrObj.prefix;
-            this.timeout = swapInitOrObj.timeout;
-            this.signature = swapInitOrObj.signature;
+            this.signatureData = swapInitOrObj.signature==null ? null : {
+                prefix: swapInitOrObj.prefix,
+                timeout: swapInitOrObj.timeout,
+                signature: swapInitOrObj.signature
+            };
             this.feeRate = swapInitOrObj.feeRate;
 
             this.commitTxId = swapInitOrObj.commitTxId;
@@ -139,7 +142,7 @@ export abstract class ISwap<
         while(status===SwapCommitStatus.NOT_COMMITED) {
             await timeoutPromise(interval*1000, abortSignal);
             try {
-                status = await this.wrapper.contract.getCommitStatus(this.data);
+                status = await this.wrapper.contract.getCommitStatus(this.getInitiator(), this.data);
             } catch (e) {
                 this.logger.error("watchdogWaitTillCommited(): Error when fetching commit status: ", e);
             }
@@ -161,7 +164,7 @@ export abstract class ISwap<
         while(status===SwapCommitStatus.COMMITED || status===SwapCommitStatus.REFUNDABLE) {
             await timeoutPromise(interval*1000, abortSignal);
             try {
-                status = await this.wrapper.contract.getCommitStatus(this.data);
+                status = await this.wrapper.contract.getCommitStatus(this.getInitiator(), this.data);
             } catch (e) {
                 this.logger.error("watchdogWaitTillResult(): Error when fetching commit status: ", e);
             }
@@ -313,6 +316,19 @@ export abstract class ISwap<
      */
     abstract isQuoteValid(): Promise<boolean>;
 
+    /**
+     * Returns the intiator address of the swap - address that created this swap
+     */
+    abstract getInitiator(): string;
+
+    /**
+     * @param signer Signer to check with this swap's initiator
+     * @throws {Error} When signer's address doesn't match with the swap's initiator one
+     */
+    checkSigner(signer: T["Signer"]): void {
+        if(signer.getAddress()!==this.getInitiator()) throw new Error("Invalid signer provided!");
+    }
+
     //////////////////////////////
     //// Amounts & fees
 
@@ -370,9 +386,9 @@ export abstract class ISwap<
             data: this.data!=null ? this.data.serialize() : null,
             swapFee: this.swapFee==null ? null : this.swapFee.toString(10),
             swapFeeBtc: this.swapFeeBtc==null ? null : this.swapFeeBtc.toString(10),
-            prefix: this.prefix,
-            timeout: this.timeout,
-            signature: this.signature,
+            prefix: this.signatureData?.prefix,
+            timeout: this.signatureData?.timeout,
+            signature: this.signatureData?.signature,
             feeRate: this.feeRate==null ? null : this.feeRate.toString(),
             commitTxId: this.commitTxId,
             claimTxId: this.claimTxId,

@@ -12,6 +12,7 @@ import {
     InvoiceStatusResponseCodes,
     TrustedIntermediaryAPI
 } from "../../../intermediaries/TrustedIntermediaryAPI";
+import {ChainType} from "../../Swapper";
 
 export enum LnForGasSwapState {
     EXPIRED = -2,
@@ -33,7 +34,7 @@ export function isLnForGasSwapInit<T extends SwapData>(obj: any): obj is LnForGa
         isISwapInit<T>(obj);
 }
 
-export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState> {
+export class LnForGasSwap<T extends ChainType> extends ISwap<T, LnForGasSwapState> {
     protected readonly TYPE: SwapType = SwapType.FROM_BTCLN;
 
     //State: PR_CREATED
@@ -44,11 +45,11 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
     //State: FINISHED
     scTxId: string;
 
-    constructor(wrapper: LnForGasWrapper<T>, init: LnForGasSwapInit<T>);
+    constructor(wrapper: LnForGasWrapper<T>, init: LnForGasSwapInit<T["Data"]>);
     constructor(wrapper: LnForGasWrapper<T>, obj: any);
     constructor(
         wrapper: LnForGasWrapper<T>,
-        initOrObj: LnForGasSwapInit<T> | any
+        initOrObj: LnForGasSwapInit<T["Data"]> | any
     ) {
         if(isLnForGasSwapInit(initOrObj)) initOrObj.url += "/lnforgas";
         super(wrapper, initOrObj);
@@ -272,6 +273,10 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
             recipient: this.recipient,
             scTxId: this.scTxId
         };
+    }
+
+    getInitiator(): string {
+        return this.recipient;
     }
 
 }

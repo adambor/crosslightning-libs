@@ -4,14 +4,12 @@ import {IToBTCWrapper} from "../IToBTCWrapper";
 import * as BN from "bn.js";
 import {UserError} from "../../../errors/UserError";
 import {
-    ChainEvents, ChainSwapType, IntermediaryReputationType,
+    ChainSwapType,
     IStorageManager,
     SwapCommitStatus,
-    SwapContract,
-    SwapData,
     TokenAddress
 } from "crosslightning-base";
-import {Intermediary} from "../../../intermediaries/Intermediary";
+import {Intermediary, SingleChainReputationType} from "../../../intermediaries/Intermediary";
 import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
 import {ISwapPrice} from "../../../prices/abstract/ISwapPrice";
 import {EventEmitter} from "events";
@@ -22,6 +20,7 @@ import {IntermediaryAPI, ToBTCLNResponseType} from "../../../intermediaries/Inte
 import {RequestError} from "../../../errors/RequestError";
 import {LNURL, LNURLPayParamsWithUrl} from "../../../utils/LNURL";
 import {IToBTCSwapInit} from "../IToBTCSwap";
+import {ChainType} from "../../Swapper";
 
 export type AbortControllerTyped<T> = AbortController & {
     abort: (reason: T) => void,
@@ -44,16 +43,17 @@ export type ToBTCLNWrapperOptions = ISwapWrapperOptions & {
     paymentTimeoutSeconds?: number
 };
 
-export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrapper<T, ToBTCLNSwap<T, TXType>, ToBTCLNWrapperOptions, TXType> {
+export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCLNSwap<T>, ToBTCLNWrapperOptions> {
 
     protected readonly swapDeserializer = ToBTCLNSwap;
 
     constructor(
-        storage: IStorageManager<ToBTCLNSwap<T, TXType>>,
-        contract: SwapContract<T, any, any, any>,
-        chainEvents: ChainEvents<T>,
+        chainIdentifier: string,
+        storage: IStorageManager<ToBTCLNSwap<T>>,
+        contract: T["Contract"],
+        chainEvents: T["Events"],
         prices: ISwapPrice,
-        swapDataDeserializer: new (data: any) => T,
+        swapDataDeserializer: new (data: any) => T["Data"],
         options?: ToBTCLNWrapperOptions,
         events?: EventEmitter
     ) {
@@ -61,7 +61,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
         options.paymentTimeoutSeconds ??= 3*24*60*60;
         options.lightningBaseFee ??= 10;
         options.lightningFeePPM ??= 2000;
-        super(storage, contract, chainEvents, prices, swapDataDeserializer, options, events);
+        super(chainIdentifier, storage, contract, chainEvents, prices, swapDataDeserializer, options, events);
     }
 
     /**
@@ -117,7 +117,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
         token: TokenAddress,
         lp: Intermediary,
         options: ToBTCLNOptions,
-        data: T,
+        data: T["Data"],
         requiredTotal?: BN
     ): Promise<void> {
         if(resp.routingFeeSats.gt(await options.maxFee)) throw new IntermediaryError("Invalid max fee sats returned");
@@ -134,7 +134,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
             data.getType()!==ChainSwapType.HTLC ||
             !data.isPayIn() ||
             !data.isToken(token) ||
-            data.getClaimer()!==lp.address
+            data.getClaimer()!==lp.getAddress(this.chainIdentifier)
         ) {
             throw new IntermediaryError("Invalid data returned");
         }
@@ -143,6 +143,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
     /**
      * Returns the quote/swap from a given intermediary
      *
+     * @param signer Smartchain signer initiating the swap
      * @param amountData
      * @param lp Intermediary
      * @param pr bolt11 lightning network invoice
@@ -155,7 +156,8 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
      * @private
      */
     private async getIntermediaryQuote(
-        amountData: Omit<AmountData, "amount">,
+        signer: string,
+        amountData: Omit<AmountData<T["TokenAddress"]>, "amount">,
         lp: Intermediary,
         pr: string,
         parsedPr: PaymentRequestObject & {tagsObject: TagsObject},
@@ -164,7 +166,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
             feeRatePromise: Promise<any>,
             pricePreFetchPromise: Promise<BN>,
             payStatusPromise: Promise<void>,
-            reputationPromise?: Promise<IntermediaryReputationType>
+            reputationPromise?: Promise<SingleChainReputationType>
         },
         abort: AbortSignal | AbortController,
         additionalParams: Record<string, any>,
@@ -174,8 +176,8 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
 
         try {
             const {signDataPromise, resp} = await tryWithRetries(async(retryCount: number) => {
-                const {signDataPrefetch, response} = IntermediaryAPI.initToBTCLN(lp.url, {
-                    offerer: this.contract.getAddress(),
+                const {signDataPrefetch, response} = IntermediaryAPI.initToBTCLN(this.chainIdentifier, lp.url, {
+                    offerer: signer,
                     pr,
                     maxFee: await options.maxFee,
                     expiryTimestamp: options.expiryTimestamp,
@@ -192,8 +194,8 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
 
             const amountOut: BN = new BN(parsedPr.millisatoshis).add(new BN(999)).div(new BN(1000));
             const totalFee: BN = resp.swapFee.add(resp.maxFee);
-            const data: T = new this.swapDataDeserializer(resp.data);
-            this.contract.setUsAsOfferer(data);
+            const data: T["Data"] = new this.swapDataDeserializer(resp.data);
+            this.contract.setUsAsOfferer(signer, data);
 
             await this.verifyReturnedData(resp, parsedPr, amountData.token, lp, options, data);
 
@@ -213,7 +215,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
 
             lp.reputation[amountData.token.toString()] = reputation;
 
-            return new ToBTCLNSwap<T, TXType>(this, {
+            return new ToBTCLNSwap<T>(this, {
                 pricingInfo,
                 url: lp.url,
                 expiry: signatureExpiry,
@@ -227,7 +229,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
                 networkFeeBtc: resp.routingFeeSats,
                 confidence: resp.confidence,
                 pr
-            } as IToBTCSwapInit<T>);
+            } as IToBTCSwapInit<T["Data"]>);
         } catch (e) {
             abortController.abort(e);
             throw e;
@@ -237,6 +239,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
     /**
      * Returns a newly created swap, paying for 'bolt11PayRequest' - a bitcoin LN invoice
      *
+     * @param signer                Smartchain signer's address initiating the swap
      * @param bolt11PayRequest      BOLT11 payment request (bitcoin lightning invoice) you wish to pay
      * @param amountData            Amount of token & amount to swap
      * @param lps                   LPs (liquidity providers) to get the quotes from
@@ -246,8 +249,9 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
      * @param preFetches            Existing pre-fetches for the swap (only used internally for LNURL swaps)
      */
     create(
+        signer: string,
         bolt11PayRequest: string,
-        amountData: Omit<AmountData, "amount">,
+        amountData: Omit<AmountData<T["TokenAddress"]>, "amount">,
         lps: Intermediary[],
         options?: ToBTCLNOptions,
         additionalParams?: Record<string, any>,
@@ -258,7 +262,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
             payStatusPromise: Promise<void>
         }
     ): {
-        quote: Promise<ToBTCLNSwap<T, TXType>>,
+        quote: Promise<ToBTCLNSwap<T>>,
         intermediary: Intermediary
     }[] {
         options ??= {};
@@ -274,13 +278,13 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
         if(preFetches==null) preFetches = {
             pricePreFetchPromise: this.preFetchPrice(amountData, _abortController.signal),
             payStatusPromise: this.preFetchPayStatus(parsedPr, _abortController),
-            feeRatePromise: this.preFetchFeeRate(amountData, parsedPr.tagsObject.payment_hash, _abortController)
+            feeRatePromise: this.preFetchFeeRate(signer, amountData, parsedPr.tagsObject.payment_hash, _abortController)
         };
 
         return lps.map(lp => {
             return {
                 intermediary: lp,
-                quote: this.getIntermediaryQuote(amountData, lp, bolt11PayRequest, parsedPr, options, preFetches, _abortController.signal, additionalParams)
+                quote: this.getIntermediaryQuote(signer, amountData, lp, bolt11PayRequest, parsedPr, options, preFetches, _abortController.signal, additionalParams)
             }
         });
     }
@@ -305,6 +309,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
     /**
      * Returns the quote/swap from the given LP
      *
+     * @param signer Smartchain signer's address initiating the swap
      * @param amountData
      * @param payRequest Parsed LNURL-pay params
      * @param lp Intermediary
@@ -316,7 +321,8 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
      * @private
      */
     private async getIntermediaryQuoteExactIn(
-        amountData: AmountData,
+        signer: string,
+        amountData: AmountData<T["TokenAddress"]>,
         payRequest: LNURLPayParamsWithUrl,
         lp: Intermediary,
         dummyPr: string,
@@ -329,13 +335,13 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
         additionalParams: Record<string, any>,
     ) {
         const abortController = extendAbortController(abortSignal);
-        const reputationPromise: Promise<IntermediaryReputationType> = this.preFetchIntermediaryReputation(amountData, lp, abortController);
+        const reputationPromise: Promise<SingleChainReputationType> = this.preFetchIntermediaryReputation(amountData, lp, abortController);
 
         try {
             const {signDataPromise, prepareResp} = await tryWithRetries(async(retryCount: number) => {
-                const {signDataPrefetch, response} = IntermediaryAPI.prepareToBTCLNExactIn(lp.url, {
+                const {signDataPrefetch, response} = IntermediaryAPI.prepareToBTCLNExactIn(this.chainIdentifier, lp.url, {
                     token: amountData.token,
-                    offerer: this.contract.getAddress(),
+                    offerer: signer,
                     pr: dummyPr,
                     amount: amountData.amount,
                     maxFee: await options.maxFee,
@@ -377,8 +383,8 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
             );
 
             const totalFee: BN = resp.swapFee.add(resp.maxFee);
-            const data: T = new this.swapDataDeserializer(resp.data);
-            this.contract.setUsAsOfferer(data);
+            const data: T["Data"] = new this.swapDataDeserializer(resp.data);
+            this.contract.setUsAsOfferer(signer, data);
 
             await this.verifyReturnedData(resp, parsedInvoice, amountData.token, lp, options, data, amountData.amount);
 
@@ -398,7 +404,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
 
             lp.reputation[amountData.token.toString()] = reputation;
 
-            return new ToBTCLNSwap<T, TXType>(this, {
+            return new ToBTCLNSwap<T>(this, {
                 pricingInfo,
                 url: lp.url,
                 expiry: signatureExpiry,
@@ -414,7 +420,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
                 pr: invoice,
                 lnurl: payRequest.url,
                 successAction
-            } as IToBTCSwapInit<T>);
+            } as IToBTCSwapInit<T["Data"]>);
         } catch (e) {
             abortController.abort(e);
             throw e;
@@ -424,6 +430,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
     /**
      * Returns a newly created swap, paying for 'lnurl' - a lightning LNURL-pay
      *
+     * @param signer                Smartchain signer's address initiating the swap
      * @param lnurl                 LMURL-pay you wish to pay
      * @param amountData            Amount of token & amount to swap
      * @param lps                   LPs (liquidity providers/intermediaries) to get the quotes from
@@ -432,14 +439,15 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
      * @param abortSignal           Abort signal for aborting the process
      */
     async createViaLNURL(
+        signer: string,
         lnurl: string | LNURLPayParamsWithUrl,
-        amountData: AmountData,
+        amountData: AmountData<T["TokenAddress"]>,
         lps: Intermediary[],
         options: ToBTCLNOptions & {comment: string},
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
     ): Promise<{
-        quote: Promise<ToBTCLNSwap<T, TXType>>,
+        quote: Promise<ToBTCLNSwap<T>>,
         intermediary: Intermediary
     }[]> {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
@@ -447,7 +455,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
 
         const _abortController = extendAbortController(abortSignal);
         const pricePreFetchPromise: Promise<BN> = this.preFetchPrice(amountData, _abortController.signal);
-        const feeRatePromise: Promise<any> = this.preFetchFeeRate(amountData, null, _abortController);
+        const feeRatePromise: Promise<any> = this.preFetchFeeRate(signer, amountData, null, _abortController);
 
         options.maxRoutingPPM ??= new BN(this.options.lightningFeePPM);
         options.maxRoutingBaseFee ??= new BN(this.options.lightningBaseFee);
@@ -479,7 +487,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
 
                 return lps.map(lp => {
                     return {
-                        quote: this.getIntermediaryQuoteExactIn(amountData, payRequest, lp, dummyInvoice, options, {
+                        quote: this.getIntermediaryQuoteExactIn(signer, amountData, payRequest, lp, dummyInvoice, options, {
                             pricePreFetchPromise,
                             feeRatePromise
                         }, _abortController.signal, additionalParams),
@@ -501,7 +509,7 @@ export class ToBTCLNWrapper<T extends SwapData, TXType = any> extends IToBTCWrap
 
                 const payStatusPromise = this.preFetchPayStatus(parsedInvoice, _abortController);
 
-                return this.create(invoice, amountData, lps, options, additionalParams, _abortController.signal, {
+                return this.create(signer, invoice, amountData, lps, options, additionalParams, _abortController.signal, {
                     feeRatePromise,
                     pricePreFetchPromise,
                     payStatusPromise,

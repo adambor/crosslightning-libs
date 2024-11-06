@@ -4,7 +4,7 @@ import {
     InitializeEvent,
     IntermediaryReputationType,
     IStorageManager,
-    RefundEvent,
+    RefundEvent, SignatureData,
     SignatureVerificationError,
     SwapContract,
     SwapData,
@@ -16,10 +16,10 @@ import {ISwap} from "./ISwap";
 import {SwapWrapperStorage} from "./SwapWrapperStorage";
 import {ISwapPrice, PriceInfoType} from "../prices/abstract/ISwapPrice";
 import * as BN from "bn.js";
-import {Intermediary} from "../intermediaries/Intermediary";
+import {Intermediary, SingleChainReputationType} from "../intermediaries/Intermediary";
 import {IntermediaryError} from "../errors/IntermediaryError";
-import {SwapHandlerInfoType} from "../intermediaries/IntermediaryDiscovery";
-import {getLogger, mapToArray, objectMap, tryWithRetries} from "../utils/Utils";
+import {getLogger, mapToArray, tryWithRetries} from "../utils/Utils";
+import {ChainType} from "./Swapper";
 
 export type AmountData<T = TokenAddress> = {
     amount: BN,
@@ -33,20 +33,20 @@ export type ISwapWrapperOptions = {
 };
 
 export abstract class ISwapWrapper<
-    T extends SwapData,
+    T extends ChainType,
     S extends ISwap<T>,
-    O extends ISwapWrapperOptions = ISwapWrapperOptions,
-    TXType = any
+    O extends ISwapWrapperOptions = ISwapWrapperOptions
 > {
     protected readonly logger = getLogger(this.constructor.name+": ");
 
-    protected readonly abstract swapDeserializer: new (wrapper: ISwapWrapper<T, S, O, TXType>, data: any) => S;
+    protected readonly abstract swapDeserializer: new (wrapper: ISwapWrapper<T, S, O>, data: any) => S;
 
+    readonly chainIdentifier: string;
     readonly storage: SwapWrapperStorage<S>;
-    readonly contract: SwapContract<T, any, any, any>;
+    readonly contract: T["Contract"];
     readonly prices: ISwapPrice;
-    readonly chainEvents: ChainEvents<T>;
-    readonly swapDataDeserializer: new (data: any) => T;
+    readonly chainEvents: T["Events"];
+    readonly swapDataDeserializer: new (data: any) => T["Data"];
     readonly events: EventEmitter;
     readonly options: O;
 
@@ -54,6 +54,7 @@ export abstract class ISwapWrapper<
     isInitialized: boolean = false;
 
     /**
+     * @param chainIdentifier
      * @param storage Storage interface for the current environment
      * @param contract Underlying contract handling the swaps
      * @param prices Swap pricing handler
@@ -63,14 +64,16 @@ export abstract class ISwapWrapper<
      * @param events Instance to use for emitting events
      */
     constructor(
+        chainIdentifier: string,
         storage: IStorageManager<S>,
-        contract: SwapContract<T, any, any, any>,
-        chainEvents: ChainEvents<T>,
+        contract: T["Contract"],
+        chainEvents: T["Events"],
         prices: ISwapPrice,
-        swapDataDeserializer: new (data: any) => T,
+        swapDataDeserializer: new (data: any) => T["Data"],
         options: O,
         events?: EventEmitter
     ) {
+        this.chainIdentifier = chainIdentifier;
         this.storage = new SwapWrapperStorage<S>(storage);
         this.contract = contract;
         this.prices = prices;
@@ -91,34 +94,6 @@ export abstract class ISwapWrapper<
     protected preFetchPrice(amountData: Omit<AmountData, "amount">, abortSignal?: AbortSignal): Promise<BN | null> {
         return this.prices.preFetchPrice(amountData.token, abortSignal).catch(e => {
             this.logger.error("preFetchPrice(): Error: ", e);
-            return null;
-        });
-    }
-
-    /**
-     * Pre-fetches intermediary's reputation, doesn't throw, instead aborts via abortController and returns null
-     *
-     * @param amountData
-     * @param lp Intermediary
-     * @param abortController
-     * @protected
-     * @returns Intermediary's reputation or null if failed
-     * @throws {IntermediaryError} If the intermediary vault doesn't exist
-     */
-    protected preFetchIntermediaryReputation(
-        amountData: Omit<AmountData, "amount">,
-        lp: Intermediary,
-        abortController: AbortController
-    ): Promise<IntermediaryReputationType | null> {
-        return tryWithRetries(
-            () => this.contract.getIntermediaryReputation(lp.address, amountData.token),
-            null, null, abortController.signal
-        ).then(res => {
-            if(res==null) throw new IntermediaryError("Invalid data returned - invalid LP vault");
-            return res;
-        }).catch(e => {
-            this.logger.error("preFetchIntermediaryReputation(): Error: ", e);
-            abortController.abort(e);
             return null;
         });
     }
@@ -145,7 +120,7 @@ export abstract class ISwapWrapper<
      * Verifies swap initialization signature returned by the intermediary
      *
      * @param data Parsed swap data from the intermediary
-     * @param signatureData Response of the intermediary
+     * @param signature Response of the intermediary
      * @param feeRatePromise Pre-fetched fee rate promise
      * @param preFetchSignatureVerificationData Pre-fetched signature verification data
      * @param abortSignal
@@ -154,12 +129,8 @@ export abstract class ISwapWrapper<
      * @throws {SignatureVerificationError} when swap init signature is invalid
      */
     protected async verifyReturnedSignature(
-        data: T,
-        {timeout, prefix, signature}: {
-            timeout: string,
-            prefix: string,
-            signature: string
-        },
+        data: T["Data"],
+        signature: SignatureData,
         feeRatePromise: Promise<any>,
         preFetchSignatureVerificationData: Promise<any>,
         abortSignal?: AbortSignal
@@ -167,16 +138,16 @@ export abstract class ISwapWrapper<
         const [feeRate, preFetchedSignatureData] = await Promise.all([feeRatePromise, preFetchSignatureVerificationData]);
         await tryWithRetries(
             () => data.isPayIn() ?
-                this.contract.isValidClaimInitAuthorization(data, timeout, prefix, signature, feeRate, preFetchedSignatureData) :
-                this.contract.isValidInitAuthorization(data, timeout, prefix, signature, feeRate, preFetchedSignatureData),
+                this.contract.isValidClaimInitAuthorization(data, signature, feeRate, preFetchedSignatureData) :
+                this.contract.isValidInitAuthorization(data, signature, feeRate, preFetchedSignatureData),
             null,
             SignatureVerificationError,
             abortSignal
         );
         return await tryWithRetries(
             () => data.isPayIn() ?
-                this.contract.getClaimInitAuthorizationExpiry(data, timeout, prefix, signature, preFetchedSignatureData) :
-                this.contract.getInitAuthorizationExpiry(data, timeout, prefix, signature, preFetchedSignatureData),
+                this.contract.getClaimInitAuthorizationExpiry(data, signature, preFetchedSignatureData) :
+                this.contract.getInitAuthorizationExpiry(data, signature, preFetchedSignatureData),
             null,
             SignatureVerificationError,
             abortSignal
@@ -227,11 +198,13 @@ export abstract class ISwapWrapper<
     }
 
     /**
-     * Checks if the provided swap is "ours", belonging to the underlying provider's address/public key
+     * Checks if the provided swap is belonging to the provided signer's address
+     *
+     * @param signer
      * @param swap Swap to be checked
      * @protected
      */
-    protected abstract isOurSwap(swap: S): boolean;
+    protected abstract isOurSwap(signer: string, swap: S): boolean;
 
     /**
      * Processes InitializeEvent for a given swap
@@ -240,7 +213,7 @@ export abstract class ISwapWrapper<
      * @protected
      * @returns Whether the swap was updated/changed
      */
-    protected processEventInitialize?(swap: S, event: InitializeEvent<T>): Promise<boolean>;
+    protected processEventInitialize?(swap: S, event: InitializeEvent<T["Data"]>): Promise<boolean>;
 
     /**
      * Processes ClaimEvent for a given swap
@@ -249,7 +222,7 @@ export abstract class ISwapWrapper<
      * @protected
      * @returns Whether the swap was updated/changed
      */
-    protected processEventClaim?(swap: S, event: ClaimEvent<T>): Promise<boolean>;
+    protected processEventClaim?(swap: S, event: ClaimEvent<T["Data"]>): Promise<boolean>;
 
     /**
      * Processes RefundEvent for a given swap
@@ -258,7 +231,7 @@ export abstract class ISwapWrapper<
      * @protected
      * @returns Whether the swap was updated/changed
      */
-    protected processEventRefund?(swap: S, event: RefundEvent<T>): Promise<boolean>;
+    protected processEventRefund?(swap: S, event: RefundEvent<T["Data"]>): Promise<boolean>;
 
     /**
      * Checks past swap and syncs its state from the chain, this is called on initialization for all unfinished swaps
@@ -273,7 +246,7 @@ export abstract class ISwapWrapper<
      * @param events
      * @private
      */
-    private async processEvents(events: SwapEvent<T>[]): Promise<boolean> {
+    private async processEvents(events: SwapEvent<T["Data"]>[]): Promise<boolean> {
         for(let event of events) {
             const paymentHash = event.paymentHash;
             const swap: S = this.swapData.get(paymentHash);
@@ -326,8 +299,8 @@ export abstract class ISwapWrapper<
 
         //Save events received in the meantime into the event queue and process them only after we've checked and
         // processed all the past swaps
-        let eventQueue: SwapEvent<T>[] = [];
-        const initListener = (events: SwapEvent<T>[]) => {
+        let eventQueue: SwapEvent<T["Data"]>[] = [];
+        const initListener = (events: SwapEvent<T["Data"]>[]) => {
             eventQueue.push(...events);
             return Promise.resolve(true);
         }
@@ -377,19 +350,21 @@ export abstract class ISwapWrapper<
     }
 
     /**
-     * Returns all swaps that were initiated with the current provider's public key
+     * Returns all swaps, optionally only those which were intiated by as specific signer's address
      */
-    public getAllSwaps(): Promise<S[]> {
-        return Promise.resolve(this.getAllSwapsSync());
+    public getAllSwaps(signer?: string): Promise<S[]> {
+        return Promise.resolve(this.getAllSwapsSync(signer));
     }
 
     /**
-     * Returns all swaps that were initiated with the current provider's public key
+     * Returns all swaps, optionally only those which were intiated by as specific signer's address
      */
-    public getAllSwapsSync(): S[] {
+    public getAllSwapsSync(signer?: string): S[] {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        return mapToArray(this.swapData, (key, value: S) => value).filter(this.isOurSwap.bind(this));
+        const array = mapToArray(this.swapData, (key, value: S) => value);
+        if(signer!=null) return array.filter((swap) => this.isOurSwap(signer, swap));
+        return array;
     }
 
 }

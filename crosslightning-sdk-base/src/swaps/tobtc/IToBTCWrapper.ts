@@ -3,19 +3,20 @@ import {
     ClaimEvent,
     InitializeEvent,
     RefundEvent,
-    SwapCommitStatus,
-    SwapData
+    SwapCommitStatus
 } from "crosslightning-base";
 import {AmountData, ISwapWrapper, ISwapWrapperOptions} from "../ISwapWrapper";
 import {tryWithRetries} from "../../utils/Utils";
+import {ChainType} from "../Swapper";
+import {Intermediary, SingleChainReputationType} from "../../intermediaries/Intermediary";
+import {IntermediaryError} from "../../errors/IntermediaryError";
 
 
 export abstract class IToBTCWrapper<
-    T extends SwapData,
-    S extends IToBTCSwap<T, TXType> = IToBTCSwap<T, any>,
-    O extends ISwapWrapperOptions = ISwapWrapperOptions,
-    TXType = any
-> extends ISwapWrapper<T, S, O, TXType> {
+    T extends ChainType,
+    S extends IToBTCSwap<T> = IToBTCSwap<T>,
+    O extends ISwapWrapperOptions = ISwapWrapperOptions
+> extends ISwapWrapper<T, S, O> {
 
     /**
      * Checks the swap's state on-chain and compares it to its internal state, updates/changes it according to on-chain
@@ -26,7 +27,7 @@ export abstract class IToBTCWrapper<
      */
     private async syncStateFromChain(swap: S): Promise<boolean> {
         if(swap.state===ToBTCSwapState.CREATED || swap.state===ToBTCSwapState.COMMITED) {
-            const res = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
+            const res = await tryWithRetries(() => this.contract.getCommitStatus(swap.getInitiator(), swap.data));
             switch(res) {
                 case SwapCommitStatus.PAID:
                     swap.state = ToBTCSwapState.CLAIMED;
@@ -54,17 +55,43 @@ export abstract class IToBTCWrapper<
     }
 
     /**
+     * Pre-fetches intermediary's reputation, doesn't throw, instead aborts via abortController and returns null
+     *
+     * @param amountData
+     * @param lp Intermediary
+     * @param abortController
+     * @protected
+     * @returns Intermediary's reputation or null if failed
+     * @throws {IntermediaryError} If the intermediary vault doesn't exist
+     */
+    protected preFetchIntermediaryReputation(
+        amountData: Omit<AmountData, "amount">,
+        lp: Intermediary,
+        abortController: AbortController
+    ): Promise<SingleChainReputationType | null> {
+        return lp.getReputation(this.chainIdentifier, this.contract, [amountData.token.toString()], abortController.signal).then(res => {
+            if(res==null) throw new IntermediaryError("Invalid data returned - invalid LP vault");
+            return res;
+        }).catch(e => {
+            this.logger.error("preFetchIntermediaryReputation(): Error: ", e);
+            abortController.abort(e);
+            return null;
+        });
+    }
+
+    /**
      * Pre-fetches feeRate for a given swap
      *
+     * @param signer Address of the swap initiator
      * @param amountData
      * @param hash optional hash of the swap or null
      * @param abortController
      * @protected
      * @returns Fee rate
      */
-    protected preFetchFeeRate(amountData: Omit<AmountData, "amount">, hash: string | null, abortController: AbortController): Promise<any | null> {
+    protected preFetchFeeRate(signer: string, amountData: Omit<AmountData, "amount">, hash: string | null, abortController: AbortController): Promise<any | null> {
         return tryWithRetries(
-            () => this.contract.getInitPayInFeeRate(this.contract.getAddress(), null, amountData.token, hash),
+            () => this.contract.getInitPayInFeeRate(signer, null, amountData.token, hash),
             null, null, abortController.signal
         ).catch(e => {
             this.logger.error("preFetchFeeRate(): Error: ", e);
@@ -90,7 +117,7 @@ export abstract class IToBTCWrapper<
         return changed;
     }
 
-    protected async processEventInitialize(swap: S, event: InitializeEvent<T>): Promise<boolean> {
+    protected async processEventInitialize(swap: S, event: InitializeEvent<T["Data"]>): Promise<boolean> {
         if(swap.state==ToBTCSwapState.CREATED) {
             const swapData = await event.swapData();
             if(swap.data!=null && !swap.data.equals(swapData)) return false;
@@ -100,7 +127,7 @@ export abstract class IToBTCWrapper<
         }
     }
 
-    protected processEventClaim(swap: S, event: ClaimEvent<T>): Promise<boolean> {
+    protected processEventClaim(swap: S, event: ClaimEvent<T["Data"]>): Promise<boolean> {
         if(swap.state===ToBTCSwapState.CREATED || swap.state===ToBTCSwapState.COMMITED || swap.state===ToBTCSwapState.REFUNDABLE) {
             swap.state = ToBTCSwapState.CLAIMED;
             swap._setPaymentResult({secret: event.secret, txId: event.secret});
@@ -109,7 +136,7 @@ export abstract class IToBTCWrapper<
         return Promise.resolve(false);
     }
 
-    protected processEventRefund(swap: S, event: RefundEvent<T>): Promise<boolean> {
+    protected processEventRefund(swap: S, event: RefundEvent<T["Data"]>): Promise<boolean> {
         if(swap.state===ToBTCSwapState.CREATED || swap.state===ToBTCSwapState.COMMITED || swap.state===ToBTCSwapState.REFUNDABLE) {
             swap.state = ToBTCSwapState.REFUNDED;
             return Promise.resolve(true);
@@ -117,22 +144,22 @@ export abstract class IToBTCWrapper<
         return Promise.resolve(false);
     }
 
-    protected isOurSwap(swap: S): boolean {
-        return this.contract.areWeOfferer(swap.data);
+    protected isOurSwap(signer: string, swap: S): boolean {
+        return this.contract.areWeOfferer(signer, swap.data);
     }
 
     /**
-     * Returns swaps that are refundable and that were initiated with the current provider's public key
+     * Returns all swaps that are refundable, and optionally only those initiated with signer's address
      */
-    public getRefundableSwaps(): Promise<S[]> {
-        return Promise.resolve(this.getRefundableSwapsSync());
+    public getRefundableSwaps(signer?: string): Promise<S[]> {
+        return Promise.resolve(this.getRefundableSwapsSync(signer));
     }
 
     /**
-     * Returns swaps that are refundable and that were initiated with the current provider's public key
+     * Returns all swaps that are refundable, and optionally only those initiated with signer's address
      */
-    public getRefundableSwapsSync(): S[] {
-        return this.getAllSwapsSync().filter(swap => swap.isRefundable());
+    public getRefundableSwapsSync(signer?: string): S[] {
+        return this.getAllSwapsSync(signer).filter(swap => swap.isRefundable());
     }
 
 }

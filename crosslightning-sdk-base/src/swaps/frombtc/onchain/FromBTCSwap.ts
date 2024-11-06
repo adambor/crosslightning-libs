@@ -7,6 +7,7 @@ import * as BN from "bn.js";
 import {SwapCommitStatus, SwapData} from "crosslightning-base";
 import {isISwapInit, ISwapInit} from "../../ISwap";
 import {Buffer} from "buffer";
+import {ChainType} from "../../Swapper";
 
 export enum FromBTCSwapState {
     FAILED = -2,
@@ -28,7 +29,7 @@ export function isFromBTCSwapInit<T extends SwapData>(obj: any): obj is FromBTCS
         isISwapInit<T>(obj);
 }
 
-export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<T, FromBTCSwapState, TXType> {
+export class FromBTCSwap<T extends ChainType> extends IFromBTCSwap<T, FromBTCSwapState> {
     protected readonly TYPE = SwapType.FROM_BTC;
 
     protected readonly PRE_COMMIT_STATE = FromBTCSwapState.PR_CREATED;
@@ -36,7 +37,7 @@ export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<
     protected readonly CLAIM_STATE = FromBTCSwapState.CLAIM_CLAIMED;
     protected readonly FAIL_STATE = FromBTCSwapState.FAILED;
 
-    readonly wrapper: FromBTCWrapper<T, TXType>;
+    readonly wrapper: FromBTCWrapper<T>;
 
     readonly address: string;
     readonly amount: BN;
@@ -44,9 +45,9 @@ export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<
     txId?: string;
     vout?: number;
 
-    constructor(wrapper: FromBTCWrapper<T, TXType>, init: FromBTCSwapInit<T>);
-    constructor(wrapper: FromBTCWrapper<T, TXType>, obj: any);
-    constructor(wrapper: FromBTCWrapper<T, TXType>, initOrObject: FromBTCSwapInit<T> | any) {
+    constructor(wrapper: FromBTCWrapper<T>, init: FromBTCSwapInit<T["Data"]>);
+    constructor(wrapper: FromBTCWrapper<T>, obj: any);
+    constructor(wrapper: FromBTCWrapper<T>, initOrObject: FromBTCSwapInit<T["Data"]> | any) {
         if(isFromBTCSwapInit(initOrObject)) initOrObject.url += "/frombtc";
         super(wrapper, initOrObject);
         if(isFromBTCSwapInit(initOrObject)) {
@@ -106,7 +107,7 @@ export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<
     }
 
     isClaimable(): boolean {
-        return this.state===FromBTCSwapState.BTC_TX_CONFIRMED || (this.state===FromBTCSwapState.CLAIM_COMMITED && !this.wrapper.contract.isExpired(this.data) && this.getTimeoutTime()>Date.now());
+        return this.state===FromBTCSwapState.BTC_TX_CONFIRMED || (this.state===FromBTCSwapState.CLAIM_COMMITED && !this.wrapper.contract.isExpired(this.getInitiator(), this.data) && this.getTimeoutTime()>Date.now());
     }
 
     isSuccessful(): boolean {
@@ -216,14 +217,16 @@ export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<
     /**
      * Returns transactions required to claim the swap on-chain (and possibly also sync the bitcoin light client)
      *  after a bitcoin transaction was sent and confirmed
+     *
+     * @param signer Optional signer address to use for claiming the swap, can also be different from the initializer
      * @throws {Error} If the swap is in invalid state (must be BTC_TX_CONFIRMED)
      */
-    async txsClaim(): Promise<TXType[]> {
+    async txsClaim(signer?: string): Promise<T["TX"][]> {
         if(!this.canClaim()) throw new Error("Must be in BTC_TX_CONFIRMED state!");
 
         const tx = await this.wrapper.btcRpc.getTransaction(this.txId);
 
-        return await this.wrapper.contract.txsClaimWithTxData(this.data, tx.blockheight, {
+        return await this.wrapper.contract.txsClaimWithTxData(signer ?? this.getInitiator(), this.data, tx.blockheight, {
             blockhash: tx.blockhash,
             confirmations: this.data.getConfirmations(),
             txid: tx.txid,
@@ -234,14 +237,15 @@ export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<
     /**
      * Claims and finishes the swap
      *
+     * @param signer Signer to sign the transactions with, can also be different to the initializer
      * @param noWaitForConfirmation Do not wait for transaction confirmation
      * @param abortSignal Abort signal to stop waiting for transaction confirmation
      */
-    async claim(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+    async claim(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
         let txIds: string[];
         try {
             txIds = await this.wrapper.contract.sendAndConfirm(
-                await this.txsClaim(), !noWaitForConfirmation, abortSignal
+                signer, await this.txsClaim(signer.getAddress()), !noWaitForConfirmation, abortSignal
             );
         } catch (e) {
             this.logger.info("claim(): Failed to claim ourselves, checking swap claim state...");
@@ -249,7 +253,7 @@ export class FromBTCSwap<T extends SwapData, TXType = any> extends IFromBTCSwap<
                 this.logger.info("claim(): Transaction state is CLAIM_CLAIMED, swap was successfully claimed by the watchtower");
                 return this.claimTxId;
             }
-            if((await this.wrapper.contract.getCommitStatus(this.data))===SwapCommitStatus.PAID) {
+            if((await this.wrapper.contract.getCommitStatus(this.getInitiator(), this.data))===SwapCommitStatus.PAID) {
                 this.logger.info("claim(): Transaction commit status is PAID, swap was successfully claimed by the watchtower");
                 await this._saveAndEmit(FromBTCSwapState.CLAIM_CLAIMED);
                 return null;

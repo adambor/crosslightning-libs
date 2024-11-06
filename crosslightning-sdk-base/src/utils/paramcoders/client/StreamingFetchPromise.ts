@@ -161,7 +161,7 @@ export async function streamingFetchPromise<T extends RequestSchema>(
 
         logger.debug(url+": Response read ("+(Date.now()-startTime)+"ms) (non streaming): ", respBody);
 
-        return objectMap<any, Promise<any>>(schema, (schemaValue, key) => {
+        return objectMap(schema, (schemaValue, key) => {
             const value = respBody[key];
 
             const result = verifyField(schemaValue, value);

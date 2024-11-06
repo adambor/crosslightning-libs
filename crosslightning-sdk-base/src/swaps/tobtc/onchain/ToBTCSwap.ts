@@ -3,9 +3,9 @@ import {isIToBTCSwapInit, IToBTCSwap, IToBTCSwapInit} from "../IToBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
-import {Token} from "../../ISwap";
 import {Buffer} from "buffer";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
+import {ChainType} from "../../Swapper";
 
 
 export type ToBTCSwapInit<T extends SwapData> = IToBTCSwapInit<T> & {
@@ -23,10 +23,10 @@ export function isToBTCSwapInit<T extends SwapData>(obj: any): obj is ToBTCSwapI
         isIToBTCSwapInit<T>(obj);
 }
 
-export class ToBTCSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T, TXType> {
+export class ToBTCSwap<T extends ChainType> extends IToBTCSwap<T> {
     protected readonly TYPE = SwapType.TO_BTC;
 
-    protected readonly wrapper: ToBTCWrapper<T, TXType>;
+    protected readonly wrapper: ToBTCWrapper<T>;
 
     private readonly address: string;
     private readonly amount: BN;
@@ -35,15 +35,15 @@ export class ToBTCSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T, T
 
     private txId?: string;
 
-    constructor(wrapper: ToBTCWrapper<T, TXType>, serializedObject: any);
-    constructor(wrapper: ToBTCWrapper<T, TXType>, init: ToBTCSwapInit<T>);
+    constructor(wrapper: ToBTCWrapper<T>, serializedObject: any);
+    constructor(wrapper: ToBTCWrapper<T>, init: ToBTCSwapInit<T["Data"]>);
     constructor(
-        wrapper: ToBTCWrapper<T, TXType>,
-        initOrObject: ToBTCSwapInit<T> | any
+        wrapper: ToBTCWrapper<T>,
+        initOrObject: ToBTCSwapInit<T["Data"]> | any
     ) {
         if(isToBTCSwapInit(initOrObject)) initOrObject.url += "/tobtc";
         super(wrapper, initOrObject);
-        if(!isToBTCSwapInit<T>(initOrObject)) {
+        if(!isToBTCSwapInit(initOrObject)) {
             this.address = initOrObject.address;
             this.amount = new BN(initOrObject.amount);
             this.confirmationTarget = initOrObject.confirmationTarget;

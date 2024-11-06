@@ -1,7 +1,12 @@
 import {IToBTCWrapper} from "./IToBTCWrapper";
 import {Fee, isISwapInit, ISwap, ISwapInit} from "../ISwap";
 import * as BN from "bn.js";
-import {SignatureVerificationError, SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
+import {
+    AbstractSigner,
+    SignatureVerificationError,
+    SwapCommitStatus,
+    SwapData
+} from "crosslightning-base";
 import {PriceInfoType} from "../../prices/abstract/ISwapPrice";
 import {
     IntermediaryAPI,
@@ -10,7 +15,7 @@ import {
 } from "../../intermediaries/IntermediaryAPI";
 import {IntermediaryError} from "../../errors/IntermediaryError";
 import {extendAbortController, timeoutPromise, tryWithRetries} from "../../utils/Utils";
-import {ISwapWrapperOptions} from "../ISwapWrapper";
+import {ChainType} from "../Swapper";
 
 export type IToBTCSwapInit<T extends SwapData> = ISwapInit<T> & {
     networkFee: BN,
@@ -23,18 +28,18 @@ export function isIToBTCSwapInit<T extends SwapData>(obj: any): obj is IToBTCSwa
         isISwapInit<T>(obj);
 }
 
-export abstract class IToBTCSwap<T extends SwapData, TXType = any> extends ISwap<T, ToBTCSwapState, TXType> {
+export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<T, ToBTCSwapState> {
     protected readonly networkFee: BN;
     protected networkFeeBtc?: BN;
 
-    protected constructor(wrapper: IToBTCWrapper<T, IToBTCSwap<T, TXType>, ISwapWrapperOptions, TXType>, serializedObject: any);
-    protected constructor(wrapper: IToBTCWrapper<T, IToBTCSwap<T, TXType>, ISwapWrapperOptions, TXType>, init: IToBTCSwapInit<T>);
+    protected constructor(wrapper: IToBTCWrapper<T, IToBTCSwap<T>>, serializedObject: any);
+    protected constructor(wrapper: IToBTCWrapper<T, IToBTCSwap<T>>, init: IToBTCSwapInit<T["Data"]>);
     protected constructor(
-        wrapper: IToBTCWrapper<T, IToBTCSwap<T, TXType>, ISwapWrapperOptions, TXType>,
-        initOrObject: IToBTCSwapInit<T> | any
+        wrapper: IToBTCWrapper<T, IToBTCSwap<T>>,
+        initOrObject: IToBTCSwapInit<T["Data"]> | any
     ) {
         super(wrapper, initOrObject);
-        if(isIToBTCSwapInit<T>(initOrObject)) {
+        if(isIToBTCSwapInit<T["Data"]>(initOrObject)) {
             this.state = ToBTCSwapState.CREATED;
         } else {
             this.networkFee = initOrObject.networkFee==null ? null : new BN(initOrObject.networkFee);
@@ -95,7 +100,7 @@ export abstract class IToBTCSwap<T extends SwapData, TXType = any> extends ISwap
 
     abstract getOutToken(): {chain: "BTC", lightning: boolean};
 
-    getInToken(): {chain: "SC", address: TokenAddress} {
+    getInToken(): {chain: "SC", address: T["TokenAddress"]} {
         return {
             chain: "SC",
             address: this.data.getToken()
@@ -110,7 +115,7 @@ export abstract class IToBTCSwap<T extends SwapData, TXType = any> extends ISwap
     }
 
     isRefundable(): boolean {
-        return this.state===ToBTCSwapState.REFUNDABLE || (this.state===ToBTCSwapState.COMMITED && this.wrapper.contract.isExpired(this.data));
+        return this.state===ToBTCSwapState.REFUNDABLE || (this.state===ToBTCSwapState.COMMITED && this.wrapper.contract.isExpired(this.getInitiator(), this.data));
     }
 
     isQuoteExpired(): boolean {
@@ -129,7 +134,7 @@ export abstract class IToBTCSwap<T extends SwapData, TXType = any> extends ISwap
         try {
             await tryWithRetries(
                 () => this.wrapper.contract.isValidClaimInitAuthorization(
-                    this.data, this.timeout, this.prefix, this.signature, this.feeRate
+                    this.data, this.signatureData, this.feeRate
                 ),
                 null,
                 SignatureVerificationError
@@ -147,6 +152,10 @@ export abstract class IToBTCSwap<T extends SwapData, TXType = any> extends ISwap
      */
     canCommit(): boolean {
         return this.state===ToBTCSwapState.CREATED;
+    }
+
+    getInitiator(): string {
+        return this.data.getOfferer();
     }
 
 
@@ -190,7 +199,7 @@ export abstract class IToBTCSwap<T extends SwapData, TXType = any> extends ISwap
      * Get the estimated smart chain transaction fee of the refund transaction
      */
     getRefundFee(): Promise<BN> {
-        return this.wrapper.contract.getRefundFee(this.data);
+        return this.wrapper.contract.getRefundFee(this.getInitiator(), this.data);
     }
 
 
@@ -200,14 +209,17 @@ export abstract class IToBTCSwap<T extends SwapData, TXType = any> extends ISwap
     /**
      * Commits the swap on-chain, initiating the swap
      *
+     * @param signer Signer to sign the transactions with, must be the same as used in the initialization
      * @param noWaitForConfirmation Do not wait for transaction confirmation
      * @param abortSignal Abort signal
      * @param skipChecks Skip checks like making sure init signature is still valid and swap wasn't commited yet
-     *  (this is handled on swap creation, if you commit right after quoting, you can skipChecks)
+     *  (this is handled on swap creation, if you commit right after quoting, you can skipChecks)`
+     * @throws {Error} If invalid signer is provided that doesn't match the swap data
      */
-    async commit(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
+    async commit(signer: AbstractSigner, noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
+        this.checkSigner(signer);
         const result = await this.wrapper.contract.sendAndConfirm(
-            await this.txsCommit(skipChecks), !noWaitForConfirmation, abortSignal
+            signer, await this.txsCommit(skipChecks), !noWaitForConfirmation, abortSignal
         );
 
         this.commitTxId = result[0];
@@ -223,13 +235,13 @@ export abstract class IToBTCSwap<T extends SwapData, TXType = any> extends ISwap
      *
      * @throws {Error} When in invalid state (not PR_CREATED)
      */
-    async txsCommit(skipChecks?: boolean): Promise<TXType[]> {
+    async txsCommit(skipChecks?: boolean): Promise<T["TX"][]> {
         if(!this.canCommit()) throw new Error("Must be in CREATED state!");
 
         await this._save();
 
         return await this.wrapper.contract.txsInitPayIn(
-            this.data, this.timeout, this.prefix, this.signature, skipChecks, this.feeRate
+            this.data, this.signatureData, skipChecks, this.feeRate
         ).catch(e => Promise.reject(e instanceof SignatureVerificationError ? new Error("Request timed out") : e));
     }
 
@@ -298,16 +310,14 @@ export abstract class IToBTCSwap<T extends SwapData, TXType = any> extends ISwap
                 await tryWithRetries(
                     () => this.wrapper.contract.isValidRefundAuthorization(
                         this.data,
-                        result.data.timeout,
-                        result.data.prefix,
-                        result.data.signature
+                        result.data
                     ),
                     null, SignatureVerificationError, abortSignal
                 );
                 await this._saveAndEmit(ToBTCSwapState.REFUNDABLE);
                 return false;
             case RefundAuthorizationResponseCodes.EXPIRED:
-                if(this.wrapper.contract.isExpired(this.data)) throw new Error("Swap expired");
+                if(this.wrapper.contract.isExpired(this.getInitiator(), this.data)) throw new Error("Swap expired");
                 throw new IntermediaryError("Swap expired");
             case RefundAuthorizationResponseCodes.NOT_FOUND:
                 // @ts-ignore
@@ -357,7 +367,7 @@ export abstract class IToBTCSwap<T extends SwapData, TXType = any> extends ISwap
                 return processed;
             case RefundAuthorizationResponseCodes.REFUND_DATA:
                 await tryWithRetries(
-                    () => this.wrapper.contract.isValidRefundAuthorization(this.data, resp.data.timeout, resp.data.prefix, resp.data.signature),
+                    () => this.wrapper.contract.isValidRefundAuthorization(this.data, resp.data),
                     null, SignatureVerificationError
                 );
                 this.state = ToBTCSwapState.REFUNDABLE;
@@ -374,11 +384,14 @@ export abstract class IToBTCSwap<T extends SwapData, TXType = any> extends ISwap
     /**
      * Refunds the swap if the swap is in refundable state, you can check so with isRefundable()
      *
+     * @param signer Signer to sign the transactions with, must be the same as used in the initialization
      * @param noWaitForConfirmation     Do not wait for transaction confirmation
      * @param abortSignal               Abort signal
+     * @throws {Error} If invalid signer is provided that doesn't match the swap data
      */
-    async refund(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
-        const result = await this.wrapper.contract.sendAndConfirm(await this.txsRefund(), !noWaitForConfirmation, abortSignal)
+    async refund(signer: AbstractSigner, noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        this.checkSigner(signer);
+        const result = await this.wrapper.contract.sendAndConfirm(signer, await this.txsRefund(), !noWaitForConfirmation, abortSignal)
 
         this.refundTxId = result[0];
         await this._saveAndEmit(ToBTCSwapState.REFUNDED);
@@ -393,19 +406,17 @@ export abstract class IToBTCSwap<T extends SwapData, TXType = any> extends ISwap
      * @throws {SignatureVerificationError} If intermediary returned invalid cooperative refund signature
      * @throws {Error} When state is not refundable
      */
-    async txsRefund(): Promise<TXType[]> {
+    async txsRefund(): Promise<T["TX"][]> {
         if(!this.isRefundable()) throw new Error("Must be in REFUNDABLE state or expired!");
 
-        if(this.wrapper.contract.isExpired(this.data)) {
+        if(this.wrapper.contract.isExpired(this.getInitiator(), this.data)) {
             return await this.wrapper.contract.txsRefund(this.data, true, true);
         } else {
             const res = await IntermediaryAPI.getRefundAuthorization(this.url, this.data.getHash(), this.data.getSequence());
             if(res.code===RefundAuthorizationResponseCodes.REFUND_DATA) {
                 return await this.wrapper.contract.txsRefundWithAuthorization(
                     this.data,
-                    res.data.timeout,
-                    res.data.prefix,
-                    res.data.signature,
+                    res.data,
                     true,
                     true
                 );

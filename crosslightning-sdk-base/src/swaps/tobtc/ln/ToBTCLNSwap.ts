@@ -8,6 +8,7 @@ import {Buffer} from "buffer";
 import * as createHash from "create-hash";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {LNURL, LNURLDecodedSuccessAction, LNURLPaySuccessAction} from "../../../utils/LNURL";
+import {ChainType} from "../../Swapper";
 
 function isLNURLPaySuccessAction(obj: any): obj is LNURLPaySuccessAction {
     return obj != null &&
@@ -35,7 +36,7 @@ export function isToBTCLNSwapInit<T extends SwapData>(obj: any): obj is ToBTCLNS
         isIToBTCSwapInit<T>(obj);
 }
 
-export class ToBTCLNSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T, TXType> {
+export class ToBTCLNSwap<T extends ChainType> extends IToBTCSwap<T> {
     protected readonly TYPE = SwapType.TO_BTCLN;
 
     private readonly confidence: number;
@@ -46,10 +47,10 @@ export class ToBTCLNSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T,
 
     private secret?: string;
 
-    constructor(wrapper: ToBTCLNWrapper<T, TXType>, init: ToBTCLNSwapInit<T>);
-    constructor(wrapper: ToBTCLNWrapper<T, TXType>, obj: any);
+    constructor(wrapper: ToBTCLNWrapper<T>, init: ToBTCLNSwapInit<T["Data"]>);
+    constructor(wrapper: ToBTCLNWrapper<T>, obj: any);
 
-    constructor(wrapper: ToBTCLNWrapper<T, TXType>, initOrObj: ToBTCLNSwapInit<T> | any) {
+    constructor(wrapper: ToBTCLNWrapper<T>, initOrObj: ToBTCLNSwapInit<T["Data"]> | any) {
         if(isToBTCLNSwapInit(initOrObj)) initOrObj.url += "/tobtcln";
         super(wrapper, initOrObj);
         if(!isToBTCLNSwapInit(initOrObj)) {

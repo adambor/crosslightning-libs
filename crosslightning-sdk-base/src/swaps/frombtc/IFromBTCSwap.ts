@@ -1,29 +1,31 @@
 
 import {IFromBTCWrapper} from "./IFromBTCWrapper";
-import {Fee, ISwap, ISwapInit, Token} from "../ISwap";
+import {Fee, ISwap, ISwapInit} from "../ISwap";
 import * as BN from "bn.js";
-import {SignatureVerificationError, SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
+import {
+    SignatureVerificationError,
+    SwapCommitStatus
+} from "crosslightning-base";
 import {PriceInfoType} from "../../prices/abstract/ISwapPrice";
 import {extendAbortController, tryWithRetries} from "../../utils/Utils";
-import {ISwapWrapperOptions} from "../ISwapWrapper";
+import {ChainType} from "../Swapper";
 
 
 export abstract class IFromBTCSwap<
-    T extends SwapData,
-    S extends number = number,
-    TXType = any
-> extends ISwap<T, S, TXType> {
+    T extends ChainType = ChainType,
+    S extends number = number
+> extends ISwap<T, S> {
 
     protected abstract readonly PRE_COMMIT_STATE: S;
     protected abstract readonly COMMIT_STATE: S;
     protected abstract readonly CLAIM_STATE: S;
     protected abstract readonly FAIL_STATE: S;
 
-    protected constructor(wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S, TXType>, ISwapWrapperOptions, TXType>, init: ISwapInit<T>);
-    protected constructor(wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S, TXType>, ISwapWrapperOptions, TXType>, obj: any);
+    protected constructor(wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S>>, init: ISwapInit<T["Data"]>);
+    protected constructor(wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S>>, obj: any);
     protected constructor(
-        wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S, TXType>, ISwapWrapperOptions, TXType>,
-        initOrObj: ISwapInit<T> | any
+        wrapper: IFromBTCWrapper<T, IFromBTCSwap<T, S>>,
+        initOrObj: ISwapInit<T["Data"]> | any
     ) {
         super(wrapper, initOrObj);
     }
@@ -73,7 +75,7 @@ export abstract class IFromBTCSwap<
 
     abstract getInToken(): {chain: "BTC", lightning: boolean};
 
-    getOutToken(): {chain: "SC", address: TokenAddress} {
+    getOutToken(): {chain: "SC", address: T["TokenAddress"]} {
         return {
             chain: "SC",
             address: this.data.getToken()
@@ -84,7 +86,7 @@ export abstract class IFromBTCSwap<
         try {
             await tryWithRetries(
                 () => this.wrapper.contract.isValidInitAuthorization(
-                    this.data, this.timeout, this.prefix, this.signature, this.feeRate
+                    this.data, this.signatureData, this.feeRate
                 ),
                 null,
                 SignatureVerificationError
@@ -134,7 +136,7 @@ export abstract class IFromBTCSwap<
     }
 
     getClaimFee(): Promise<BN> {
-        return this.wrapper.contract.getClaimFee(this.data);
+        return this.wrapper.contract.getClaimFee(this.getInitiator(), this.data);
     }
 
     getSecurityDeposit(): BN {
@@ -145,6 +147,10 @@ export abstract class IFromBTCSwap<
         return this.data.getTotalDeposit();
     }
 
+    getInitiator(): string {
+        return this.data.getClaimer();
+    }
+
 
     //////////////////////////////
     //// Commit
@@ -152,14 +158,17 @@ export abstract class IFromBTCSwap<
     /**
      * Commits the swap on-chain, locking the tokens from the intermediary in an HTLC or PTLC
      *
+     * @param signer Signer to sign the transactions with, must be the same as used in the initialization
      * @param noWaitForConfirmation Do not wait for transaction confirmation
      * @param abortSignal Abort signal to stop waiting for the transaction confirmation and abort
      * @param skipChecks Skip checks like making sure init signature is still valid and swap wasn't commited yet
      *  (this is handled when swap is created (quoted), if you commit right after quoting, you can use skipChecks=true)
+     * @throws {Error} If invalid signer is provided that doesn't match the swap data
      */
-    async commit(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
+    async commit(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
+        this.checkSigner(signer);
         const result = await this.wrapper.contract.sendAndConfirm(
-            await this.txsCommit(skipChecks), !noWaitForConfirmation, abortSignal
+            signer, await this.txsCommit(skipChecks), !noWaitForConfirmation, abortSignal
         );
 
         this.commitTxId = result[0];
@@ -175,13 +184,13 @@ export abstract class IFromBTCSwap<
      *  (this is handled when swap is created (quoted), if you commit right after quoting, you can use skipChecks=true)
      * @throws {Error} When in invalid state to commit the swap
      */
-    async txsCommit(skipChecks?: boolean): Promise<TXType[]> {
+    async txsCommit(skipChecks?: boolean): Promise<T["TX"][]> {
         if(!this.canCommit()) throw new Error("Must be in CREATED state!");
 
         await this._save();
 
         return await this.wrapper.contract.txsInit(
-            this.data, this.timeout, this.prefix, this.signature,
+            this.data, this.signatureData,
             this.getTxoHash==null ? null : this.getTxoHash(), skipChecks, this.feeRate
         ).catch(e => Promise.reject(e instanceof SignatureVerificationError ? new Error("Request timed out") : e));
     }
@@ -209,12 +218,13 @@ export abstract class IFromBTCSwap<
     /**
      * Claims and finishes the swap
      *
+     * @param signer Signer to sign the transactions with, can also be different to the initializer
      * @param noWaitForConfirmation Do not wait for transaction confirmation
      * @param abortSignal Abort signal to stop waiting for transaction confirmation
      */
-    async claim(noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+    async claim(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
         const result = await this.wrapper.contract.sendAndConfirm(
-            await this.txsClaim(), !noWaitForConfirmation, abortSignal
+            signer, await this.txsClaim(signer.getAddress()), !noWaitForConfirmation, abortSignal
         );
 
         this.claimTxId = result[0];
@@ -222,7 +232,7 @@ export abstract class IFromBTCSwap<
         return result[0];
     }
 
-    abstract txsClaim(): Promise<TXType[]>;
+    abstract txsClaim(signer: string): Promise<T["TX"][]>;
 
     /**
      * Waits till the swap is successfully claimed
@@ -253,29 +263,6 @@ export abstract class IFromBTCSwap<
         if(res===SwapCommitStatus.NOT_COMMITED || res===SwapCommitStatus.EXPIRED) {
             if(this.state>this.FAIL_STATE) await this._saveAndEmit(this.FAIL_STATE);
         }
-    }
-
-
-    //////////////////////////////
-    //// Storage
-
-    serialize(): any{
-        const obj = super.serialize();
-        return {
-            ...obj,
-
-            url: this.url,
-
-            data: this.data!=null ? this.data.serialize() : null,
-            swapFee: this.swapFee==null ? null : this.swapFee.toString(10),
-            prefix: this.prefix,
-            timeout: this.timeout,
-            signature: this.signature,
-            feeRate: this.feeRate==null ? null : this.feeRate,
-            commitTxId: this.commitTxId,
-            claimTxId: this.claimTxId,
-            expiry: this.expiry
-        };
     }
 
 }
