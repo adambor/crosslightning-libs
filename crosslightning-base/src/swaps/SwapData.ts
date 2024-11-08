@@ -1,6 +1,5 @@
 import {ChainSwapType} from "./ChainSwapType";
 import BN from "bn.js";
-import {TokenAddress} from "./TokenAddress";
 import {StorageObject} from "../storage/StorageObject";
 
 export abstract class SwapData implements StorageObject {
@@ -17,9 +16,11 @@ export abstract class SwapData implements StorageObject {
 
     abstract getOfferer(): string;
     abstract setOfferer(newOfferer: string);
+    abstract isOfferer(address: string);
 
     abstract getClaimer(): string;
     abstract setClaimer(newClaimer: string);
+    abstract isClaimer(address: string);
 
     abstract serialize(): any;
 
@@ -27,9 +28,9 @@ export abstract class SwapData implements StorageObject {
 
     abstract getAmount(): BN;
 
-    abstract getToken(): TokenAddress;
+    abstract getToken(): string;
 
-    abstract isToken(token: TokenAddress): boolean;
+    abstract isToken(token: string): boolean;
 
     abstract getExpiry(): BN;
 

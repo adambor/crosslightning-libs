@@ -17,12 +17,12 @@ export * from "./swaps/SwapContract";
 export * from "./swaps/SwapData";
 export * from "./swaps/ChainSwapType";
 export * from "./swaps/SwapCommitStatus";
-export * from "./swaps/TokenAddress";
 
 export * from "./errors/SignatureVerificationError";
 export * from "./errors/CannotInitializeATAError"
 export * from "./errors/SwapDataVerificationError";
 
+export * from "./ChainType";
 
 // export {
 //     BitcoinRpc,

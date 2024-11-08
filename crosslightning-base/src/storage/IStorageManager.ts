@@ -11,4 +11,7 @@ export interface IStorageManager<T extends StorageObject> {
     removeData(hash: string): Promise<void>;
     loadData(type: new(data: any) => T): Promise<T[]>;
 
+    removeDataArr?(keys: string[]): Promise<void>;
+    saveDataArr?(values: {id: string, object: T}[]): Promise<void>;
+
 }

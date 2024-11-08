@@ -1,6 +1,6 @@
 {
   "name": "crosslightning-base",
-  "version": "6.0.3",
+  "version": "7.0.0-beta0",
   "description": "Base classes and interfaces of SolLightning",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",
