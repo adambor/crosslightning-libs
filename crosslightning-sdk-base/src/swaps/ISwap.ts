@@ -3,10 +3,9 @@ import {EventEmitter} from "events";
 import * as BN from "bn.js";
 import {Buffer} from "buffer";
 import {ISwapWrapper, ISwapWrapperOptions} from "./ISwapWrapper";
-import {SignatureData, SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
+import {ChainType, SignatureData, SwapCommitStatus, SwapData} from "crosslightning-base";
 import {isPriceInfoType, PriceInfoType} from "../prices/abstract/ISwapPrice";
 import {getLogger, LoggerType, timeoutPromise} from "../utils/Utils";
-import {ChainType} from "./Swapper";
 
 export type ISwapInit<T extends SwapData> = {
     pricingInfo: PriceInfoType,
@@ -46,12 +45,13 @@ export type BtcToken<L = boolean> = {
     lightning: L
 };
 
-export type SCToken<T = TokenAddress> = {
+export type SCToken<ChainIdentifier extends string = string> = {
     chain: "SC",
-    address: T
+    chainId: ChainIdentifier,
+    address: string
 }
 
-export type Token = BtcToken | SCToken;
+export type Token<ChainIdentifier extends string = string> = BtcToken | SCToken<ChainIdentifier>;
 
 export abstract class ISwap<
     T extends ChainType = ChainType,
@@ -61,7 +61,7 @@ export abstract class ISwap<
 
     protected logger: LoggerType;
     protected readonly abstract TYPE: SwapType;
-    protected readonly wrapper: ISwapWrapper<T, ISwap<T, S>, ISwapWrapperOptions>;
+    protected readonly wrapper: ISwapWrapper<T, ISwap<T, S>>;
     expiry?: number;
     readonly url: string;
 

@@ -95,7 +95,7 @@ export class Intermediary {
         for(let token of checkReputationTokens) {
             promises.push(
                 tryWithRetries(() =>
-                    swapContract.getIntermediaryReputation(this.getAddress(chainIdentifier), swapContract.toTokenAddress(token)),
+                    swapContract.getIntermediaryReputation(this.getAddress(chainIdentifier), token),
                     null, null, abortSignal
                 ).then(result => {
                     reputation[token] = result;
@@ -128,7 +128,7 @@ export class Intermediary {
         abortSignal?: AbortSignal
     ): Promise<BN> {
         const result = await tryWithRetries(() =>
-            swapContract.getIntermediaryBalance(this.getAddress(chainIdentifier), swapContract.toTokenAddress(token)),
+            swapContract.getBalance(this.getAddress(chainIdentifier), token, true),
             null, null, abortSignal
         );
 

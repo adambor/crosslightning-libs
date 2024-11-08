@@ -1,14 +1,14 @@
 
 import {IFromBTCWrapper} from "./IFromBTCWrapper";
-import {Fee, ISwap, ISwapInit} from "../ISwap";
+import {BtcToken, Fee, ISwap, ISwapInit, SCToken} from "../ISwap";
 import * as BN from "bn.js";
 import {
+    ChainType,
     SignatureVerificationError,
     SwapCommitStatus
 } from "crosslightning-base";
 import {PriceInfoType} from "../../prices/abstract/ISwapPrice";
 import {extendAbortController, tryWithRetries} from "../../utils/Utils";
-import {ChainType} from "../Swapper";
 
 
 export abstract class IFromBTCSwap<
@@ -51,7 +51,14 @@ export abstract class IFromBTCSwap<
 
     async refreshPriceData(): Promise<PriceInfoType> {
         if(this.pricingInfo==null) return null;
-        const priceData = await this.wrapper.prices.isValidAmountReceive(this.getInAmount(), this.pricingInfo.satsBaseFee, this.pricingInfo.feePPM, this.data.getAmount(), this.data.getToken());
+        const priceData = await this.wrapper.prices.isValidAmountReceive(
+            this.chainIdentifier,
+            this.getInAmount(),
+            this.pricingInfo.satsBaseFee,
+            this.pricingInfo.feePPM,
+            this.data.getAmount(),
+            this.data.getToken()
+        );
         this.pricingInfo = priceData;
         return priceData;
     }
@@ -73,11 +80,12 @@ export abstract class IFromBTCSwap<
     //////////////////////////////
     //// Getters & utils
 
-    abstract getInToken(): {chain: "BTC", lightning: boolean};
+    abstract getInToken(): BtcToken;
 
-    getOutToken(): {chain: "SC", address: T["TokenAddress"]} {
+    getOutToken(): SCToken {
         return {
             chain: "SC",
+            chainId: this.chainIdentifier,
             address: this.data.getToken()
         };
     }

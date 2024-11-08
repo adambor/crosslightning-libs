@@ -4,10 +4,9 @@ import {IToBTCWrapper} from "../IToBTCWrapper";
 import * as BN from "bn.js";
 import {UserError} from "../../../errors/UserError";
 import {
-    ChainSwapType,
+    ChainSwapType, ChainType,
     IStorageManager,
-    SwapCommitStatus,
-    TokenAddress
+    SwapCommitStatus
 } from "crosslightning-base";
 import {Intermediary, SingleChainReputationType} from "../../../intermediaries/Intermediary";
 import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
@@ -20,7 +19,7 @@ import {IntermediaryAPI, ToBTCLNResponseType} from "../../../intermediaries/Inte
 import {RequestError} from "../../../errors/RequestError";
 import {LNURL, LNURLPayParamsWithUrl} from "../../../utils/LNURL";
 import {IToBTCSwapInit} from "../IToBTCSwap";
-import {ChainType} from "../../Swapper";
+import {MultiChain} from "../../Swapper";
 
 export type AbortControllerTyped<T> = AbortController & {
     abort: (reason: T) => void,
@@ -114,7 +113,7 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
     private async verifyReturnedData(
         resp: ToBTCLNResponseType,
         parsedPr: PaymentRequestObject & {tagsObject: TagsObject},
-        token: TokenAddress,
+        token: string,
         lp: Intermediary,
         options: ToBTCLNOptions,
         data: T["Data"],
@@ -157,7 +156,7 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
      */
     private async getIntermediaryQuote(
         signer: string,
-        amountData: Omit<AmountData<T["TokenAddress"]>, "amount">,
+        amountData: Omit<AmountData, "amount">,
         lp: Intermediary,
         pr: string,
         parsedPr: PaymentRequestObject & {tagsObject: TagsObject},
@@ -195,7 +194,7 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
             const amountOut: BN = new BN(parsedPr.millisatoshis).add(new BN(999)).div(new BN(1000));
             const totalFee: BN = resp.swapFee.add(resp.maxFee);
             const data: T["Data"] = new this.swapDataDeserializer(resp.data);
-            this.contract.setUsAsOfferer(signer, data);
+            data.setOfferer(signer);
 
             await this.verifyReturnedData(resp, parsedPr, amountData.token, lp, options, data);
 
@@ -251,7 +250,7 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
     create(
         signer: string,
         bolt11PayRequest: string,
-        amountData: Omit<AmountData<T["TokenAddress"]>, "amount">,
+        amountData: Omit<AmountData, "amount">,
         lps: Intermediary[],
         options?: ToBTCLNOptions,
         additionalParams?: Record<string, any>,
@@ -322,7 +321,7 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
      */
     private async getIntermediaryQuoteExactIn(
         signer: string,
-        amountData: AmountData<T["TokenAddress"]>,
+        amountData: AmountData,
         payRequest: LNURLPayParamsWithUrl,
         lp: Intermediary,
         dummyPr: string,
@@ -384,7 +383,7 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
 
             const totalFee: BN = resp.swapFee.add(resp.maxFee);
             const data: T["Data"] = new this.swapDataDeserializer(resp.data);
-            this.contract.setUsAsOfferer(signer, data);
+            data.setOfferer(signer);
 
             await this.verifyReturnedData(resp, parsedInvoice, amountData.token, lp, options, data, amountData.amount);
 
@@ -441,7 +440,7 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
     async createViaLNURL(
         signer: string,
         lnurl: string | LNURLPayParamsWithUrl,
-        amountData: AmountData<T["TokenAddress"]>,
+        amountData: AmountData,
         lps: Intermediary[],
         options: ToBTCLNOptions & {comment: string},
         additionalParams?: Record<string, any>,
@@ -462,7 +461,7 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
         if(amountData.exactIn) {
             options.maxFee ??= pricePreFetchPromise
                 .then(
-                    val => this.prices.getFromBtcSwapAmount(options.maxRoutingBaseFee, amountData.token, abortSignal, val)
+                    val => this.prices.getFromBtcSwapAmount(this.chainIdentifier, options.maxRoutingBaseFee, amountData.token, abortSignal, val)
                 )
                 .then(
                     _maxBaseFee => this.calculateFeeForAmount(amountData.amount, _maxBaseFee, options.maxRoutingPPM)

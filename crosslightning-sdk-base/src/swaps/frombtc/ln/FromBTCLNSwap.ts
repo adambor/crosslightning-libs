@@ -4,13 +4,13 @@ import {IFromBTCSwap} from "../IFromBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {
-    AbstractSigner,
+    AbstractSigner, ChainType,
     SignatureData,
     SignatureVerificationError,
     SwapCommitStatus,
     SwapData
 } from "crosslightning-base";
-import {isISwapInit, ISwapInit} from "../../ISwap";
+import {BtcToken, isISwapInit, ISwapInit} from "../../ISwap";
 import {Buffer} from "buffer";
 import {LNURL, LNURLWithdraw, LNURLWithdrawParamsWithUrl} from "../../../utils/LNURL";
 import {UserError} from "../../../errors/UserError";
@@ -22,7 +22,6 @@ import {
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {PaymentAuthError} from "../../../errors/PaymentAuthError";
 import {getLogger, timeoutPromise, tryWithRetries} from "../../../utils/Utils";
-import {ChainType} from "../../Swapper";
 
 export enum FromBTCLNSwapState {
     QUOTE_EXPIRED = -2,
@@ -94,7 +93,7 @@ export class FromBTCLNSwap<T extends ChainType> extends IFromBTCSwap<T, FromBTCL
     //////////////////////////////
     //// Getters & utils
 
-    getInToken(): {chain: "BTC", lightning: true} {
+    getInToken(): BtcToken<true> {
         return {
             chain: "BTC",
             lightning: true
@@ -293,7 +292,7 @@ export class FromBTCLNSwap<T extends ChainType> extends IFromBTCSwap<T, FromBTCL
      * @throws {Error} If the swap is already committed on-chain
      */
     protected async checkIntermediaryReturnedAuthData(signer: string, data: T["Data"], signature: SignatureData): Promise<void> {
-        this.wrapper.contract.setUsAsClaimer(signer, data);
+        data.setClaimer(signer);
 
         if (data.getOfferer() !== this.data.getOfferer()) throw new IntermediaryError("Invalid offerer used");
         if (!data.isToken(this.data.getToken())) throw new IntermediaryError("Invalid token used");
@@ -402,7 +401,7 @@ export class FromBTCLNSwap<T extends ChainType> extends IFromBTCSwap<T, FromBTCL
         if(this.state!==FromBTCLNSwapState.PR_PAID) throw new Error("Must be in PR_PAID state!");
 
         const initTxs = await this.txsCommit(skipChecks);
-        const claimTxs = await (this.wrapper.contract as any).txsClaimWithSecret(this.getInitiator(), this.data, this.secret, true, true, null, true);
+        const claimTxs = await this.wrapper.contract.txsClaimWithSecret(this.getInitiator(), this.data, this.secret, true, true, null, true);
 
         return initTxs.concat(claimTxs);
     }

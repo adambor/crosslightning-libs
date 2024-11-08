@@ -1,5 +1,6 @@
 import {IToBTCSwap, ToBTCSwapState} from "./IToBTCSwap";
 import {
+    ChainType,
     ClaimEvent,
     InitializeEvent,
     RefundEvent,
@@ -7,7 +8,6 @@ import {
 } from "crosslightning-base";
 import {AmountData, ISwapWrapper, ISwapWrapperOptions} from "../ISwapWrapper";
 import {tryWithRetries} from "../../utils/Utils";
-import {ChainType} from "../Swapper";
 import {Intermediary, SingleChainReputationType} from "../../intermediaries/Intermediary";
 import {IntermediaryError} from "../../errors/IntermediaryError";
 
@@ -145,7 +145,7 @@ export abstract class IToBTCWrapper<
     }
 
     protected isOurSwap(signer: string, swap: S): boolean {
-        return this.contract.areWeOfferer(signer, swap.data);
+        return swap.data.isOfferer(signer);
     }
 
     /**

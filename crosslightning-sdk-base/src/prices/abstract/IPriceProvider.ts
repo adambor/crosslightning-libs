@@ -1,21 +1,42 @@
 import * as BN from "bn.js";
-import {TokenAddress} from "crosslightning-base";
+import {ChainIds, MultiChain} from "../../swaps/Swapper";
 
 export type CoinType = {
     coinId: string;
     decimals: number;
 };
 
-export type CoinTypes = {
-    [address: string]: CoinType
+export type CtorCoinTypes<T extends MultiChain> = {
+    coinId: string,
+    chains: {
+        [chainId in keyof T]?: {
+            address: string,
+            decimals: number,
+        }
+    }
+}[]
+
+export type CoinTypes<T extends MultiChain> = {
+    [chainId in keyof T]?: {
+        [address: string]: CoinType
+    }
 }
 
-export abstract class IPriceProvider {
+export abstract class IPriceProvider<T extends MultiChain> {
 
-    coinsMap: CoinTypes = {};
+    coinsMap: CoinTypes<T> = {};
 
-    protected constructor(coinsMap: CoinTypes) {
-        this.coinsMap = coinsMap;
+    protected constructor(coins: CtorCoinTypes<T>) {
+        for(let coinData of coins) {
+            for(let chainId in coinData.chains) {
+                const {address, decimals} = coinData.chains[chainId];
+                this.coinsMap[chainId] ??= {};
+                (this.coinsMap[chainId] as any)[address.toString()] = {
+                    coinId: coinData.coinId,
+                    decimals
+                };
+            }
+        }
     }
 
     /**
@@ -31,14 +52,17 @@ export abstract class IPriceProvider {
     /**
      * Returns coin price in uSat (microSat)
      *
+     * @param chainIdentifier
      * @param token
      * @param abortSignal
      * @throws {Error} if token is not found
      */
-    getPrice(token: TokenAddress, abortSignal?: AbortSignal): Promise<BN> {
+    getPrice<C extends ChainIds<T>>(chainIdentifier: C, token: string, abortSignal?: AbortSignal): Promise<BN> {
         let tokenAddress: string = token.toString();
 
-        const coin = this.coinsMap[tokenAddress];
+        const chainTokens = this.coinsMap[chainIdentifier];
+        if(chainTokens==null) throw new Error("Chain not found");
+        const coin = chainTokens[tokenAddress];
         if(coin==null) throw new Error("Token not found");
 
         if(coin.coinId.startsWith("$fixed-")) {
@@ -53,13 +77,15 @@ export abstract class IPriceProvider {
      * Returns the decimal places of the specified token, or -1 if token should be ignored, returns null if
      *  token is not found
      *
+     * @param chainIdentifier
      * @param token
      * @protected
      * @throws {Error} If token is not found
      */
-    getDecimals(token: TokenAddress): number {
-        const coin = this.coinsMap[token.toString()];
-
+    getDecimals<C extends ChainIds<T>>(chainIdentifier: C, token: string): number {
+        const chainTokens = this.coinsMap[chainIdentifier];
+        if(chainTokens==null) throw new Error("Chain not found");
+        const coin = chainTokens[token.toString()];
         if(coin==null) throw new Error("Token not found");
 
         return coin.coinId==="$ignore" ? -1 : coin.decimals;

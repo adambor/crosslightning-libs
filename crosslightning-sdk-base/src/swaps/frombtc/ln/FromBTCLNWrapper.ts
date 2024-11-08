@@ -3,14 +3,12 @@ import {IFromBTCWrapper} from "../IFromBTCWrapper";
 import * as BN from "bn.js";
 import {decode as bolt11Decode, PaymentRequestObject, TagsObject} from "bolt11";
 import {
-    ChainEvents,
-    ChainSwapType,
+    ChainSwapType, ChainType,
     ClaimEvent,
     InitializeEvent,
     IStorageManager,
     RefundEvent,
-    SwapCommitStatus, SwapContract,
-    SwapData
+    SwapCommitStatus
 } from "crosslightning-base";
 import {Intermediary} from "../../../intermediaries/Intermediary";
 import {Buffer} from "buffer";
@@ -27,7 +25,6 @@ import {ISwapPrice} from "../../../prices/abstract/ISwapPrice";
 import {EventEmitter} from "events";
 import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
 import {LNURL, LNURLWithdrawParamsWithUrl} from "../../../utils/LNURL";
-import {ChainType} from "../../Swapper";
 
 export type FromBTCLNOptions = {
     descriptionHash?: Buffer
@@ -188,7 +185,7 @@ export class FromBTCLNWrapper<
      */
     private verifyReturnedData(
         resp: FromBTCLNResponseType,
-        amountData: AmountData<T["TokenAddress"]>,
+        amountData: AmountData,
         lp: Intermediary,
         options: FromBTCLNOptions,
         decodedPr: PaymentRequestObject & {tagsObject: TagsObject},
@@ -254,7 +251,7 @@ export class FromBTCLNWrapper<
      */
     create(
         signer: string,
-        amountData: AmountData<T["TokenAddress"]>,
+        amountData: AmountData,
         lps: Intermediary[],
         options: FromBTCLNOptions,
         additionalParams?: Record<string, any>,
@@ -372,7 +369,7 @@ export class FromBTCLNWrapper<
     async createViaLNURL(
         signer: string,
         lnurl: string | LNURLWithdrawParamsWithUrl,
-        amountData: AmountData<T["TokenAddress"]>,
+        amountData: AmountData,
         lps: Intermediary[],
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
@@ -390,7 +387,7 @@ export class FromBTCLNWrapper<
 
         try {
             const exactOutAmountPromise: Promise<BN> = !amountData.exactIn ? preFetches.pricePrefetchPromise.then(price =>
-                this.prices.getToBtcSwapAmount(amountData.amount, amountData.token, abortController.signal, price)
+                this.prices.getToBtcSwapAmount(this.chainIdentifier, amountData.amount, amountData.token, abortController.signal, price)
             ).catch(e => {
                 abortController.abort(e);
                 return null;

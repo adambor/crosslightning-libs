@@ -1,18 +1,17 @@
 import {decode as bolt11Decode} from "bolt11";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
-import {SwapData, TokenAddress} from "crosslightning-base";
+import {ChainType, SwapData} from "crosslightning-base";
 import {LnForGasWrapper} from "./LnForGasWrapper";
 import {Buffer} from "buffer";
 import {PaymentAuthError} from "../../../errors/PaymentAuthError";
 import {getLogger, timeoutPromise} from "../../../utils/Utils";
-import {Fee, isISwapInit, ISwap, ISwapInit, Token} from "../../ISwap";
+import {BtcToken, Fee, isISwapInit, ISwap, ISwapInit, SCToken, Token} from "../../ISwap";
 import {PriceInfoType} from "../../../prices/abstract/ISwapPrice";
 import {
     InvoiceStatusResponseCodes,
     TrustedIntermediaryAPI
 } from "../../../intermediaries/TrustedIntermediaryAPI";
-import {ChainType} from "../../Swapper";
 
 export enum LnForGasSwapState {
     EXPIRED = -2,
@@ -81,7 +80,14 @@ export class LnForGasSwap<T extends ChainType> extends ISwap<T, LnForGasSwapStat
 
     async refreshPriceData(): Promise<PriceInfoType> {
         if(this.pricingInfo==null) return null;
-        const priceData = await this.wrapper.prices.isValidAmountReceive(this.getInAmount(), this.pricingInfo.satsBaseFee, this.pricingInfo.feePPM, this.data.getAmount(), this.data.getToken());
+        const priceData = await this.wrapper.prices.isValidAmountReceive(
+            this.chainIdentifier,
+            this.getInAmount(),
+            this.pricingInfo.satsBaseFee,
+            this.pricingInfo.feePPM,
+            this.data.getAmount(),
+            this.data.getToken()
+        );
         this.pricingInfo = priceData;
         return priceData;
     }
@@ -132,16 +138,17 @@ export class LnForGasSwap<T extends ChainType> extends ISwap<T, LnForGasSwapStat
         return (decoded.timeExpireDate*1000);
     }
 
-    getInToken(): { chain: "BTC", lightning: true } {
+    getInToken(): BtcToken<true> {
         return {
             chain: "BTC",
             lightning: true
         }
     }
 
-    getOutToken(): {chain: "SC", address: TokenAddress} {
+    getOutToken(): SCToken {
         return {
             chain: "SC",
+            chainId: this.chainIdentifier,
             address: this.wrapper.contract.getNativeCurrencyAddress()
         };
     }

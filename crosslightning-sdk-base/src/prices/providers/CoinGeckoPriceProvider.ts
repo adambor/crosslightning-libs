@@ -1,15 +1,16 @@
 import * as BN from "bn.js";
-import {CoinType, CoinTypes, IPriceProvider} from "../abstract/IPriceProvider";
+import {CoinType, CtorCoinTypes} from "../abstract/IPriceProvider";
 import {HttpPriceProvider} from "./abstract/HttpPriceProvider";
 import {httpGet} from "../../utils/Utils";
+import {MultiChain} from "../../swaps/Swapper";
 
 export type CoinGeckoResponse = {
     [coinId: string]: {sats: number}
 };
 
-export class CoinGeckoPriceProvider extends HttpPriceProvider {
+export class CoinGeckoPriceProvider<T extends MultiChain> extends HttpPriceProvider<T> {
 
-    constructor(coinsMap: CoinTypes, url: string = "https://api.coingecko.com/api/v3", httpRequestTimeout?: number) {
+    constructor(coinsMap: CtorCoinTypes<T>, url: string = "https://api.coingecko.com/api/v3", httpRequestTimeout?: number) {
         super(coinsMap, url, httpRequestTimeout);
     }
 

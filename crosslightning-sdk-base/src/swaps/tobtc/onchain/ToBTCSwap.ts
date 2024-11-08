@@ -2,10 +2,10 @@ import {ToBTCWrapper} from "./ToBTCWrapper";
 import {isIToBTCSwapInit, IToBTCSwap, IToBTCSwapInit} from "../IToBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
-import {SwapData} from "crosslightning-base";
+import {ChainType, SwapData} from "crosslightning-base";
 import {Buffer} from "buffer";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
-import {ChainType} from "../../Swapper";
+import {BtcToken} from "../../ISwap";
 
 
 export type ToBTCSwapInit<T extends SwapData> = IToBTCSwapInit<T> & {
@@ -80,7 +80,7 @@ export class ToBTCSwap<T extends ChainType> extends IToBTCSwap<T> {
         return this.amount
     }
 
-    getOutToken(): {chain: "BTC", lightning: false} {
+    getOutToken(): BtcToken<false> {
         return {
             chain: "BTC",
             lightning: false

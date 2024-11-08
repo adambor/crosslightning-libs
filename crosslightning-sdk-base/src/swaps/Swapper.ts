@@ -1,6 +1,9 @@
 import {BitcoinNetwork} from "../btc/BitcoinNetwork";
 import {ISwapPrice} from "../prices/abstract/ISwapPrice";
-import {AbstractSigner, ChainEvents, IStorageManager, SwapContract, SwapData, TokenAddress} from "crosslightning-base";
+import {
+    ChainType,
+    IStorageManager
+} from "crosslightning-base";
 import {ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";
 import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
 import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
@@ -34,34 +37,23 @@ import {LNURL, LNURLPay, LNURLWithdraw} from "../utils/LNURL";
 import {AmountData} from "./ISwapWrapper";
 import {getLogger, objectMap} from "../utils/Utils";
 import {OutOfBoundsError} from "../errors/RequestError";
+import {SwapperWithChain} from "./SwapperWithChain";
 
 export type SwapperOptions = {
     intermediaryUrl?: string | string[],
-    pricing?: ISwapPrice,
     registryUrl?: string,
 
     bitcoinNetwork?: BitcoinNetwork,
 
     getRequestTimeout?: number,
     postRequestTimeout?: number,
-    defaultAdditionalParameters?: {[key: string]: any}
+    defaultAdditionalParameters?: {[key: string]: any},
+    storagePrefix?: string
 };
 
-export type ChainType<
-    T extends SwapData = SwapData,
-    E extends ChainEvents<T> = ChainEvents<T>,
-    TokenAddressType = any,
-    TXType = any,
-    Signer extends AbstractSigner = AbstractSigner,
-    P extends SwapContract<T, TXType, any, any, Signer> = SwapContract<T, TXType, any, any, Signer>
-> = {
-    Data: T,
-    Events: E,
-    Contract: P,
-    TokenAddress: TokenAddressType,
-    TX: TXType,
-    Signer: Signer
-}
+export type MultiChain = {
+    [chainIdentifier in string]: ChainType;
+};
 
 export type ChainSpecificData<T extends ChainType> = {
     tobtcln: ToBTCLNWrapper<T>,
@@ -76,11 +68,11 @@ export type ChainSpecificData<T extends ChainType> = {
     defaultTrustedIntermediaryUrl?: string
 };
 
-export type MultiChain<T extends {[chainIdentifier in string]: ChainType}> = {
+export type MultiChainData<T extends MultiChain> = {
     [chainIdentifier in keyof T]: ChainSpecificData<T[chainIdentifier]>
 };
 
-export type CtorChainData<T extends {[chainIdentifier in string]: ChainType}> = {
+export type CtorChainData<T extends MultiChain> = {
     [chainIdentifier in keyof T]: {
         btcRelay: BtcRelay<any, T[chainIdentifier]["TX"], MempoolBitcoinBlock>,
         swapContract: T[chainIdentifier]["Contract"],
@@ -97,32 +89,68 @@ export type CtorChainData<T extends {[chainIdentifier in string]: ChainType}> = 
     }
 };
 
-type ChainIds<T extends {[chainIdentifier in string]: ChainType}> = Extract<keyof T, string>;
+export type ChainIds<T extends MultiChain> = keyof T & string;
 
-export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends EventEmitter {
+export interface SwapperBtcUtils {
+    /**
+     * Returns true if string is a valid bitcoin address
+     *
+     * @param addr
+     */
+    isValidBitcoinAddress(addr: string): boolean;
+
+    /**
+     * Returns true if string is a valid BOLT11 bitcoin lightning invoice WITH AMOUNT
+     *
+     * @param lnpr
+     */
+    isValidLightningInvoice(lnpr: string): boolean;
+
+    /**
+     * Returns true if string is a valid LNURL (no checking on type is performed)
+     *
+     * @param lnurl
+     */
+    isValidLNURL(lnurl: string): boolean;
+
+    /**
+     * Returns type and data about an LNURL
+     *
+     * @param lnurl
+     * @param shouldRetry
+     */
+    getLNURLTypeAndData(lnurl: string, shouldRetry?: boolean): Promise<LNURLPay | LNURLWithdraw | null>;
+
+    /**
+     * Returns satoshi value of BOLT11 bitcoin lightning invoice WITH AMOUNT
+     *
+     * @param lnpr
+     */
+    getLightningInvoiceValue(lnpr: string): BN;
+}
+
+export class Swapper<T extends MultiChain> extends EventEmitter implements SwapperBtcUtils {
 
     protected readonly logger = getLogger(this.constructor.name+": ");
 
-    readonly chains: {
-        [chainIdentifier in keyof T]: ChainSpecificData<T[chainIdentifier]>
-    };
+    readonly chains: MultiChainData<T>;
 
-    readonly prices: ISwapPrice;
-    readonly intermediaryDiscovery: IntermediaryDiscovery<T>;
-    readonly mempoolApi: MempoolApi;
+    readonly prices: ISwapPrice<T>;
+    readonly intermediaryDiscovery: IntermediaryDiscovery;
     readonly options: SwapperOptions;
 
+    readonly mempoolApi: MempoolApi;
     readonly bitcoinRpc: MempoolBitcoinRpc;
     readonly bitcoinNetwork: Network;
 
     constructor(
         bitcoinRpc: MempoolBitcoinRpc,
         chainsData: CtorChainData<T>,
-        options: SwapperOptions,
-        storagePrefix?: string
+        pricing: ISwapPrice<T>,
+        options?: SwapperOptions
     ) {
         super();
-        storagePrefix = storagePrefix || "";
+        const storagePrefix = options?.storagePrefix || "";
 
         options.bitcoinNetwork = options.bitcoinNetwork==null ? BitcoinNetwork.TESTNET : options.bitcoinNetwork;
 
@@ -130,11 +158,11 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
             options.bitcoinNetwork===BitcoinNetwork.REGTEST ? networks.regtest :
                 options.bitcoinNetwork===BitcoinNetwork.TESTNET ? networks.testnet : null;
 
-        this.prices = options.pricing;
+        this.prices = pricing;
         this.bitcoinRpc = bitcoinRpc;
         this.mempoolApi = bitcoinRpc.api;
 
-        this.chains = objectMap<CtorChainData<T>, MultiChain<T>>(chainsData, <InputKey extends keyof CtorChainData<T>>(chainData: CtorChainData<T>[InputKey], key: string) => {
+        this.chains = objectMap<CtorChainData<T>, MultiChainData<T>>(chainsData, <InputKey extends keyof CtorChainData<T>>(chainData: CtorChainData<T>[InputKey], key: string) => {
             const {swapContract, chainEvents, btcRelay, defaultTrustedIntermediaryUrl} = chainData;
             const synchronizer = new MempoolBtcRelaySynchronizer(btcRelay, bitcoinRpc);
 
@@ -145,7 +173,7 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
                 chainData.storage?.toBtcLn || new IndexedDBStorageManager(_storagePrefix + "Swaps-ToBTCLN"),
                 swapContract,
                 chainEvents,
-                options.pricing,
+                pricing,
                 chainData.swapDataConstructor,
                 options
             );
@@ -154,7 +182,7 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
                 chainData.storage?.toBtc || new IndexedDBStorageManager(_storagePrefix + "Swaps-ToBTC"),
                 swapContract,
                 chainEvents,
-                options.pricing,
+                pricing,
                 chainData.swapDataConstructor,
                 this.bitcoinRpc,
                 {
@@ -168,7 +196,7 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
                 chainData.storage?.fromBtcLn || new IndexedDBStorageManager(_storagePrefix + "Swaps-FromBTCLN"),
                 swapContract,
                 chainEvents,
-                options.pricing,
+                pricing,
                 chainData.swapDataConstructor,
                 bitcoinRpc,
                 options
@@ -178,7 +206,7 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
                 chainData.storage?.fromBtc || new IndexedDBStorageManager(_storagePrefix + "Swaps-FromBTC"),
                 swapContract,
                 chainEvents,
-                options.pricing,
+                pricing,
                 chainData.swapDataConstructor,
                 btcRelay,
                 synchronizer,
@@ -194,7 +222,7 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
                 chainData.storage?.lnForGas || new LocalStorageManager<LnForGasSwap<T[InputKey]>>(_storagePrefix + "LnForGas"),
                 swapContract,
                 chainEvents,
-                options.pricing,
+                pricing,
                 chainData.swapDataConstructor,
                 {
                     getRequestTimeout: options.getRequestTimeout,
@@ -322,7 +350,7 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
      * @param type      Type of the swap
      * @param token     Token of the swap
      */
-    getMaximum<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier, type: SwapType, token: T[ChainIdentifier]["TokenAddress"]): BN {
+    getMaximum<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier, type: SwapType, token: string): BN {
         if(this.intermediaryDiscovery!=null) {
             const max = this.intermediaryDiscovery.getSwapMaximum(chainIdentifier, type, token);
             if(max!=null) return new BN(max);
@@ -337,7 +365,7 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
      * @param type      Type of swap
      * @param token     Token of the swap
      */
-    getMinimum<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier, type: SwapType, token: T[ChainIdentifier]["TokenAddress"]): BN {
+    getMinimum<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier, type: SwapType, token: string): BN {
         if(this.intermediaryDiscovery!=null) {
             const min = this.intermediaryDiscovery.getSwapMinimum(chainIdentifier, type, token);
             if(min!=null) return new BN(min);
@@ -571,7 +599,7 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
     createToBTCSwap<ChainIdentifier extends ChainIds<T>>(
         chainIdentifier: ChainIdentifier,
         signer: string,
-        tokenAddress: T[ChainIdentifier]["TokenAddress"],
+        tokenAddress: string,
         address: string,
         amount: BN,
         confirmationTarget?: number,
@@ -620,7 +648,7 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
     async createToBTCLNSwap<ChainIdentifier extends ChainIds<T>>(
         chainIdentifier: ChainIdentifier,
         signer: string,
-        tokenAddress: T[ChainIdentifier]["TokenAddress"],
+        tokenAddress: string,
         paymentRequest: string,
         expirySeconds?: number,
         maxRoutingBaseFee?: BN,
@@ -672,7 +700,7 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
     async createToBTCLNSwapViaLNURL<ChainIdentifier extends ChainIds<T>>(
         chainIdentifier: ChainIdentifier,
         signer: string,
-        tokenAddress: T[ChainIdentifier]["TokenAddress"],
+        tokenAddress: string,
         lnurlPay: string | LNURLPay,
         amount: BN,
         comment: string,
@@ -722,7 +750,7 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
     async createFromBTCSwap<ChainIdentifier extends ChainIds<T>>(
         chainIdentifier: ChainIdentifier,
         signer: string,
-        tokenAddress: T[ChainIdentifier]["TokenAddress"],
+        tokenAddress: string,
         amount: BN,
         exactOut?: boolean,
         additionalParams: Record<string, any> = this.options.defaultAdditionalParameters
@@ -761,7 +789,7 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
     async createFromBTCLNSwap<ChainIdentifier extends ChainIds<T>>(
         chainIdentifier: ChainIdentifier,
         signer: string,
-        tokenAddress: T[ChainIdentifier]["TokenAddress"],
+        tokenAddress: string,
         amount: BN,
         exactOut?: boolean,
         descriptionHash?: Buffer,
@@ -803,7 +831,7 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
     async createFromBTCLNSwapViaLNURL<ChainIdentifier extends ChainIds<T>>(
         chainIdentifier: ChainIdentifier,
         signer: string,
-        tokenAddress: T[ChainIdentifier]["TokenAddress"],
+        tokenAddress: string,
         lnurl: string | LNURLWithdraw,
         amount: BN,
         exactOut?: boolean,
@@ -829,11 +857,11 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
         );
     }
 
-    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: BtcToken<true>, dstToken: SCToken<T[C]["TokenAddress"]>, amount: BN, exactIn: boolean, lnurlWithdraw?: string): Promise<FromBTCLNSwap<T[C]>>;
-    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: BtcToken<false>, dstToken: SCToken<T[C]["TokenAddress"]>, amount: BN, exactIn: boolean): Promise<FromBTCSwap<T[C]>>;
-    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: SCToken<T[C]["TokenAddress"]>, dstToken: BtcToken<false>, amount: BN, exactIn: boolean, address: string): Promise<ToBTCSwap<T[C]>>;
-    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: SCToken<T[C]["TokenAddress"]>, dstToken: BtcToken<true>, amount: BN, exactIn: boolean, lnurlPay: string): Promise<ToBTCLNSwap<T[C]>>;
-    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: SCToken<T[C]["TokenAddress"]>, dstToken: BtcToken<true>, amount: BN, exactIn: false, lightningInvoice: string): Promise<ToBTCLNSwap<T[C]>>;
+    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: BtcToken<true>, dstToken: SCToken<C>, amount: BN, exactIn: boolean, lnurlWithdraw?: string): Promise<FromBTCLNSwap<T[C]>>;
+    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: BtcToken<false>, dstToken: SCToken<C>, amount: BN, exactIn: boolean): Promise<FromBTCSwap<T[C]>>;
+    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: SCToken<C>, dstToken: BtcToken<false>, amount: BN, exactIn: boolean, address: string): Promise<ToBTCSwap<T[C]>>;
+    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: SCToken<C>, dstToken: BtcToken<true>, amount: BN, exactIn: boolean, lnurlPay: string): Promise<ToBTCLNSwap<T[C]>>;
+    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: SCToken<C>, dstToken: BtcToken<true>, amount: BN, exactIn: false, lightningInvoice: string): Promise<ToBTCLNSwap<T[C]>>;
     /**
      * Creates a swap from srcToken to dstToken, of a specific token amount, either specifying input amount (exactIn=true)
      *  or output amount (exactIn=false), NOTE: For regular -> BTC-LN (lightning) swaps the passed amount is ignored and
@@ -1033,7 +1061,7 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
     /**
      * Returns the token balance of the wallet
      */
-    getBalance<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier, signer: string, token: T[ChainIdentifier]["TokenAddress"]): Promise<BN> {
+    getBalance<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier, signer: string, token: string): Promise<BN> {
         if(this.chains[chainIdentifier]==null) throw new Error("Invalid chain identifier! Unknown chain: "+chainIdentifier);
         return this.chains[chainIdentifier].swapContract.getBalance(signer, token, false);
     }
@@ -1041,9 +1069,13 @@ export class Swapper<T extends {[chainIdentifier in string]: ChainType}> extends
     /**
      * Returns the address of the native currency of the chain
      */
-    getNativeCurrency<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier): T[ChainIdentifier]["TokenAddress"] {
+    getNativeCurrency<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier): string {
         if(this.chains[chainIdentifier]==null) throw new Error("Invalid chain identifier! Unknown chain: "+chainIdentifier);
         return this.chains[chainIdentifier].swapContract.getNativeCurrencyAddress();
+    }
+
+    withChain<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier): SwapperWithChain<T, ChainIdentifier> {
+        return new SwapperWithChain<T, ChainIdentifier>(this, chainIdentifier);
     }
 
 }

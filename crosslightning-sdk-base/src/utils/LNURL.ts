@@ -103,6 +103,7 @@ export function isLNURLPayResult(obj: LNURLPayResult, domain?: string): obj is L
 }
 
 export function isLNURLPaySuccessAction(obj: any, domain?: string): obj is LNURLPaySuccessAction {
+    if(obj==null || typeof obj !== 'object' || typeof obj.tag !== 'string') return false;
     switch(obj.tag) {
         case "message":
             return obj.message!=null && obj.message.length<=144;

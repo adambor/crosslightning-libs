@@ -1,6 +1,7 @@
-import {CoinTypes} from "../abstract/IPriceProvider";
+import {CtorCoinTypes} from "../abstract/IPriceProvider";
 import {ExchangePriceProvider} from "./abstract/ExchangePriceProvider";
 import {httpGet} from "../../utils/Utils";
+import {MultiChain} from "../../swaps/Swapper";
 
 export type OKXResponse = {
     code: string;
@@ -19,9 +20,9 @@ export type OKXResponse = {
     ]
 };
 
-export class OKXPriceProvider extends ExchangePriceProvider {
+export class OKXPriceProvider<T extends MultiChain> extends ExchangePriceProvider<T> {
 
-    constructor(coinsMap: CoinTypes, url: string = "https://www.okx.com/api/v5", httpRequestTimeout?: number) {
+    constructor(coinsMap: CtorCoinTypes<T>, url: string = "https://www.okx.com/api/v5", httpRequestTimeout?: number) {
         super(coinsMap, url, httpRequestTimeout);
     }
 

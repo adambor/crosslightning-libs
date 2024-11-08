@@ -1,13 +1,12 @@
 import {Intermediary, ServicesType} from "./Intermediary";
 import {SwapType} from "../swaps/SwapType";
 import * as BN from "bn.js";
-import {SwapData, TokenAddress} from "crosslightning-base";
 import {SwapContract} from "crosslightning-base/dist";
 import {EventEmitter} from "events";
 import {Buffer} from "buffer";
 import {getLogger, httpGet, tryWithRetries} from "../utils/Utils";
 import {IntermediaryAPI} from "./IntermediaryAPI";
-import {ChainType} from "../swaps/Swapper";
+import {ChainType} from "crosslightning-base";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -22,7 +21,7 @@ export type SwapHandlerInfoType = {
     min: number,
     max: number,
     tokens: string[],
-    chainTokens: {[chainId: string]: string[]};
+    chainTokens?: {[chainId: string]: string[]};
     data?: any,
 };
 
@@ -70,7 +69,7 @@ function swapHandlerTypeToSwapType(swapHandlerType: SwapHandlerType): SwapType {
  * @param tokenAddress
  * @param swapAmount
  */
-function getIntermediaryComparator(swapType: SwapType, tokenAddress: TokenAddress, swapAmount?: BN) {
+function getIntermediaryComparator(swapType: SwapType, tokenAddress: string, swapAmount?: BN) {
 
     if(swapType===SwapType.TO_BTC) {
         //TODO: Also take reputation into account
@@ -93,11 +92,14 @@ const logger = getLogger("IntermediaryDiscovery: ");
 
 const REGISTRY_URL = "https://api.github.com/repos/adambor/SolLightning-registry/contents/registry.json?ref=main";
 
-export class IntermediaryDiscovery<T extends {[chainIdentifier in string]: ChainType}> extends EventEmitter {
+//To allow for legacy responses from not-yet updated LPs
+const DEFAULT_CHAIN = "SOLANA";
+
+export class IntermediaryDiscovery extends EventEmitter {
 
     intermediaries: Intermediary[];
 
-    swapContracts: {[key in keyof T]: SwapContract<T[key]["Data"], T[key]["TX"], any, any, T[key]["Signer"]>};
+    swapContracts: {[key: string]: SwapContract};
     registryUrl: string;
 
     httpRequestTimeout?: number;
@@ -105,7 +107,7 @@ export class IntermediaryDiscovery<T extends {[chainIdentifier in string]: Chain
     private overrideNodeUrls?: string[];
 
     constructor(
-        swapContracts: {[key in keyof T]: SwapContract<T[key]["Data"], T[key]["TX"], any, any, T[key]["Signer"]>},
+        swapContracts: {[key: string]: SwapContract},
         registryUrl: string = REGISTRY_URL,
         nodeUrls?: string[],
         httpRequestTimeout?: number
@@ -140,18 +142,32 @@ export class IntermediaryDiscovery<T extends {[chainIdentifier in string]: Chain
      * @param url
      * @param abortSignal
      */
-    private async getNodeInfo(url: string, abortSignal?: AbortSignal) : Promise<{addresses: {[key in keyof T]?: string}, info: InfoHandlerResponseEnvelope}> {
+    private async getNodeInfo(url: string, abortSignal?: AbortSignal) : Promise<{addresses: {[key: string]: string}, info: InfoHandlerResponseEnvelope}> {
         const response = await IntermediaryAPI.getIntermediaryInfo(url);
 
-        const addresses: {[key in keyof T]?: string} = {};
+        //Handle legacy responses
+        if(response.chains==null) response.chains = {
+            [DEFAULT_CHAIN]: {address: response.address, signature: response.signature}
+        };
+
+        const addresses: {[key: string]: string} = {};
         for(let chain in response.chains) {
             if(this.swapContracts[chain]!=null) {
                 const {signature, address} = response.chains[chain];
                 await this.swapContracts[chain].isValidDataSignature(Buffer.from(response.envelope), signature, address);
-                addresses[chain as keyof T] = address;
+                addresses[chain] = address;
             }
         }
         if(abortSignal!=null) abortSignal.throwIfAborted();
+
+        //Handle legacy responses
+        const info: InfoHandlerResponseEnvelope = JSON.parse(response.envelope);
+        for(let swapType in info.services) {
+            const serviceData: SwapHandlerInfoType = info.services[swapType];
+            if(serviceData.chainTokens==null) serviceData.chainTokens = {
+                [DEFAULT_CHAIN]: serviceData.tokens
+            };
+        }
 
         return {
             addresses,
@@ -251,7 +267,7 @@ export class IntermediaryDiscovery<T extends {[chainIdentifier in string]: Chain
      * @param swapType
      * @param token
      */
-    getSwapMinimum(chainIdentifier: string, swapType: SwapType, token: TokenAddress): number {
+    getSwapMinimum(chainIdentifier: string, swapType: SwapType, token: any): number {
         const tokenStr = token.toString();
         return this.intermediaries.reduce<number>((prevMin, intermediary) => {
             const swapService = intermediary.services[swapType];
@@ -273,7 +289,7 @@ export class IntermediaryDiscovery<T extends {[chainIdentifier in string]: Chain
      * @param swapType
      * @param token
      */
-    getSwapMaximum(chainIdentifier: string, swapType: SwapType, token: TokenAddress): number {
+    getSwapMaximum(chainIdentifier: string, swapType: SwapType, token: any): number {
         const tokenStr = token.toString();
         return this.intermediaries.reduce<number>((prevMax, intermediary) => {
             const swapService = intermediary.services[swapType];
@@ -296,7 +312,7 @@ export class IntermediaryDiscovery<T extends {[chainIdentifier in string]: Chain
      * @param amount Amount to be swapped in sats - BTC
      * @param count How many intermediaries to return at most
      */
-    getSwapCandidates(chainIdentifier: string, swapType: SwapType, tokenAddress: TokenAddress, amount?: BN, count?: number): Intermediary[] {
+    getSwapCandidates(chainIdentifier: string, swapType: SwapType, tokenAddress: any, amount?: BN, count?: number): Intermediary[] {
         const candidates = this.intermediaries.filter(e => {
             const swapService = e.services[swapType];
             if(swapService==null) return false;

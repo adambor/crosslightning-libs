@@ -2,12 +2,12 @@ import {IFromBTCWrapper} from "../IFromBTCWrapper";
 import {FromBTCSwap, FromBTCSwapInit, FromBTCSwapState} from "./FromBTCSwap";
 import * as BN from "bn.js";
 import {
-    ChainEvents, ChainSwapType,
+    ChainSwapType, ChainType,
     ClaimEvent,
     InitializeEvent, IStorageManager,
     RefundEvent,
     RelaySynchronizer,
-    SwapCommitStatus, SwapContract,
+    SwapCommitStatus,
     SwapData
 } from "crosslightning-base";
 import {EventEmitter} from "events";
@@ -23,7 +23,6 @@ import {extendAbortController, tryWithRetries} from "../../../utils/Utils";
 import {BtcRelay} from "crosslightning-base/dist";
 import {FromBTCResponseType, IntermediaryAPI} from "../../../intermediaries/IntermediaryAPI";
 import {RequestError} from "../../../errors/RequestError";
-import {ChainType} from "../../Swapper";
 
 export type FromBTCOptions = {
     feeSafetyFactor?: BN,
@@ -183,7 +182,7 @@ export class FromBTCWrapper<
      */
     private async preFetchClaimerBounty(
         signer: string,
-        amountData: AmountData<T["TokenAddress"]>,
+        amountData: AmountData,
         options: FromBTCOptions,
         abortController: AbortController
     ): Promise<{
@@ -206,8 +205,8 @@ export class FromBTCWrapper<
                 tryWithRetries(() => this.btcRelay.getTipData(), null, null, abortController.signal),
                 this.btcRpc.getTipHeight(),
                 tryWithRetries<BN>(
-                    () => (this.contract as any).getRawClaimFee!=null ?
-                        (this.contract as any).getRawClaimFee(dummySwapData) :
+                    () => this.contract.getRawClaimFee!=null ?
+                        this.contract.getRawClaimFee(signer, dummySwapData) :
                         this.contract.getClaimFee(signer, dummySwapData),
                     null, null, abortController.signal
                 )
@@ -268,7 +267,7 @@ export class FromBTCWrapper<
      */
     private verifyReturnedData(
         resp: FromBTCResponseType,
-        amountData: AmountData<T["TokenAddress"]>,
+        amountData: AmountData,
         lp: Intermediary,
         options: FromBTCOptions,
         data: T["Data"],
@@ -330,7 +329,7 @@ export class FromBTCWrapper<
      */
     create(
         signer: string,
-        amountData: AmountData<T["TokenAddress"]>,
+        amountData: AmountData,
         lps: Intermediary[],
         options?: FromBTCOptions,
         additionalParams?: Record<string, any>,
@@ -379,7 +378,7 @@ export class FromBTCWrapper<
                         }, null, e => e instanceof RequestError, abortController.signal);
 
                         const data: T["Data"] = new this.swapDataDeserializer(resp.data);
-                        this.contract.setUsAsClaimer(signer, data);
+                        data.setClaimer(signer);
 
                         this.verifyReturnedData(resp, amountData, lp, options, data, sequence, await claimerBountyPrefetchPromise);
                         const [pricingInfo, signatureExpiry] = await Promise.all([

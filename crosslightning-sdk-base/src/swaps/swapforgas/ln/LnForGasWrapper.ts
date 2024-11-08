@@ -4,7 +4,7 @@ import {ISwapWrapper} from "../../ISwapWrapper";
 import {TrustedIntermediaryAPI} from "../../../intermediaries/TrustedIntermediaryAPI";
 import {decode as bolt11Decode} from "bolt11";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
-import {ChainType} from "../../Swapper";
+import {ChainType} from "crosslightning-base";
 
 export class LnForGasWrapper<T extends ChainType> extends ISwapWrapper<T, LnForGasSwap<T>> {
     protected readonly swapDeserializer = LnForGasSwap;

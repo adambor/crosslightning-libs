@@ -4,10 +4,9 @@ import {address} from "bitcoinjs-lib";
 import * as createHash from "create-hash";
 import {FromBTCWrapper} from "./FromBTCWrapper";
 import * as BN from "bn.js";
-import {SwapCommitStatus, SwapData} from "crosslightning-base";
-import {isISwapInit, ISwapInit} from "../../ISwap";
+import {ChainType, SwapCommitStatus, SwapData} from "crosslightning-base";
+import {BtcToken, isISwapInit, ISwapInit} from "../../ISwap";
 import {Buffer} from "buffer";
-import {ChainType} from "../../Swapper";
 
 export enum FromBTCSwapState {
     FAILED = -2,
@@ -65,7 +64,7 @@ export class FromBTCSwap<T extends ChainType> extends IFromBTCSwap<T, FromBTCSwa
     //////////////////////////////
     //// Getters & utils
 
-    getInToken(): {chain: "BTC", lightning: false} {
+    getInToken(): BtcToken<false> {
         return {
             chain: "BTC",
             lightning: false

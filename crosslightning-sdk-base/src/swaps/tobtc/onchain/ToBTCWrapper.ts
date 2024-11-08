@@ -1,7 +1,7 @@
 import {ToBTCSwap, ToBTCSwapInit} from "./ToBTCSwap";
 import {IToBTCWrapper} from "../IToBTCWrapper";
 import {
-    ChainSwapType,
+    ChainSwapType, ChainType,
     IStorageManager,
 } from "crosslightning-base";
 import {Intermediary, SingleChainReputationType} from "../../../intermediaries/Intermediary";
@@ -19,7 +19,7 @@ import {SwapType} from "../../SwapType";
 import {extendAbortController, tryWithRetries} from "../../../utils/Utils";
 import {IntermediaryAPI, ToBTCResponseType} from "../../../intermediaries/IntermediaryAPI";
 import {RequestError} from "../../../errors/RequestError";
-import {ChainType} from "../../Swapper";
+import {MultiChain} from "../../Swapper";
 
 export type ToBTCOptions = {
     confirmationTarget?: number,
@@ -122,7 +122,7 @@ export class ToBTCWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCSwa
      */
     private verifyReturnedData(
         resp: ToBTCResponseType,
-        amountData: AmountData<T["TokenAddress"]>,
+        amountData: AmountData,
         lp: Intermediary,
         options: ToBTCOptions,
         data: T["Data"],
@@ -180,7 +180,7 @@ export class ToBTCWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCSwa
     create(
         signer: string,
         address: string,
-        amountData: AmountData<T["TokenAddress"]>,
+        amountData: AmountData,
         lps: Intermediary[],
         options?: ToBTCOptions,
         additionalParams?: Record<string, any>,
@@ -236,7 +236,7 @@ export class ToBTCWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCSwa
                             this.contract.getHashForOnchain(outputScript, resp.amount, nonce).toString("hex") :
                             _hash;
                         const data: T["Data"] = new this.swapDataDeserializer(resp.data);
-                        this.contract.setUsAsOfferer(signer, data);
+                        data.setOfferer(signer);
 
                         this.verifyReturnedData(resp, amountData, lp, options, data, hash, nonce);
                         const [pricingInfo, signatureExpiry, reputation] = await Promise.all([

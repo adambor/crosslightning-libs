@@ -1,8 +1,8 @@
 import {IToBTCWrapper} from "./IToBTCWrapper";
-import {Fee, isISwapInit, ISwap, ISwapInit} from "../ISwap";
+import {BtcToken, Fee, isISwapInit, ISwap, ISwapInit, SCToken} from "../ISwap";
 import * as BN from "bn.js";
 import {
-    AbstractSigner,
+    AbstractSigner, ChainType,
     SignatureVerificationError,
     SwapCommitStatus,
     SwapData
@@ -15,7 +15,6 @@ import {
 } from "../../intermediaries/IntermediaryAPI";
 import {IntermediaryError} from "../../errors/IntermediaryError";
 import {extendAbortController, timeoutPromise, tryWithRetries} from "../../utils/Utils";
-import {ChainType} from "../Swapper";
 
 export type IToBTCSwapInit<T extends SwapData> = ISwapInit<T> & {
     networkFee: BN,
@@ -76,7 +75,7 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
 
     async refreshPriceData(): Promise<PriceInfoType> {
         if(this.pricingInfo==null) return null;
-        const priceData = await this.wrapper.prices.isValidAmountSend(this.getOutAmount(), this.pricingInfo.satsBaseFee, this.pricingInfo.feePPM, this.data.getAmount(), this.data.getToken());
+        const priceData = await this.wrapper.prices.isValidAmountSend(this.chainIdentifier, this.getOutAmount(), this.pricingInfo.satsBaseFee, this.pricingInfo.feePPM, this.data.getAmount(), this.data.getToken());
         this.pricingInfo = priceData;
         return priceData;
     }
@@ -98,11 +97,12 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
     //////////////////////////////
     //// Getters & utils
 
-    abstract getOutToken(): {chain: "BTC", lightning: boolean};
+    abstract getOutToken(): BtcToken;
 
-    getInToken(): {chain: "SC", address: T["TokenAddress"]} {
+    getInToken(): SCToken {
         return {
             chain: "SC",
+            chainId: this.chainIdentifier,
             address: this.data.getToken()
         };
     }
@@ -133,7 +133,7 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
     async isQuoteValid(): Promise<boolean> {
         try {
             await tryWithRetries(
-                () => this.wrapper.contract.isValidClaimInitAuthorization(
+                () => this.wrapper.contract.isValidInitAuthorization(
                     this.data, this.signatureData, this.feeRate
                 ),
                 null,
@@ -199,7 +199,7 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
      * Get the estimated smart chain transaction fee of the refund transaction
      */
     getRefundFee(): Promise<BN> {
-        return this.wrapper.contract.getRefundFee(this.getInitiator(), this.data);
+        return this.wrapper.contract.getRefundFee(this.data);
     }
 
 

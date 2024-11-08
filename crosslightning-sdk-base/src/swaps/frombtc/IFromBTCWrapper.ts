@@ -5,7 +5,7 @@ import * as randomBytes from "randombytes";
 import {Intermediary} from "../../intermediaries/Intermediary";
 import {IntermediaryError} from "../../errors/IntermediaryError";
 import {tryWithRetries} from "../../utils/Utils";
-import {ChainType} from "../Swapper";
+import {ChainType} from "crosslightning-base";
 
 export abstract class IFromBTCWrapper<
     T extends ChainType,
@@ -82,7 +82,7 @@ export abstract class IFromBTCWrapper<
     }
 
     protected isOurSwap(signer: string, swap: S): boolean {
-        return this.contract.areWeClaimer(signer, swap.data);
+        return swap.data.isClaimer(signer);
     }
 
     /**

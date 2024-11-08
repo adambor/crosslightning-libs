@@ -1,7 +1,8 @@
-import {CoinType, CoinTypes, IPriceProvider} from "../abstract/IPriceProvider";
+import {CoinType, CoinTypes, CtorCoinTypes, IPriceProvider} from "../abstract/IPriceProvider";
 import * as BN from "bn.js";
 import {HttpPriceProvider} from "./abstract/HttpPriceProvider";
 import {httpGet} from "../../utils/Utils";
+import {MultiChain} from "../../swaps/Swapper";
 
 export type CoinPaprikaResponse = {
     quotes: {
@@ -11,9 +12,9 @@ export type CoinPaprikaResponse = {
     }
 };
 
-export class CoinPaprikaPriceProvider extends HttpPriceProvider {
+export class CoinPaprikaPriceProvider<T extends MultiChain> extends HttpPriceProvider<T> {
 
-    constructor(coinsMap: CoinTypes, url: string = "https://api.coinpaprika.com/v1", httpRequestTimeout?: number) {
+    constructor(coinsMap: CtorCoinTypes<T>, url: string = "https://api.coinpaprika.com/v1", httpRequestTimeout?: number) {
         super(coinsMap, url, httpRequestTimeout);
     }
 

@@ -1,15 +1,16 @@
-import {CoinTypes} from "../abstract/IPriceProvider";
+import {CtorCoinTypes} from "../abstract/IPriceProvider";
 import {ExchangePriceProvider} from "./abstract/ExchangePriceProvider";
 import {httpGet} from "../../utils/Utils";
+import {MultiChain} from "../../swaps/Swapper";
 
 export type BinanceResponse = {
     symbol: string;
     price: string;
 };
 
-export class BinancePriceProvider extends ExchangePriceProvider {
+export class BinancePriceProvider<T extends MultiChain> extends ExchangePriceProvider<T> {
 
-    constructor(coinsMap: CoinTypes, url: string = "https://api.binance.com/api/v3", httpRequestTimeout?: number) {
+    constructor(coinsMap: CtorCoinTypes<T>, url: string = "https://api.binance.com/api/v3", httpRequestTimeout?: number) {
         super(coinsMap, url, httpRequestTimeout);
     }
 

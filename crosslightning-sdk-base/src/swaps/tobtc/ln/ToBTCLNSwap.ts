@@ -3,23 +3,12 @@ import {ToBTCLNWrapper} from "./ToBTCLNWrapper";
 import {isIToBTCSwapInit, IToBTCSwap, IToBTCSwapInit} from "../IToBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
-import {SwapData} from "crosslightning-base";
+import {ChainType, SwapData} from "crosslightning-base";
 import {Buffer} from "buffer";
 import * as createHash from "create-hash";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
-import {LNURL, LNURLDecodedSuccessAction, LNURLPaySuccessAction} from "../../../utils/LNURL";
-import {ChainType} from "../../Swapper";
-
-function isLNURLPaySuccessAction(obj: any): obj is LNURLPaySuccessAction {
-    return obj != null &&
-        typeof obj === 'object' &&
-        typeof obj.tag === 'string' &&
-        (obj.description == null || typeof obj.description === 'string') &&
-        (obj.url == null || typeof obj.url === 'string') &&
-        (obj.message == null || typeof obj.message === 'string') &&
-        (obj.ciphertext == null || typeof obj.ciphertext === 'string') &&
-        (obj.iv == null || typeof obj.iv === 'string');
-}
+import {LNURL, LNURLDecodedSuccessAction, LNURLPaySuccessAction, isLNURLPaySuccessAction} from "../../../utils/LNURL";
+import {BtcToken} from "../../ISwap";
 
 export type ToBTCLNSwapInit<T extends SwapData> = IToBTCSwapInit<T> & {
     confidence: number;
@@ -87,7 +76,7 @@ export class ToBTCLNSwap<T extends ChainType> extends IToBTCSwap<T> {
         return new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
     }
 
-    getOutToken(): {chain: "BTC", lightning: true} {
+    getOutToken(): BtcToken<true> {
         return {
             chain: "BTC",
             lightning: true

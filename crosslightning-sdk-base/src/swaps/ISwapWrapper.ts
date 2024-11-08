@@ -1,29 +1,23 @@
 import {
-    ChainEvents,
+    ChainType,
     ClaimEvent,
     InitializeEvent,
-    IntermediaryReputationType,
     IStorageManager,
     RefundEvent, SignatureData,
     SignatureVerificationError,
-    SwapContract,
-    SwapData,
-    SwapEvent,
-    TokenAddress
+    SwapEvent
 } from "crosslightning-base";
 import {EventEmitter} from "events";
 import {ISwap} from "./ISwap";
 import {SwapWrapperStorage} from "./SwapWrapperStorage";
 import {ISwapPrice, PriceInfoType} from "../prices/abstract/ISwapPrice";
 import * as BN from "bn.js";
-import {Intermediary, SingleChainReputationType} from "../intermediaries/Intermediary";
 import {IntermediaryError} from "../errors/IntermediaryError";
 import {getLogger, mapToArray, tryWithRetries} from "../utils/Utils";
-import {ChainType} from "./Swapper";
 
-export type AmountData<T = TokenAddress> = {
+export type AmountData = {
     amount: BN,
-    token: T,
+    token: string,
     exactIn?: boolean
 }
 
@@ -92,7 +86,7 @@ export abstract class ISwapWrapper<
      * @returns Price of the token in uSats (micro sats)
      */
     protected preFetchPrice(amountData: Omit<AmountData, "amount">, abortSignal?: AbortSignal): Promise<BN | null> {
-        return this.prices.preFetchPrice(amountData.token, abortSignal).catch(e => {
+        return this.prices.preFetchPrice(this.chainIdentifier, amountData.token, abortSignal).catch(e => {
             this.logger.error("preFetchPrice(): Error: ", e);
             return null;
         });
@@ -137,17 +131,13 @@ export abstract class ISwapWrapper<
     ): Promise<number> {
         const [feeRate, preFetchedSignatureData] = await Promise.all([feeRatePromise, preFetchSignatureVerificationData]);
         await tryWithRetries(
-            () => data.isPayIn() ?
-                this.contract.isValidClaimInitAuthorization(data, signature, feeRate, preFetchedSignatureData) :
-                this.contract.isValidInitAuthorization(data, signature, feeRate, preFetchedSignatureData),
+            () => this.contract.isValidInitAuthorization(data, signature, feeRate, preFetchedSignatureData),
             null,
             SignatureVerificationError,
             abortSignal
         );
         return await tryWithRetries(
-            () => data.isPayIn() ?
-                this.contract.getClaimInitAuthorizationExpiry(data, signature, preFetchedSignatureData) :
-                this.contract.getInitAuthorizationExpiry(data, signature, preFetchedSignatureData),
+            () => this.contract.getInitAuthorizationExpiry(data, signature, preFetchedSignatureData),
             null,
             SignatureVerificationError,
             abortSignal
@@ -174,7 +164,7 @@ export abstract class ISwapWrapper<
         send: boolean,
         amountSats: BN,
         amountToken: BN,
-        token: TokenAddress,
+        token: string,
         feeData: {
             swapFee: BN,
             networkFee?: BN,
@@ -189,8 +179,8 @@ export abstract class ISwapWrapper<
 
         const isValidAmount = await (
             send ?
-                this.prices.isValidAmountSend(amountSats, swapBaseFee, swapFeePPM, amountToken, token, abortSignal, await pricePrefetchPromise) :
-                this.prices.isValidAmountReceive(amountSats, swapBaseFee, swapFeePPM, amountToken, token, abortSignal, await pricePrefetchPromise)
+                this.prices.isValidAmountSend(this.chainIdentifier, amountSats, swapBaseFee, swapFeePPM, amountToken, token, abortSignal, await pricePrefetchPromise) :
+                this.prices.isValidAmountReceive(this.chainIdentifier, amountSats, swapBaseFee, swapFeePPM, amountToken, token, abortSignal, await pricePrefetchPromise)
         );
         if(!isValidAmount.isValid) throw new IntermediaryError("Fee too high");
 
@@ -252,26 +242,25 @@ export abstract class ISwapWrapper<
             const swap: S = this.swapData.get(paymentHash);
             if(swap==null) continue;
 
-            const eventMeta: {blockTime: number, txId: string} | null = (event as any).meta;
             let swapChanged: boolean = false;
             if(event instanceof InitializeEvent) {
                 swapChanged = await this.processEventInitialize(swap, event);
-                if(eventMeta?.txId!=null && swap.commitTxId!==eventMeta.txId) {
-                    swap.commitTxId = eventMeta.txId;
+                if(event.meta?.txId!=null && swap.commitTxId!==event.meta.txId) {
+                    swap.commitTxId = event.meta.txId;
                     swapChanged ||= true;
                 }
             }
             if(event instanceof ClaimEvent) {
                 swapChanged = await this.processEventClaim(swap, event);
-                if(eventMeta?.txId!=null && swap.claimTxId!==eventMeta.txId) {
-                    swap.claimTxId = eventMeta.txId;
+                if(event.meta?.txId!=null && swap.claimTxId!==event.meta.txId) {
+                    swap.claimTxId = event.meta.txId;
                     swapChanged ||= true;
                 }
             }
             if(event instanceof RefundEvent) {
                 swapChanged = await this.processEventRefund(swap, event);
-                if(eventMeta?.txId!=null && swap.refundTxId!==eventMeta.txId) {
-                    swap.refundTxId = eventMeta.txId;
+                if(event.meta?.txId!=null && swap.refundTxId!==event.meta.txId) {
+                    swap.refundTxId = event.meta.txId;
                     swapChanged ||= true;
                 }
             }
