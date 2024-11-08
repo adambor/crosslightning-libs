@@ -28,7 +28,7 @@
     "bn.js": "5.2.1",
     "buffer": "6.0.3",
     "create-hash": "1.2.0",
-    "crosslightning-base": "6.0.3",
+    "crosslightning-base": "file:../crosslightning-base",
     "randombytes": "2.1.0",
     "tweetnacl": "1.0.3"
   },

@@ -1,9 +1,12 @@
 import {PublicKey} from "@solana/web3.js";
 import * as BN from "bn.js";
-import {SwapData, ChainSwapType, TokenAddress} from "crosslightning-base";
+import {SwapData, ChainSwapType} from "crosslightning-base";
 import {SwapProgram} from "./programTypes";
-import {IdlAccounts, IdlTypes} from "@coral-xyz/anchor";
+import {BN, IdlAccounts, IdlTypes} from "@coral-xyz/anchor";
 import {SwapTypeEnum} from "./SwapTypeEnum";
+import {SolanaSwapData} from "../../../dist";
+import {Buffer} from "buffer";
+import {type} from "node:os";
 
 const EXPIRY_BLOCKHEIGHT_THRESHOLD = new BN("1000000000");
 
@@ -158,12 +161,12 @@ export class SolanaSwapData extends SwapData {
         return this.amount;
     }
 
-    getToken(): TokenAddress {
-        return this.token;
+    getToken(): string {
+        return this.token.toString();
     }
 
-    isToken(token: PublicKey): boolean {
-        return this.token.equals(token);
+    isToken(token: string): boolean {
+        return this.token.equals(new PublicKey(token));
     }
 
     getType(): ChainSwapType {
@@ -332,6 +335,14 @@ export class SolanaSwapData extends SwapData {
                 return ChainSwapType.CHAIN_TXID;
         }
         return null;
+    }
+
+    isClaimer(address: string) {
+        return this.claimer.equals(new PublicKey(address));
+    }
+
+    isOfferer(address: string) {
+        return this.offerer.equals(new PublicKey(address));
     }
 
 }
