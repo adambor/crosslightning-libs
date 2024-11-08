@@ -1,5 +1,4 @@
 import {Request, Response} from "express";
-import * as QueryString from "qs";
 import {ServerParamEncoder} from "./paramcoders/server/ServerParamEncoder";
 import * as BN from "bn.js";
 

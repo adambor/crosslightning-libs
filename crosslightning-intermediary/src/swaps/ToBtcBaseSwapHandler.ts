@@ -1,6 +1,6 @@
 import {RequestData, SwapBaseConfig, SwapHandler} from "./SwapHandler";
 import {SwapHandlerSwap} from "./SwapHandlerSwap";
-import {SwapData, TokenAddress} from "crosslightning-base";
+import {SwapData} from "crosslightning-base";
 import * as BN from "bn.js";
 import {ServerParamEncoder} from "../utils/paramcoders/server/ServerParamEncoder";
 import {IParamReader} from "../utils/paramcoders/IParamReader";
@@ -31,8 +31,8 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S
     protected async checkVaultInitialized(chainIdentifier: string, token: string): Promise<void> {
         if(!this.pdaExistsForToken[chainIdentifier] || !this.pdaExistsForToken[chainIdentifier][token]) {
             this.logger.debug("checkVaultInitialized(): checking vault exists for chain: "+chainIdentifier+" token: "+token);
-            const swapContract = this.getContract(chainIdentifier);
-            const reputation = await swapContract.getIntermediaryReputation(swapContract.getAddress(), swapContract.toTokenAddress(token));
+            const {swapContract, signer} = this.getChain(chainIdentifier);
+            const reputation = await swapContract.getIntermediaryReputation(signer.getAddress(), token);
             this.logger.debug("checkVaultInitialized(): vault state, chain: "+chainIdentifier+" token: "+token+" exists: "+(reputation!=null));
             if(reputation!=null) {
                 if(this.pdaExistsForToken[chainIdentifier]==null) this.pdaExistsForToken[chainIdentifier] = {};
@@ -57,11 +57,12 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S
     protected async preCheckAmounts(
         request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        useToken: TokenAddress
+        useToken: string
     ): Promise<{baseFee: BN, feePPM: BN}> {
         const res = await PluginManager.onHandlePreToBtcQuote(
             request,
             requestedAmount,
+            request.chainIdentifier,
             useToken,
             {minInBtc: this.config.min, maxInBtc: this.config.max},
             {baseFeeInBtc: this.config.baseFee, feePPM: this.config.feePPM},
@@ -101,7 +102,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S
         request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         fees: {baseFee: BN, feePPM: BN},
-        useToken: TokenAddress,
+        useToken: string,
         getNetworkFee: (amount: BN) => Promise<T>,
         signal: AbortSignal,
         pricePrefetchPromise?: Promise<BN>
@@ -119,6 +120,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S
         const res = await PluginManager.onHandlePostToBtcQuote<T>(
             request,
             requestedAmount,
+            request.chainIdentifier,
             useToken,
             {minInBtc: this.config.min, maxInBtc: this.config.max},
             {baseFeeInBtc: fees.baseFee, feePPM: fees.feePPM, networkFeeGetter: getNetworkFee},
@@ -243,7 +245,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S
      * @param responseStream
      * @param abortController
      */
-    protected getToBtcPrefetches(chainIdentifier: string, token: TokenAddress, responseStream: ServerParamEncoder, abortController: AbortController): {
+    protected getToBtcPrefetches(chainIdentifier: string, token: string, responseStream: ServerParamEncoder, abortController: AbortController): {
         pricePrefetchPromise?: Promise<BN>,
         signDataPrefetchPromise?: Promise<any>
     } {
@@ -291,7 +293,9 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S
 
         const feeRate = feeRateObj?.feeRate!=null && typeof(feeRateObj.feeRate)==="string" ? feeRateObj.feeRate : null;
         this.logger.debug("getToBtcSignatureData(): using fee rate from client: ", feeRate);
-        const sigData = await this.getContract(chainIdentifier).getClaimInitSignature(
+        const {swapContract, signer} = this.getChain(chainIdentifier);
+        const sigData = await swapContract.getInitSignature(
+            signer,
             swapObject,
             this.config.authorizationTimeout,
             prefetchedSignData,

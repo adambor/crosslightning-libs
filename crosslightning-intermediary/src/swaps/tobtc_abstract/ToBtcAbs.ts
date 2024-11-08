@@ -12,8 +12,7 @@ import {
     InitializeEvent,
     RefundEvent,
     SwapCommitStatus,
-    SwapData,
-    TokenAddress
+    SwapData
 } from "crosslightning-base";
 import {BitcoinRpc, BtcBlock} from "crosslightning-base/dist";
 import {AuthenticatedLnd} from "lightning";
@@ -129,7 +128,8 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
      */
     private getHash(chainIdentifier: string, address: string, nonce: BN, amount: BN, bitcoinNetwork: bitcoin.networks.Network): Buffer {
         const parsedOutputScript = bitcoin.address.toOutputScript(address, bitcoinNetwork);
-        return this.getContract(chainIdentifier).getHashForOnchain(parsedOutputScript, amount, nonce);
+        const {swapContract} = this.getChain(chainIdentifier);
+        return swapContract.getHashForOnchain(parsedOutputScript, amount, nonce);
     }
 
     /**
@@ -338,7 +338,7 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
      * @param vout
      */
     private async tryClaimSwap(tx: {blockhash: string, confirmations: number, txid: string, hex: string}, swap: ToBtcSwapAbs, vout: number): Promise<boolean> {
-        const swapContract = this.getContract(swap.chainIdentifier);
+        const {swapContract, signer} = this.getChain(swap.chainIdentifier);
 
         const blockHeader = await this.bitcoinRpc.getBlockHeader(tx.blockhash);
 
@@ -348,7 +348,9 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
 
         try {
             this.swapLogger.debug(swap, "tryClaimSwap(): initiate claim of swap, height: "+blockHeader.getHeight()+" utxo: "+tx.txid+":"+vout);
-            const result = await swapContract.claimWithTxData(swap.data, blockHeader.getHeight(), tx, vout, null, null, false, true);
+            const result = await swapContract.claimWithTxData(signer, swap.data, blockHeader.getHeight(), tx, vout, null, null, false, {
+                waitForConfirmation: true
+            });
             this.swapLogger.info(swap, "tryClaimSwap(): swap claimed successfully, height: "+blockHeader.getHeight()+" utxo: "+tx.txid+":"+vout+" address: "+swap.address);
             if(swap.metadata!=null) swap.metadata.times.txClaimed = Date.now();
             unlock();
@@ -360,7 +362,7 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
     }
 
     protected async processPastSwap(swap: ToBtcSwapAbs) {
-        const swapContract = this.getContract(swap.chainIdentifier);
+        const {swapContract, signer} = this.getChain(swap.chainIdentifier);
 
         const timestamp = new BN(Math.floor(Date.now()/1000)).sub(new BN(this.config.maxSkew));
 
@@ -393,7 +395,7 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
         if(swap.state===ToBtcSwapState.BTC_SENT) {
             const isCommited = await swapContract.isCommited(swap.data);
             if(!isCommited) {
-                const status = await swapContract.getCommitStatus(swap.data);
+                const status = await swapContract.getCommitStatus(signer.getAddress(), swap.data);
                 if(status===SwapCommitStatus.PAID) {
                     this.swapLogger.info(swap, "processPastSwap(state=BTC_SENT): swap claimed (detected from processPastSwap), address: "+swap.address);
                     this.unsubscribePayment(swap);
@@ -967,7 +969,7 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
             } = {request: {}, times: {}};
 
             const chainIdentifier = req.query.chain as string ?? this.chains.default;
-            const swapContract = this.getContract(chainIdentifier);
+            const {swapContract, signer} = this.getChain(chainIdentifier);
 
             metadata.times.requestReceived = Date.now();
             /**
@@ -1011,7 +1013,7 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
                 parsed: parsedBody,
                 metadata
             };
-            const useToken = swapContract.toTokenAddress(parsedBody.token);
+            const useToken = parsedBody.token;
 
             const responseStream = res.responseStream;
 
@@ -1055,7 +1057,7 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
             const payObject: SwapData = await swapContract.createSwapData(
                 ChainSwapType.CHAIN_NONCED,
                 parsedBody.offerer,
-                swapContract.getAddress(),
+                signer.getAddress(),
                 useToken,
                 totalInToken,
                 paymentHash,
@@ -1100,7 +1102,7 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
                 msg: "Success",
                 data: {
                     amount: amountBD.toString(10),
-                    address: swapContract.getAddress(),
+                    address: signer.getAddress(),
                     satsPervByte: networkFeeData.satsPerVbyte.toString(10),
                     networkFee: networkFeeInToken.toString(10),
                     swapFee: swapFeeInToken.toString(10),
@@ -1144,7 +1146,7 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
                 msg: "Payment not found"
             };
 
-            const swapContract = this.getContract(payment.chainIdentifier);
+            const {swapContract, signer} = this.getChain(payment.chainIdentifier);
 
             this.checkExpired(payment);
 
@@ -1170,7 +1172,7 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
                     msg: "Not committed"
                 };
 
-                const refundResponse = await swapContract.getRefundSignature(payment.data, this.config.authorizationTimeout);
+                const refundResponse = await swapContract.getRefundSignature(signer, payment.data, this.config.authorizationTimeout);
 
                 //Double check the state after promise result
                 if (payment.state !== ToBtcSwapState.NON_PAYABLE) throw {
@@ -1184,7 +1186,7 @@ export class ToBtcAbs extends ToBtcBaseSwapHandler<ToBtcSwapAbs, ToBtcSwapState>
                     code: 20000,
                     msg: "Success",
                     data: {
-                        address: swapContract.getAddress(),
+                        address: signer.getAddress(),
                         prefix: refundResponse.prefix,
                         timeout: refundResponse.timeout,
                         signature: refundResponse.signature

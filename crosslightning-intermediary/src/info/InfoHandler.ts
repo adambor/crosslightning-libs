@@ -1,4 +1,3 @@
-import {SwapContract, SwapData} from "crosslightning-base";
 import {Express} from "express";
 import {MultichainData, SwapHandler, SwapHandlerInfoType, SwapHandlerType} from "../swaps/SwapHandler";
 import * as express from "express";
@@ -84,8 +83,8 @@ export class InfoHandler {
             for(let chainIdentifier in this.chainData.chains) {
                 const singleChain = this.chainData.chains[chainIdentifier];
                 chains[chainIdentifier] = {
-                    address: singleChain.swapContract.getAddress(),
-                    signature: await singleChain.swapContract.getDataSignature(envelopeBuffer)
+                    address: singleChain.signer.getAddress(),
+                    signature: await singleChain.swapContract.getDataSignature(singleChain.signer, envelopeBuffer)
                 };
             }
 

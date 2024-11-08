@@ -1,4 +1,4 @@
-import {BitcoinRpc, SwapData, TokenAddress} from "crosslightning-base";
+import {BitcoinRpc, SwapData} from "crosslightning-base";
 import {
     IPlugin, isPluginQuote, isQuoteAmountTooHigh, isQuoteAmountTooLow, isQuoteSetFees,
     isQuoteThrow, isToBtcPluginQuote, PluginQuote,
@@ -72,7 +72,7 @@ export class PluginManager {
         tokens: {
             [ticker: string]: {
                 [chainId: string]: {
-                    address: TokenAddress,
+                    address: string,
                     decimals: number
                 }
             }
@@ -165,7 +165,8 @@ export class PluginManager {
     static async onHandlePostFromBtcQuote(
         request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        token: TokenAddress,
+        chainIdentifier: string,
+        token: string,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN},
         pricePrefetchPromise?: Promise<BN> | null
@@ -173,7 +174,7 @@ export class PluginManager {
         for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.onHandlePostFromBtcQuote!=null) {
-                    const result = await plugin.onHandlePostFromBtcQuote(request, requestedAmount, token, constraints, fees, pricePrefetchPromise);
+                    const result = await plugin.onHandlePostFromBtcQuote(request, requestedAmount, chainIdentifier, token, constraints, fees, pricePrefetchPromise);
                     if(result!=null) {
                         if(isQuoteSetFees(result)) return result;
                         if(isQuoteThrow(result)) return result;
@@ -195,14 +196,15 @@ export class PluginManager {
     static async onHandlePreFromBtcQuote(
         request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        token: TokenAddress,
+        chainIdentifier: string,
+        token: string,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN}
     ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh> {
         for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.onHandlePreFromBtcQuote!=null) {
-                    const result = await plugin.onHandlePreFromBtcQuote(request, requestedAmount, token, constraints, fees);
+                    const result = await plugin.onHandlePreFromBtcQuote(request, requestedAmount, chainIdentifier, token, constraints, fees);
                     if(result!=null) {
                         if(isQuoteSetFees(result)) return result;
                         if(isQuoteThrow(result)) return result;
@@ -220,7 +222,8 @@ export class PluginManager {
     static async onHandlePostToBtcQuote<T extends {networkFee: BN}>(
         request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        token: TokenAddress,
+        chainIdentifier: string,
+        token: string,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN, networkFeeGetter: (amount: BN) => Promise<T>},
         pricePrefetchPromise?: Promise<BN> | null
@@ -229,7 +232,7 @@ export class PluginManager {
             try {
                 if(plugin.onHandlePostToBtcQuote!=null) {
                     let networkFeeData: T;
-                    const result = await plugin.onHandlePostToBtcQuote(request, requestedAmount, token, constraints, {
+                    const result = await plugin.onHandlePostToBtcQuote(request, requestedAmount, chainIdentifier, token, constraints, {
                         baseFeeInBtc: fees.baseFeeInBtc,
                         feePPM: fees.feePPM,
                         networkFeeGetter: async (amount: BN) => {
@@ -261,14 +264,15 @@ export class PluginManager {
     static async onHandlePreToBtcQuote(
         request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        token: TokenAddress,
+        chainIdentifier: string,
+        token: string,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN}
     ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh> {
         for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.onHandlePreToBtcQuote!=null) {
-                    const result = await plugin.onHandlePreToBtcQuote(request, requestedAmount, token, constraints, fees);
+                    const result = await plugin.onHandlePreToBtcQuote(request, requestedAmount, chainIdentifier, token, constraints, fees);
                     if(result!=null) {
                         if(isQuoteSetFees(result)) return result;
                         if(isQuoteThrow(result)) return result;

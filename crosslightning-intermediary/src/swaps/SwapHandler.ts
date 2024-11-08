@@ -1,14 +1,13 @@
 import {Express, Request, Response} from "express";
 import {ISwapPrice} from "./ISwapPrice";
 import {
-    BtcRelay,
-    ChainEvents,
+    AbstractSigner,
+    ChainType,
     ClaimEvent,
     InitializeEvent, RefundEvent,
     SwapContract,
     SwapData,
-    SwapEvent,
-    TokenAddress
+    SwapEvent
 } from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
 import {SwapHandlerSwap} from "./SwapHandlerSwap";
@@ -59,11 +58,12 @@ export type MultichainData = {
     default: string
 };
 
-export type ChainData<T extends SwapData = SwapData> = {
-    swapContract: SwapContract<T, any, any, any>,
-    chainEvents: ChainEvents<T>,
+export type ChainData<T extends ChainType = ChainType> = {
+    signer: T["Signer"],
+    swapContract: T["Contract"],
+    chainEvents: T["Events"],
     allowedTokens: string[],
-    btcRelay?: BtcRelay<any, any, any>
+    btcRelay?: T["BtcRelay"]
 }
 
 export type RequestData<T> = {
@@ -128,16 +128,12 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S> = SwapH
     }
 
     protected getChain(identifier: string): ChainData {
-        return this.chains.chains[identifier];
-    }
-
-    protected getContract(identifier: string): SwapContract<any, any, any, any> {
         if(this.chains.chains[identifier]==null)
             throw {
                 code: 20200,
                 msg: "Invalid chain specified!"
             };
-        return this.chains.chains[identifier].swapContract;
+        return this.chains.chains[identifier];
     }
 
     protected abstract processPastSwaps(): Promise<void>;
@@ -319,7 +315,8 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S> = SwapH
      * @param responseStream
      */
     protected getSignDataPrefetch(chainIdentifier: string, abortController: AbortController, responseStream?: ServerParamEncoder): Promise<any> {
-        let signDataPrefetchPromise: Promise<any> = this.getContract(chainIdentifier).preFetchBlockDataForSignatures!=null ? this.getContract(chainIdentifier).preFetchBlockDataForSignatures().catch(e => {
+        const {swapContract} = this.getChain(chainIdentifier);
+        let signDataPrefetchPromise: Promise<any> = swapContract.preFetchBlockDataForSignatures!=null ? swapContract.preFetchBlockDataForSignatures().catch(e => {
             this.logger.error("getSignDataPrefetch(): signDataPrefetch: ", e);
             abortController.abort(e);
             return null;

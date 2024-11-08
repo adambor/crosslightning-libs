@@ -26,7 +26,7 @@
     "bitcoinjs-lib": "6.1.5",
     "bn.js": "5.2.1",
     "bolt11": "1.4.1",
-    "crosslightning-base": "6.0.3",
+    "crosslightning-base": "file:../crosslightning-base",
     "crosslightning-server-base": "1.0.3",
     "express": "4.18.2",
     "lightning": "10.2.1",

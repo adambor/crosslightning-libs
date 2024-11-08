@@ -11,8 +11,7 @@ import {
     InitializeEvent,
     RefundEvent,
     SwapCommitStatus,
-    SwapData,
-    TokenAddress
+    SwapData
 } from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
 import {expressHandlerWrapper, handleLndError, HEX_REGEX, isDefinedRuntimeError} from "../../utils/Utils";
@@ -100,7 +99,7 @@ type ExactInAuthorization = {
     quotedNetworkFee: BN,
     swapFee: BN,
 
-    token: TokenAddress,
+    token: string,
     swapExpiry: BN,
     offerer: string,
 
@@ -266,7 +265,7 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
     private async tryClaimSwap(swap: ToBtcLnSwapAbs): Promise<boolean> {
         if(swap.secret==null) throw new Error("Invalid swap state, needs payment pre-image!");
 
-        const swapContract = this.getContract(swap.chainIdentifier);
+        const {swapContract, signer} = this.getChain(swap.chainIdentifier);
 
         //Set flag that we are sending the transaction already, so we don't end up with race condition
         const unlock: () => boolean = swap.lock(swapContract.claimWithSecretTimeout);
@@ -274,7 +273,9 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
 
         try {
             this.swapLogger.debug(swap, "tryClaimSwap(): initiate claim of swap, secret: "+swap.secret);
-            const success = await swapContract.claimWithSecret(swap.data, swap.secret, false, false, true);
+            const success = await swapContract.claimWithSecret(signer, swap.data, swap.secret, false, false, {
+                waitForConfirmation: true
+            });
             this.swapLogger.info(swap, "tryClaimSwap(): swap claimed successfully, secret: "+swap.secret+" invoice: "+swap.pr);
             if(swap.metadata!=null) swap.metadata.times.txClaimed = Date.now();
             unlock();
@@ -303,7 +304,7 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
             return;
         }
 
-        const swapContract = this.getContract(swap.chainIdentifier);
+        const {swapContract, signer} = this.getChain(swap.chainIdentifier);
 
         if(lnPaymentStatus.is_confirmed) {
             //Save pre-image & real network fee
@@ -316,7 +317,7 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
             //Check if escrow state exists
             const isCommited = await swapContract.isCommited(swap.data);
             if(!isCommited) {
-                const status = await swapContract.getCommitStatus(swap.data);
+                const status = await swapContract.getCommitStatus(signer.getAddress(), swap.data);
                 if(status===SwapCommitStatus.PAID) {
                     //This is alright, we got the money
                     await this.removeSwapData(swap, ToBtcLnSwapState.CLAIMED);
@@ -859,14 +860,14 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
 
             const sequence = new BN(randomBytes(8));
 
-            const swapContract = this.getContract(parsedAuth.chainIdentifier);
+            const {swapContract, signer} = this.getChain(parsedAuth.chainIdentifier);
 
             //Create swap data
             const payObject: SwapData = await swapContract.createSwapData(
                 ChainSwapType.HTLC,
                 parsedAuth.offerer,
-                swapContract.getAddress(),
-                swapContract.toTokenAddress(parsedAuth.token),
+                signer.getAddress(),
+                parsedAuth.token,
                 parsedAuth.total,
                 parsedPR.tagsObject.payment_hash,
                 sequence,
@@ -914,7 +915,7 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
                     swapFee: parsedAuth.swapFeeInToken.toString(10),
                     total: parsedAuth.total.toString(10),
                     confidence: halfConfidence ? parsedAuth.confidence/2000000 : parsedAuth.confidence/1000000,
-                    address: swapContract.getAddress(),
+                    address: signer.getAddress(),
 
                     routingFeeSats: parsedAuth.quotedNetworkFee.toString(10),
 
@@ -939,7 +940,7 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
             } = {request: {}, times: {}};
 
             const chainIdentifier = req.query.chain as string ?? this.chains.default;
-            const swapContract = this.getContract(chainIdentifier);
+            const {swapContract, signer} = this.getChain(chainIdentifier);
 
             metadata.times.requestReceived = Date.now();
             /**
@@ -982,7 +983,7 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
                 parsed: parsedBody,
                 metadata
             };
-            const useToken = swapContract.toTokenAddress(parsedBody.token);
+            const useToken = parsedBody.token;
 
             const responseStream = res.responseStream;
 
@@ -1082,7 +1083,7 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
             const payObject: SwapData = await swapContract.createSwapData(
                 ChainSwapType.HTLC,
                 parsedBody.offerer,
-                swapContract.getAddress(),
+                signer.getAddress(),
                 useToken,
                 totalInToken,
                 parsedPR.tagsObject.payment_hash,
@@ -1122,7 +1123,7 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
                     swapFee: swapFeeInToken.toString(10),
                     total: totalInToken.toString(10),
                     confidence: halfConfidence ? networkFeeData.confidence/2000000 : networkFeeData.confidence/1000000,
-                    address: swapContract.getAddress(),
+                    address: signer.getAddress(),
 
                     routingFeeSats: networkFeeData.networkFee.toString(10),
 
@@ -1165,9 +1166,9 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
                     msg: "Payment expired"
                 };
 
-                const swapContract = this.getContract(data.chainIdentifier);
+                const {signer, swapContract} = this.getChain(data.chainIdentifier);
                 if(data.state===ToBtcLnSwapState.NON_PAYABLE) {
-                    const refundSigData = await swapContract.getRefundSignature(data.data, this.config.authorizationTimeout);
+                    const refundSigData = await swapContract.getRefundSignature(signer, data.data, this.config.authorizationTimeout);
 
                     //Double check the state after promise result
                     if (data.state !== ToBtcLnSwapState.NON_PAYABLE) throw {
@@ -1181,7 +1182,7 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
                         code: 20000,
                         msg: "Success",
                         data: {
-                            address: swapContract.getAddress(),
+                            address: signer.getAddress(),
                             prefix: refundSigData.prefix,
                             timeout: refundSigData.timeout,
                             signature: refundSigData.signature

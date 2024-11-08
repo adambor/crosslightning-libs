@@ -1,4 +1,4 @@
-import {BitcoinRpc, SwapData, TokenAddress} from "crosslightning-base";
+import {BitcoinRpc, SwapData} from "crosslightning-base";
 import {
     FromBtcLnRequestType,
     FromBtcRequestType,
@@ -89,7 +89,7 @@ export interface IPlugin<T extends SwapData> {
         tokens: {
             [ticker: string]: {
                 [chainId: string]: {
-                    address: TokenAddress,
+                    address: string,
                     decimals: number
                 }
             }
@@ -111,14 +111,16 @@ export interface IPlugin<T extends SwapData> {
     onHandlePreFromBtcQuote?(
         request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        token: TokenAddress,
+        chainIdentifier: string,
+        token: string,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN}
     ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh>;
     onHandlePostFromBtcQuote?(
         request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        token: TokenAddress,
+        chainIdentifier: string,
+        token: string,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN},
         pricePrefetchPromise?: Promise<BN> | null
@@ -127,14 +129,16 @@ export interface IPlugin<T extends SwapData> {
     onHandlePreToBtcQuote?(
         request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        token: TokenAddress,
+        chainIdentifier: string,
+        token: string,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN}
     ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh>;
     onHandlePostToBtcQuote?(
         request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        token: TokenAddress,
+        chainIdentifier: string,
+        token: string,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN, networkFeeGetter: (amount: BN) => Promise<BN>},
         pricePrefetchPromise?: Promise<BN> | null

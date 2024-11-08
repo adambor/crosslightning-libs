@@ -1,5 +1,4 @@
 import * as BN from "bn.js";
-import {TokenAddress} from "crosslightning-base";
 
 export type ISwapPriceCoinsMap<T extends {decimals: number}> = {
     [chainId: string]: {
@@ -22,7 +21,7 @@ export abstract class ISwapPrice<T extends {decimals: number} = {decimals: numbe
      */
     protected abstract getPrice(tokenData: T): Promise<BN>;
 
-    getTokenData(tokenAddress: TokenAddress, chainId: string): T {
+    getTokenData(tokenAddress: string, chainId: string): T {
         const chainTokens = this.coinsMap[chainId];
         if(chainTokens==null) throw new Error("Chain not found");
 
@@ -33,7 +32,7 @@ export abstract class ISwapPrice<T extends {decimals: number} = {decimals: numbe
         return coin;
     }
 
-    preFetchPrice(token: TokenAddress, chainId: string): Promise<BN> {
+    preFetchPrice(token: string, chainId: string): Promise<BN> {
         const coin = this.getTokenData(token, chainId);
         return this.getPrice(coin);
     }
@@ -49,7 +48,7 @@ export abstract class ISwapPrice<T extends {decimals: number} = {decimals: numbe
      */
     async getToBtcSwapAmount(
         fromAmount:BN,
-        fromToken: TokenAddress,
+        fromToken: string,
         tokenChainIdentification: string,
         roundUp?: boolean,
         preFetch?: Promise<BN>
@@ -76,7 +75,7 @@ export abstract class ISwapPrice<T extends {decimals: number} = {decimals: numbe
      */
     async getFromBtcSwapAmount(
         fromAmount:BN,
-        toToken: TokenAddress,
+        toToken: string,
         tokenChainIdentification: string,
         roundUp?: boolean,
         preFetch?: Promise<BN>
