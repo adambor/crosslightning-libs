@@ -417,6 +417,11 @@ export interface SwapContract<
     randomAddress(): string;
 
     /**
+     * Returns randomly generated signer
+     */
+    randomSigner(): Signer;
+
+    /**
      * Returns intermediary's reputation for a given token swaps
      *
      * @param address
@@ -641,19 +646,11 @@ export interface SwapContract<
     getClaimableDeposits?(signer: string): Promise<{count: number, totalValue: BN}>;
 
     /**
-     * Returns transactions required for the signer to claim all his claimable deposits
-     *
-     * @param signer
-     * @param feeRate Fee rate to use for the transaction (fetched on-demand if not specified)
-     */
-    txsClaimDeposits?(signer: string, feeRate?: string): Promise<TX[]>;
-
-    /**
      * Claims the funds from claimable deposits
      *
      * @param signer Owner of the deposits, transaction signer
      * @param txOptions Transaction options
      */
-    claimDeposits?(signer: Signer, txOptions?: TransactionConfirmationOptions): Promise<{txIds: string[], count: number, totalValue: BN}>;
+    claimDeposits?(signer: Signer): Promise<{txIds: string[], count: number, totalValue: BN}>;
 
 }
