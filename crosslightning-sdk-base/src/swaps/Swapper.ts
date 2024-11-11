@@ -72,21 +72,23 @@ export type MultiChainData<T extends MultiChain> = {
     [chainIdentifier in keyof T]: ChainSpecificData<T[chainIdentifier]>
 };
 
-export type CtorChainData<T extends MultiChain> = {
-    [chainIdentifier in keyof T]: {
-        btcRelay: BtcRelay<any, T[chainIdentifier]["TX"], MempoolBitcoinBlock>,
-        swapContract: T[chainIdentifier]["Contract"],
-        chainEvents: T[chainIdentifier]["Events"],
-        swapDataConstructor: new (data: any) => T[chainIdentifier]["Data"],
-        storage?: {
-            toBtc?: IStorageManager<ToBTCSwap<T[chainIdentifier]>>,
-            fromBtc?: IStorageManager<FromBTCSwap<T[chainIdentifier]>>,
-            toBtcLn?: IStorageManager<ToBTCLNSwap<T[chainIdentifier]>>,
-            fromBtcLn?: IStorageManager<FromBTCLNSwap<T[chainIdentifier]>>,
-            lnForGas?: IStorageManager<LnForGasSwap<T[chainIdentifier]>>
-        },
-        defaultTrustedIntermediaryUrl?: string
-    }
+export type CtorChainData<T extends ChainType> = {
+    btcRelay: BtcRelay<any, T["TX"], MempoolBitcoinBlock>,
+    swapContract: T["Contract"],
+    chainEvents: T["Events"],
+    swapDataConstructor: new (data: any) => T["Data"],
+    storage?: {
+        toBtc?: IStorageManager<ToBTCSwap<T>>,
+        fromBtc?: IStorageManager<FromBTCSwap<T>>,
+        toBtcLn?: IStorageManager<ToBTCLNSwap<T>>,
+        fromBtcLn?: IStorageManager<FromBTCLNSwap<T>>,
+        lnForGas?: IStorageManager<LnForGasSwap<T>>
+    },
+    defaultTrustedIntermediaryUrl?: string
+};
+
+export type CtorMultiChainData<T extends MultiChain> = {
+    [chainIdentifier in keyof T]: CtorChainData<T[chainIdentifier]>
 };
 
 export type ChainIds<T extends MultiChain> = keyof T & string;
@@ -145,7 +147,7 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
 
     constructor(
         bitcoinRpc: MempoolBitcoinRpc,
-        chainsData: CtorChainData<T>,
+        chainsData: CtorMultiChainData<T>,
         pricing: ISwapPrice<T>,
         options?: SwapperOptions
     ) {
@@ -162,7 +164,7 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
         this.bitcoinRpc = bitcoinRpc;
         this.mempoolApi = bitcoinRpc.api;
 
-        this.chains = objectMap<CtorChainData<T>, MultiChainData<T>>(chainsData, <InputKey extends keyof CtorChainData<T>>(chainData: CtorChainData<T>[InputKey], key: string) => {
+        this.chains = objectMap<CtorMultiChainData<T>, MultiChainData<T>>(chainsData, <InputKey extends keyof CtorMultiChainData<T>>(chainData: CtorMultiChainData<T>[InputKey], key: string) => {
             const {swapContract, chainEvents, btcRelay, defaultTrustedIntermediaryUrl} = chainData;
             const synchronizer = new MempoolBtcRelaySynchronizer(btcRelay, bitcoinRpc);
 
@@ -857,11 +859,11 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
         );
     }
 
-    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: BtcToken<true>, dstToken: SCToken<C>, amount: BN, exactIn: boolean, lnurlWithdraw?: string): Promise<FromBTCLNSwap<T[C]>>;
-    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: BtcToken<false>, dstToken: SCToken<C>, amount: BN, exactIn: boolean): Promise<FromBTCSwap<T[C]>>;
-    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: SCToken<C>, dstToken: BtcToken<false>, amount: BN, exactIn: boolean, address: string): Promise<ToBTCSwap<T[C]>>;
-    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: SCToken<C>, dstToken: BtcToken<true>, amount: BN, exactIn: boolean, lnurlPay: string): Promise<ToBTCLNSwap<T[C]>>;
-    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: SCToken<C>, dstToken: BtcToken<true>, amount: BN, exactIn: false, lightningInvoice: string): Promise<ToBTCLNSwap<T[C]>>;
+    create<C extends ChainIds<T>>(signer: string, srcToken: BtcToken<true>, dstToken: SCToken<C>, amount: BN, exactIn: boolean, lnurlWithdraw?: string): Promise<FromBTCLNSwap<T[C]>>;
+    create<C extends ChainIds<T>>(signer: string, srcToken: BtcToken<false>, dstToken: SCToken<C>, amount: BN, exactIn: boolean): Promise<FromBTCSwap<T[C]>>;
+    create<C extends ChainIds<T>>(signer: string, srcToken: SCToken<C>, dstToken: BtcToken<false>, amount: BN, exactIn: boolean, address: string): Promise<ToBTCSwap<T[C]>>;
+    create<C extends ChainIds<T>>(signer: string, srcToken: SCToken<C>, dstToken: BtcToken<true>, amount: BN, exactIn: boolean, lnurlPay: string): Promise<ToBTCLNSwap<T[C]>>;
+    create<C extends ChainIds<T>>(signer: string, srcToken: SCToken<C>, dstToken: BtcToken<true>, amount: BN, exactIn: false, lightningInvoice: string): Promise<ToBTCLNSwap<T[C]>>;
     /**
      * Creates a swap from srcToken to dstToken, of a specific token amount, either specifying input amount (exactIn=true)
      *  or output amount (exactIn=false), NOTE: For regular -> BTC-LN (lightning) swaps the passed amount is ignored and
@@ -876,18 +878,18 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
      * @param addressLnurlLightningInvoice Bitcoin on-chain address, lightning invoice, LNURL-pay to pay or
      *  LNURL-withdrawal to withdraw money from
      */
-    create<C extends ChainIds<T>>(chainId: C, signer: string, srcToken: Token, dstToken: Token, amount: BN, exactIn: boolean, addressLnurlLightningInvoice?: string): Promise<ISwap<T[C]>> {
+    create<C extends ChainIds<T>>(signer: string, srcToken: Token<C>, dstToken: Token<C>, amount: BN, exactIn: boolean, addressLnurlLightningInvoice?: string): Promise<ISwap<T[C]>> {
         if(srcToken.chain==="BTC") {
             if(dstToken.chain==="SC") {
                 if(srcToken.lightning) {
                     if(addressLnurlLightningInvoice!=null) {
                         if(typeof(addressLnurlLightningInvoice)!=="string") throw new Error("LNURL must be a string!");
-                        return this.createFromBTCLNSwapViaLNURL(chainId, signer, dstToken.address, addressLnurlLightningInvoice, amount, !exactIn);
+                        return this.createFromBTCLNSwapViaLNURL(dstToken.chainId, signer, dstToken.address, addressLnurlLightningInvoice, amount, !exactIn);
                     } else {
-                        return this.createFromBTCLNSwap(chainId, signer, dstToken.address, amount, !exactIn);
+                        return this.createFromBTCLNSwap(dstToken.chainId, signer, dstToken.address, amount, !exactIn);
                     }
                 } else {
-                    return this.createFromBTCSwap(chainId, signer, dstToken.address, amount, !exactIn);
+                    return this.createFromBTCSwap(dstToken.chainId, signer, dstToken.address, amount, !exactIn);
                 }
             }
         } else {
@@ -895,19 +897,19 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
                 if(dstToken.lightning) {
                     if(typeof(addressLnurlLightningInvoice)!=="string") throw new Error("Destination LNURL link/lightning invoice must be a string!");
                     if(this.isValidLNURL(addressLnurlLightningInvoice)) {
-                        return this.createToBTCLNSwapViaLNURL(chainId, signer, srcToken.address, addressLnurlLightningInvoice, amount, null, null, null, null, exactIn);
+                        return this.createToBTCLNSwapViaLNURL(srcToken.chainId, signer, srcToken.address, addressLnurlLightningInvoice, amount, null, null, null, null, exactIn);
                     } else if(this.isLightningInvoice(addressLnurlLightningInvoice)) {
                         if(!this.isValidLightningInvoice(addressLnurlLightningInvoice))
                             throw new Error("Invalid lightning invoice specified, lightning invoice MUST contain pre-set amount!");
                         if(exactIn)
                             throw new Error("Only exact out swaps are possible with lightning invoices, use LNURL links for exact in lightning swaps!");
-                        return this.createToBTCLNSwap(chainId, signer, srcToken.address, addressLnurlLightningInvoice);
+                        return this.createToBTCLNSwap(srcToken.chainId, signer, srcToken.address, addressLnurlLightningInvoice);
                     } else {
                         throw new Error("Supplied parameter is not LNURL link nor lightning invoice (bolt11)!");
                     }
                 } else {
                     if(typeof(addressLnurlLightningInvoice)!=="string") throw new Error("Destination bitcoin address must be a string!");
-                    return this.createToBTCSwap(chainId, signer, srcToken.address, addressLnurlLightningInvoice, amount, null, null, exactIn);
+                    return this.createToBTCSwap(srcToken.chainId, signer, srcToken.address, addressLnurlLightningInvoice, amount, null, null, exactIn);
                 }
             }
         }
