@@ -26,7 +26,6 @@ export class ParamDecoder implements IParamReader {
      */
     private onFrameRead(data: Buffer) {
         const obj = JSON.parse(data.toString());
-        console.log("Frame read: ", obj);
         for(let key in obj) {
             if(this.params[key]==null) {
                 this.params[key] = {
