@@ -23,7 +23,7 @@ export function isToBTCSwapInit<T extends SwapData>(obj: any): obj is ToBTCSwapI
         isIToBTCSwapInit<T>(obj);
 }
 
-export class ToBTCSwap<T extends ChainType> extends IToBTCSwap<T> {
+export class ToBTCSwap<T extends ChainType = ChainType> extends IToBTCSwap<T> {
     protected readonly TYPE = SwapType.TO_BTC;
 
     protected readonly wrapper: ToBTCWrapper<T>;

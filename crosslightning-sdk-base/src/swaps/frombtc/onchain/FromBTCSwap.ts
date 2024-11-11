@@ -28,7 +28,7 @@ export function isFromBTCSwapInit<T extends SwapData>(obj: any): obj is FromBTCS
         isISwapInit<T>(obj);
 }
 
-export class FromBTCSwap<T extends ChainType> extends IFromBTCSwap<T, FromBTCSwapState> {
+export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T, FromBTCSwapState> {
     protected readonly TYPE = SwapType.FROM_BTC;
 
     protected readonly PRE_COMMIT_STATE = FromBTCSwapState.PR_CREATED;

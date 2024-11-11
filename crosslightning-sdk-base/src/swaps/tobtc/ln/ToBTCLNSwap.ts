@@ -25,7 +25,7 @@ export function isToBTCLNSwapInit<T extends SwapData>(obj: any): obj is ToBTCLNS
         isIToBTCSwapInit<T>(obj);
 }
 
-export class ToBTCLNSwap<T extends ChainType> extends IToBTCSwap<T> {
+export class ToBTCLNSwap<T extends ChainType = ChainType> extends IToBTCSwap<T> {
     protected readonly TYPE = SwapType.TO_BTCLN;
 
     private readonly confidence: number;

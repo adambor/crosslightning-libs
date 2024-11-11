@@ -33,7 +33,7 @@ export function isLnForGasSwapInit<T extends SwapData>(obj: any): obj is LnForGa
         isISwapInit<T>(obj);
 }
 
-export class LnForGasSwap<T extends ChainType> extends ISwap<T, LnForGasSwapState> {
+export class LnForGasSwap<T extends ChainType = ChainType> extends ISwap<T, LnForGasSwapState> {
     protected readonly TYPE: SwapType = SwapType.FROM_BTCLN;
 
     //State: PR_CREATED

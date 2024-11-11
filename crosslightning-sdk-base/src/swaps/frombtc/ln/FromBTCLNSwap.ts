@@ -49,7 +49,7 @@ export function isFromBTCLNSwapInit<T extends SwapData>(obj: any): obj is FromBT
         isISwapInit(obj);
 }
 
-export class FromBTCLNSwap<T extends ChainType> extends IFromBTCSwap<T, FromBTCLNSwapState> {
+export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T, FromBTCLNSwapState> {
     protected readonly TYPE = SwapType.FROM_BTCLN;
 
     protected readonly PRE_COMMIT_STATE = FromBTCLNSwapState.PR_PAID;
