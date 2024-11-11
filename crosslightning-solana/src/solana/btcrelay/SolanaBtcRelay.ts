@@ -17,7 +17,7 @@ import {SolanaAction} from "../base/SolanaAction";
 import {Buffer} from "buffer";
 import {SolanaFees} from "../base/modules/SolanaFees";
 import {SolanaTx} from "../base/modules/SolanaTransactions";
-import {SolanaSigner} from "../SolanaSigner";
+import {SolanaSigner} from "../wallet/SolanaSigner";
 import {sign} from "tweetnacl";
 
 const BASE_FEE_SOL_PER_BLOCKHEADER = new BN(5000);

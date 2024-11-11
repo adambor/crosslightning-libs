@@ -2,11 +2,10 @@ import {PublicKey} from "@solana/web3.js";
 import * as BN from "bn.js";
 import {SwapData, ChainSwapType} from "crosslightning-base";
 import {SwapProgram} from "./programTypes";
-import {BN, IdlAccounts, IdlTypes} from "@coral-xyz/anchor";
+import {IdlAccounts, IdlTypes} from "@coral-xyz/anchor";
 import {SwapTypeEnum} from "./SwapTypeEnum";
-import {SolanaSwapData} from "../../../dist";
 import {Buffer} from "buffer";
-import {type} from "node:os";
+import {getAssociatedTokenAddressSync} from "@solana/spl-token";
 
 const EXPIRY_BLOCKHEIGHT_THRESHOLD = new BN("1000000000");
 
@@ -124,6 +123,8 @@ export class SolanaSwapData extends SwapData {
 
     setOfferer(newOfferer: string) {
         this.offerer = new PublicKey(newOfferer);
+        this.offererAta = getAssociatedTokenAddressSync(this.token, this.offerer);
+        this.payIn = true;
     }
 
     getClaimer(): string {
@@ -132,6 +133,9 @@ export class SolanaSwapData extends SwapData {
 
     setClaimer(newClaimer: string) {
         this.claimer = new PublicKey(newClaimer);
+        this.payIn = false;
+        this.payOut = true;
+        this.claimerAta = getAssociatedTokenAddressSync(this.token, this.claimer);
     }
 
     serialize(): any {
@@ -338,6 +342,12 @@ export class SolanaSwapData extends SwapData {
     }
 
     isClaimer(address: string) {
+        const _address = new PublicKey(address);
+        if(this.isPayOut()) {
+            //Also check that swapData's ATA is correct
+            const ourAta = getAssociatedTokenAddressSync(this.token, _address);
+            if(!this.claimerAta.equals(ourAta)) return false;
+        }
         return this.claimer.equals(new PublicKey(address));
     }
 

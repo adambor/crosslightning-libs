@@ -300,14 +300,11 @@ export class SolanaTokens extends SolanaModule {
      * @param dstAddress destination address of the recipient
      * @param feeRate fee rate to use for the transaction
      */
-    public txsTransfer(signer:PublicKey, token: PublicKey, amount: BN, dstAddress: string, feeRate?: string): Promise<SolanaTx[]> {
-        const recipient = new PublicKey(dstAddress);
-        if(!PublicKey.isOnCurve(recipient)) throw new Error("Recipient must be a valid public key");
-
+    public txsTransfer(signer:PublicKey, token: PublicKey, amount: BN, dstAddress: PublicKey, feeRate?: string): Promise<SolanaTx[]> {
         if(this.WSOL_ADDRESS.equals(token)) {
-            return this.txsTransferSol(signer, amount, recipient, feeRate);
+            return this.txsTransferSol(signer, amount, dstAddress, feeRate);
         }
-        return this.txsTransferTokens(signer, token, amount, recipient, feeRate);
+        return this.txsTransferTokens(signer, token, amount, dstAddress, feeRate);
     }
 
 }

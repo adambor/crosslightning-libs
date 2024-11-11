@@ -3,7 +3,7 @@ import * as createHash from "create-hash";
 import {sign} from "tweetnacl";
 import {PublicKey} from "@solana/web3.js";
 import {Buffer} from "buffer";
-import {SolanaSigner} from "../../SolanaSigner";
+import {SolanaSigner} from "../../wallet/SolanaSigner";
 
 export class SolanaSignatures extends SolanaModule {
 
