@@ -1,5 +1,5 @@
-import {ConfirmedSignatureInfo, ParsedTransactionWithMeta} from "@solana/web3.js";
-import {AnchorProvider, IdlEvents} from "@coral-xyz/anchor";
+import {ConfirmedSignatureInfo, Connection, ParsedTransactionWithMeta} from "@solana/web3.js";
+import {IdlEvents} from "@coral-xyz/anchor";
 import * as fs from "fs/promises";
 import {SolanaSwapProgram} from "../swaps/SolanaSwapProgram";
 import {EventObject, SolanaChainEventsBrowser} from "./SolanaChainEventsBrowser";
@@ -27,13 +27,12 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
 
     constructor(
         directory: string,
-        signer: AnchorProvider,
+        connection: Connection,
         solanaSwapProgram: SolanaSwapProgram,
         logFetchInterval?: number,
-        logFetchLimit?: number,
-        wsTxFetchRetryTimeout?: number
+        logFetchLimit?: number
     ) {
-        super(signer, solanaSwapProgram)
+        super(connection, solanaSwapProgram)
         this.directory = directory;
         this.logFetchInterval = logFetchInterval || LOG_FETCH_INTERVAL;
         this.logFetchLimit = logFetchLimit || LOG_FETCH_LIMIT;
@@ -69,8 +68,8 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
      *
      * @private
      */
-    private saveLastSignature(lastSignture: string, slot: number): Promise<void> {
-        return fs.writeFile(this.directory+BLOCKHEIGHT_FILENAME, lastSignture+";"+slot);
+    private saveLastSignature(lastSignature: string, slot: number): Promise<void> {
+        return fs.writeFile(this.directory+BLOCKHEIGHT_FILENAME, lastSignature+";"+slot);
     }
 
     /**
@@ -103,7 +102,7 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
      */
     private async fetchTxAndProcessEvent(signature: string): Promise<boolean> {
         try {
-            const transaction = await this.provider.connection.getParsedTransaction(signature, {
+            const transaction = await this.connection.getParsedTransaction(signature, {
                 commitment: "confirmed",
                 maxSupportedTransactionVersion: 0
             });
@@ -162,7 +161,7 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
         let fetched = null;
         while(fetched==null || fetched.length===this.logFetchLimit) {
             if(signatures.length===0) {
-                fetched = await this.provider.connection.getSignaturesForAddress(this.solanaSwapProgram.program.programId, {
+                fetched = await this.connection.getSignaturesForAddress(this.solanaSwapProgram.program.programId, {
                     until: lastProcessedSignature.signature,
                     limit: this.logFetchLimit
                 }, "confirmed");
@@ -172,7 +171,7 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
                     return;
                 }
             } else {
-                fetched = await this.provider.connection.getSignaturesForAddress(this.solanaSwapProgram.program.programId, {
+                fetched = await this.connection.getSignaturesForAddress(this.solanaSwapProgram.program.programId, {
                     before: signatures[signatures.length-1].signature,
                     until: lastProcessedSignature.signature,
                     limit: this.logFetchLimit
@@ -191,7 +190,7 @@ export class SolanaChainEvents extends SolanaChainEventsBrowser {
      * @private
      */
     private async getFirstSignature(): Promise<ConfirmedSignatureInfo[]> {
-        return await this.provider.connection.getSignaturesForAddress(this.solanaSwapProgram.program.programId, {
+        return await this.connection.getSignaturesForAddress(this.solanaSwapProgram.program.programId, {
             limit: 1
         }, "confirmed");
     }
