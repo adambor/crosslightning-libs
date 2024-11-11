@@ -203,11 +203,11 @@ export class SwapperWithChain<T extends MultiChain, ChainIdentifier extends Chai
         return this.swapper.createTrustedLNForGasSwap(this.chainIdentifier, signer, amount, trustedIntermediaryUrl);
     }
 
-    create(signer: string, srcToken: BtcToken<true>, dstToken: SCToken<string>, amount: BN, exactIn: boolean, lnurlWithdraw?: string): Promise<FromBTCLNSwap<T[ChainIdentifier]>>;
-    create(signer: string, srcToken: BtcToken<false>, dstToken: SCToken<string>, amount: BN, exactIn: boolean): Promise<FromBTCSwap<T[ChainIdentifier]>>;
-    create(signer: string, srcToken: SCToken<string>, dstToken: BtcToken<false>, amount: BN, exactIn: boolean, address: string): Promise<ToBTCSwap<T[ChainIdentifier]>>;
-    create(signer: string, srcToken: SCToken<string>, dstToken: BtcToken<true>, amount: BN, exactIn: boolean, lnurlPay: string): Promise<ToBTCLNSwap<T[ChainIdentifier]>>;
-    create(signer: string, srcToken: SCToken<string>, dstToken: BtcToken<true>, amount: BN, exactIn: false, lightningInvoice: string): Promise<ToBTCLNSwap<T[ChainIdentifier]>>;
+    create(signer: string, srcToken: BtcToken<true>, dstToken: SCToken<ChainIdentifier>, amount: BN, exactIn: boolean, lnurlWithdraw?: string): Promise<FromBTCLNSwap<T[ChainIdentifier]>>;
+    create(signer: string, srcToken: BtcToken<false>, dstToken: SCToken<ChainIdentifier>, amount: BN, exactIn: boolean): Promise<FromBTCSwap<T[ChainIdentifier]>>;
+    create(signer: string, srcToken: SCToken<ChainIdentifier>, dstToken: BtcToken<false>, amount: BN, exactIn: boolean, address: string): Promise<ToBTCSwap<T[ChainIdentifier]>>;
+    create(signer: string, srcToken: SCToken<ChainIdentifier>, dstToken: BtcToken<true>, amount: BN, exactIn: boolean, lnurlPay: string): Promise<ToBTCLNSwap<T[ChainIdentifier]>>;
+    create(signer: string, srcToken: SCToken<ChainIdentifier>, dstToken: BtcToken<true>, amount: BN, exactIn: false, lightningInvoice: string): Promise<ToBTCLNSwap<T[ChainIdentifier]>>;
     /**
      * Creates a swap from srcToken to dstToken, of a specific token amount, either specifying input amount (exactIn=true)
      *  or output amount (exactIn=false), NOTE: For regular -> BTC-LN (lightning) swaps the passed amount is ignored and
@@ -221,8 +221,8 @@ export class SwapperWithChain<T extends MultiChain, ChainIdentifier extends Chai
      * @param addressLnurlLightningInvoice Bitcoin on-chain address, lightning invoice, LNURL-pay to pay or
      *  LNURL-withdrawal to withdraw money from
      */
-    create(signer: string, srcToken: Token, dstToken: Token, amount: BN, exactIn: boolean, addressLnurlLightningInvoice?: string): Promise<ISwap<T[ChainIdentifier]>> {
-        return this.swapper.create(this.chainIdentifier, signer, srcToken as any, dstToken as any, amount, exactIn, addressLnurlLightningInvoice);
+    create(signer: string, srcToken: Token<ChainIdentifier>, dstToken: Token<ChainIdentifier>, amount: BN, exactIn: boolean, addressLnurlLightningInvoice?: string): Promise<ISwap<T[ChainIdentifier]>> {
+        return this.swapper.create(signer, srcToken as any, dstToken as any, amount, exactIn, addressLnurlLightningInvoice);
     }
 
     /**
