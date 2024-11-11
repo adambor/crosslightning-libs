@@ -370,7 +370,7 @@ export class FromBTCLNSwap<T extends ChainType> extends IFromBTCSwap<T, FromBTCL
      * @throws {Error} If in invalid state (must be PR_PAID or CLAIM_COMMITED)
      * @throws {Error} If invalid signer is provided that doesn't match the swap data
      */
-    async commitAndClaim(signer: AbstractSigner, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string[]> {
+    async commitAndClaim(signer: T["Signer"], abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string[]> {
         this.checkSigner(signer);
         if(this.state===FromBTCLNSwapState.CLAIM_COMMITED) return [null, await this.claim(signer, false, null)];
 

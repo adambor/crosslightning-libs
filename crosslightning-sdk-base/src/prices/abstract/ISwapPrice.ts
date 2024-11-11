@@ -41,7 +41,7 @@ export abstract class ISwapPrice<T extends MultiChain = MultiChain> {
      *
      * @param chainIdentifier
      * @param token
-     * @param abortSignals
+     * @param abortSignal
      * @protected
      */
     protected abstract getPrice<C extends ChainIds<T>>(chainIdentifier: C, token: string, abortSignal?: AbortSignal): Promise<BN>;

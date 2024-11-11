@@ -216,7 +216,7 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
      *  (this is handled on swap creation, if you commit right after quoting, you can skipChecks)`
      * @throws {Error} If invalid signer is provided that doesn't match the swap data
      */
-    async commit(signer: AbstractSigner, noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
+    async commit(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
         this.checkSigner(signer);
         const result = await this.wrapper.contract.sendAndConfirm(
             signer, await this.txsCommit(skipChecks), !noWaitForConfirmation, abortSignal
@@ -389,7 +389,7 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
      * @param abortSignal               Abort signal
      * @throws {Error} If invalid signer is provided that doesn't match the swap data
      */
-    async refund(signer: AbstractSigner, noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+    async refund(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
         this.checkSigner(signer);
         const result = await this.wrapper.contract.sendAndConfirm(signer, await this.txsRefund(), !noWaitForConfirmation, abortSignal)
 

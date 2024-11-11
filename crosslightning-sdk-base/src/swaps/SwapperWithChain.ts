@@ -1,27 +1,48 @@
 import {LNURLPay, LNURLWithdraw} from "../utils/LNURL";
 import * as BN from "bn.js";
-import {SwapBounds} from "../intermediaries/IntermediaryDiscovery";
+import {IntermediaryDiscovery, SwapBounds} from "../intermediaries/IntermediaryDiscovery";
 import {SwapType} from "./SwapType";
 import {LnForGasSwap} from "./swapforgas/ln/LnForGasSwap";
 import {BtcToken, ISwap, SCToken, Token} from "./ISwap";
 import {IToBTCSwap} from "./tobtc/IToBTCSwap";
 import {IFromBTCSwap} from "./frombtc/IFromBTCSwap";
-import {ChainIds, MultiChain, Swapper, SwapperBtcUtils} from "./Swapper";
+import {ChainIds, MultiChain, Swapper, SwapperBtcUtils, SwapperOptions} from "./Swapper";
 import {FromBTCLNSwap} from "./frombtc/ln/FromBTCLNSwap";
 import {Buffer} from "buffer";
 import {FromBTCSwap} from "./frombtc/onchain/FromBTCSwap";
 import {ToBTCLNSwap} from "./tobtc/ln/ToBTCLNSwap";
 import {ToBTCSwap} from "./tobtc/onchain/ToBTCSwap";
 import {SwapperWithSigner} from "./SwapperWithSigner";
+import {ISwapPrice} from "../prices/abstract/ISwapPrice";
+import {SwapPriceWithChain} from "../prices/SwapPriceWithChain";
+import {MempoolApi} from "../btc/mempool/MempoolApi";
+import {MempoolBitcoinRpc} from "../btc/mempool/MempoolBitcoinRpc";
+import {Network} from "bitcoinjs-lib";
 
 export class SwapperWithChain<T extends MultiChain, ChainIdentifier extends ChainIds<T>> implements SwapperBtcUtils {
 
-    chainIdentifier: ChainIdentifier;
-    swapper: Swapper<T>;
+    readonly chainIdentifier: ChainIdentifier;
+    readonly swapper: Swapper<T>;
+
+    readonly prices: SwapPriceWithChain<T, ChainIdentifier>;
+
+    get intermediaryDiscovery(): IntermediaryDiscovery {
+        return this.swapper.intermediaryDiscovery;
+    }
+    get mempoolApi(): MempoolApi {
+        return this.swapper.mempoolApi;
+    }
+    get bitcoinRpc(): MempoolBitcoinRpc {
+        return this.swapper.bitcoinRpc;
+    }
+    get bitcoinNetwork(): Network {
+        return this.swapper.bitcoinNetwork;
+    }
 
     constructor(swapper: Swapper<T>, chainIdentifier: ChainIdentifier) {
         this.swapper = swapper;
         this.chainIdentifier = chainIdentifier;
+        this.prices = new SwapPriceWithChain<T, ChainIdentifier>(swapper.prices, chainIdentifier);
     }
 
     /**
@@ -246,9 +267,8 @@ export class SwapperWithChain<T extends MultiChain, ChainIdentifier extends Chai
         return this.swapper.getNativeCurrency(this.chainIdentifier);
     }
 
-    withSigner(signer: string | T[ChainIdentifier]["Signer"]) {
-        const address: string = typeof(signer) === "string" ? signer : signer.getAddress();
-        return new SwapperWithSigner<T, ChainIdentifier>(this, address);
+    withSigner(signer: T[ChainIdentifier]["Signer"]) {
+        return new SwapperWithSigner<T, ChainIdentifier>(this, signer);
     }
 
 }
