@@ -7,7 +7,6 @@ import {
     SendOptions
 } from "@solana/web3.js";
 import * as createHash from "create-hash";
-import * as randomBytes from "randombytes";
 import {SolanaBtcRelay} from "../btcrelay/SolanaBtcRelay";
 import * as programIdl from "./programIdl.json";
 import {
@@ -30,7 +29,7 @@ import {SwapClaim} from "./modules/SwapClaim";
 import {SolanaLpVault} from "./modules/SolanaLpVault";
 import {Buffer} from "buffer";
 import {SolanaSigner} from "../wallet/SolanaSigner";
-import {KeypairWallet} from "../wallet/KeypairWallet";
+import {SolanaKeypairWallet} from "../wallet/SolanaKeypairWallet";
 
 function toPublicKeyOrNull(str: string | null): PublicKey | null {
     return str==null ? null : new PublicKey(str);
@@ -733,7 +732,7 @@ export class SolanaSwapProgram
 
     randomSigner(): SolanaSigner {
         const keypair = Keypair.generate();
-        const wallet = new KeypairWallet(keypair);
+        const wallet = new SolanaKeypairWallet(keypair);
         return new SolanaSigner(wallet, keypair);
     }
 

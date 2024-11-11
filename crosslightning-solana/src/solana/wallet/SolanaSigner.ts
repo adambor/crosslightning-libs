@@ -1,4 +1,4 @@
-import { Wallet } from "@coral-xyz/anchor";
+import { Wallet } from "@coral-xyz/anchor/dist/cjs/provider";
 import {AbstractSigner} from "crosslightning-base";
 import {PublicKey, Signer} from "@solana/web3.js";
 
