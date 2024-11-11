@@ -1,10 +1,11 @@
-import {Idl, Program} from "@coral-xyz/anchor";
+import {AnchorProvider, Idl, Program} from "@coral-xyz/anchor";
 import {SolanaFees} from "../base/modules/SolanaFees";
 import {SolanaBase, SolanaRetryPolicy} from "../base/SolanaBase";
 import {SolanaProgramEvents} from "./modules/SolanaProgramEvents";
 import {Connection, Keypair, PublicKey} from "@solana/web3.js";
 import * as createHash from "create-hash";
 import {Buffer} from "buffer";
+import {SolanaKeypairWallet} from "../wallet/SolanaKeypairWallet";
 
 /**
  * Base class providing program specific utilities
@@ -23,7 +24,11 @@ export class SolanaProgramBase<T extends Idl> extends SolanaBase {
         solanaFeeEstimator: SolanaFees = new SolanaFees(connection)
     ) {
         super(connection, retryPolicy, solanaFeeEstimator);
-        this.program = new Program<T>(programIdl as any, programAddress || programIdl.metadata.address);
+        this.program = new Program<T>(
+            programIdl as any,
+            programAddress || programIdl.metadata.address,
+            new AnchorProvider(connection, new SolanaKeypairWallet(Keypair.generate()), {})
+        );
 
         this.Events = new SolanaProgramEvents(this);
     }
