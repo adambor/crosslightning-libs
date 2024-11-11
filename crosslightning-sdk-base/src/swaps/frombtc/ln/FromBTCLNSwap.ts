@@ -329,7 +329,7 @@ export class FromBTCLNSwap<T extends ChainType> extends IFromBTCSwap<T, FromBTCL
      *  (this is handled when swap is created (quoted), if you commit right after quoting, you can use skipChecks=true)
      * @throws {Error} If invalid signer is provided that doesn't match the swap data
      */
-    async commit(signer: AbstractSigner, noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
+    async commit(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
         this.checkSigner(signer);
         let txResult = await super.commit(signer, noWaitForConfirmation, abortSignal, skipChecks);
         if(!noWaitForConfirmation) {
@@ -350,7 +350,7 @@ export class FromBTCLNSwap<T extends ChainType> extends IFromBTCSwap<T, FromBTCL
      * @param signer Optional signer address to use for claiming the swap, can also be different from the initializer
      * @throws {Error} If in invalid state (must be CLAIM_COMMITED)
      */
-    txsClaim(signer?: string): Promise<T["TX"][]> {
+    txsClaim(signer?: T["Signer"]): Promise<T["TX"][]> {
         if(this.state!==FromBTCLNSwapState.CLAIM_COMMITED) throw new Error("Must be in CLAIM_COMMITED state!");
         return this.wrapper.contract.txsClaimWithSecret(signer ?? this.getInitiator(), this.data, this.secret, true, true);
     }
@@ -397,7 +397,7 @@ export class FromBTCLNSwap<T extends ChainType> extends IFromBTCSwap<T, FromBTCL
      * @throws {Error} If in invalid state (must be PR_PAID or CLAIM_COMMITED)
      */
     async txsCommitAndClaim(skipChecks?: boolean): Promise<T["TX"][]> {
-        if(this.state===FromBTCLNSwapState.CLAIM_COMMITED) return await this.txsClaim(this.getInitiator());
+        if(this.state===FromBTCLNSwapState.CLAIM_COMMITED) return await this.txsClaim();
         if(this.state!==FromBTCLNSwapState.PR_PAID) throw new Error("Must be in PR_PAID state!");
 
         const initTxs = await this.txsCommit(skipChecks);

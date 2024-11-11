@@ -217,10 +217,9 @@ export class FromBTCSwap<T extends ChainType> extends IFromBTCSwap<T, FromBTCSwa
      * Returns transactions required to claim the swap on-chain (and possibly also sync the bitcoin light client)
      *  after a bitcoin transaction was sent and confirmed
      *
-     * @param signer Optional signer address to use for claiming the swap, can also be different from the initializer
      * @throws {Error} If the swap is in invalid state (must be BTC_TX_CONFIRMED)
      */
-    async txsClaim(signer?: string): Promise<T["TX"][]> {
+    async txsClaim(signer?: T["Signer"]): Promise<T["TX"][]> {
         if(!this.canClaim()) throw new Error("Must be in BTC_TX_CONFIRMED state!");
 
         const tx = await this.wrapper.btcRpc.getTransaction(this.txId);
@@ -244,7 +243,7 @@ export class FromBTCSwap<T extends ChainType> extends IFromBTCSwap<T, FromBTCSwa
         let txIds: string[];
         try {
             txIds = await this.wrapper.contract.sendAndConfirm(
-                signer, await this.txsClaim(signer.getAddress()), !noWaitForConfirmation, abortSignal
+                signer, await this.txsClaim(signer), !noWaitForConfirmation, abortSignal
             );
         } catch (e) {
             this.logger.info("claim(): Failed to claim ourselves, checking swap claim state...");

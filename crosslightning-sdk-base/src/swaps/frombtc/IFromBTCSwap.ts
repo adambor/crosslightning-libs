@@ -232,7 +232,7 @@ export abstract class IFromBTCSwap<
      */
     async claim(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
         const result = await this.wrapper.contract.sendAndConfirm(
-            signer, await this.txsClaim(signer.getAddress()), !noWaitForConfirmation, abortSignal
+            signer, await this.txsClaim(signer), !noWaitForConfirmation, abortSignal
         );
 
         this.claimTxId = result[0];
@@ -240,7 +240,7 @@ export abstract class IFromBTCSwap<
         return result[0];
     }
 
-    abstract txsClaim(signer: string): Promise<T["TX"][]>;
+    abstract txsClaim(signer?: T["Signer"]): Promise<T["TX"][]>;
 
     /**
      * Waits till the swap is successfully claimed
