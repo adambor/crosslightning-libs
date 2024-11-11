@@ -171,7 +171,7 @@ export class IntermediaryDiscovery extends EventEmitter {
 
         return {
             addresses,
-            info: JSON.parse(response.envelope)
+            info
         };
     }
 
