@@ -395,7 +395,7 @@ export class SolanaSwapProgram
     ////////////////////////////////////////////
     //// Transaction initializers
     async txsClaimWithSecret(
-        signer: string,
+        signer: string | SolanaSigner,
         swapData: SolanaSwapData,
         secret: string,
         checkExpiry?: boolean,
@@ -403,11 +403,11 @@ export class SolanaSwapProgram
         feeRate?: string,
         skipAtaCheck?: boolean
     ): Promise<SolanaTx[]> {
-        return this.Claim.txsClaimWithSecret(new PublicKey(signer), swapData, secret, checkExpiry, initAta, feeRate, skipAtaCheck)
+        return this.Claim.txsClaimWithSecret(typeof(signer)==="string" ? new PublicKey(signer) : signer.getPublicKey(), swapData, secret, checkExpiry, initAta, feeRate, skipAtaCheck)
     }
 
     async txsClaimWithTxData(
-        signer: string,
+        signer: string | SolanaSigner,
         swapData: SolanaSwapData,
         blockheight: number,
         tx: { blockhash: string, confirmations: number, txid: string, hex: string },
@@ -418,7 +418,7 @@ export class SolanaSwapProgram
         feeRate?: string,
         storageAccHolder?: {storageAcc: PublicKey}
     ): Promise<SolanaTx[] | null> {
-        return this.Claim.txsClaimWithTxData(new PublicKey(signer), swapData, blockheight, tx, vout, commitedHeader, synchronizer, initAta, storageAccHolder, feeRate);
+        return this.Claim.txsClaimWithTxData(typeof(signer)==="string" ? new PublicKey(signer) : signer, swapData, blockheight, tx, vout, commitedHeader, synchronizer, initAta, storageAccHolder, feeRate);
     }
 
     txsRefund(swapData: SolanaSwapData, check?: boolean, initAta?: boolean, feeRate?: string): Promise<SolanaTx[]> {

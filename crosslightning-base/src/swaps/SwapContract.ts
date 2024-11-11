@@ -125,7 +125,7 @@ export interface SwapContract<
      * @param feeRate Fee rate to use for the transactions
      * @param skipAtaCheck Whether to skip checking if token account exists
      */
-    txsClaimWithSecret(signer: string, swapData: T, secret: string, checkExpiry?: boolean, initAta?: boolean, feeRate?: string, skipAtaCheck?: boolean): Promise<TX[]>;
+    txsClaimWithSecret(signer: string | Signer, swapData: T, secret: string, checkExpiry?: boolean, initAta?: boolean, feeRate?: string, skipAtaCheck?: boolean): Promise<TX[]>;
 
     /**
      * Signs & sends transactions required for claiming an on-chain PTLC (proof-time locked contract) swap
@@ -155,7 +155,7 @@ export interface SwapContract<
      * @param initAta Whether to initialize a token account if it doesn't exist (applies to e.g. Solana, with token specific ATAs)
      * @param feeRate Fee rate to use for the transactions
      */
-    txsClaimWithTxData(signer: string, swapData: T, blockheight: number, tx: BitcoinTransactionData, vout: number, storedHeader?: BtcStoredHeader<any>, synchronizer?: RelaySynchronizer<any, TX, any>, initAta?: boolean, feeRate?: string): Promise<TX[]>;
+    txsClaimWithTxData(signer: string | Signer, swapData: T, blockheight: number, tx: BitcoinTransactionData, vout: number, storedHeader?: BtcStoredHeader<any>, synchronizer?: RelaySynchronizer<any, TX, any>, initAta?: boolean, feeRate?: string): Promise<TX[]>;
 
     /**
      * Signs & sends transactions for refunding a timed out swap
