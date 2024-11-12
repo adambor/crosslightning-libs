@@ -260,6 +260,13 @@ export class SwapperWithChain<T extends MultiChain, ChainIdentifier extends Chai
     }
 
     /**
+     * Returns the native token balance of the wallet
+     */
+    getNativeBalance(signer: string): Promise<BN> {
+        return this.swapper.getNativeBalance(this.chainIdentifier, signer);
+    }
+
+    /**
      * Returns the address of the native currency of the chain
      */
     getNativeCurrency(): string {
