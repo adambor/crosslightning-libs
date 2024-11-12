@@ -38,7 +38,7 @@ export function isISwapInit<T extends SwapData>(obj: any): obj is ISwapInit<T> {
 export type Fee = {
     amountInSrcToken: BN;
     amountInDstToken: BN;
-    usdValue: () => Promise<number>;
+    usdValue: (abortSignal?: AbortSignal, preFetchedUsdPrice?: number) => Promise<number>;
 }
 
 export type BtcToken<L = boolean> = {

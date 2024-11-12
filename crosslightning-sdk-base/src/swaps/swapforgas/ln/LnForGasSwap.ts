@@ -198,7 +198,8 @@ export class LnForGasSwap<T extends ChainType = ChainType> extends ISwap<T, LnFo
         return {
             amountInSrcToken: this.swapFeeBtc,
             amountInDstToken: this.swapFee,
-            usdValue: (abortSignal?: AbortSignal) => this.wrapper.prices.getBtcUsdValue(this.swapFeeBtc, abortSignal)
+            usdValue: (abortSignal?: AbortSignal, preFetchedUsdPrice?: number) =>
+                this.wrapper.prices.getBtcUsdValue(this.swapFeeBtc, abortSignal, preFetchedUsdPrice)
         };
     }
 

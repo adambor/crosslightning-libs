@@ -166,7 +166,8 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
         return {
             amountInSrcToken: this.swapFee.add(this.networkFee),
             amountInDstToken: this.swapFeeBtc.add(this.networkFeeBtc),
-            usdValue: (abortSignal?: AbortSignal) => this.wrapper.prices.getBtcUsdValue(this.swapFeeBtc.add(this.networkFeeBtc), abortSignal)
+            usdValue: (abortSignal?: AbortSignal, preFetchedUsdPrice?: number) =>
+                this.wrapper.prices.getBtcUsdValue(this.swapFeeBtc.add(this.networkFeeBtc), abortSignal, preFetchedUsdPrice)
         }
     }
 
@@ -174,7 +175,8 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
         return {
             amountInSrcToken: this.swapFee,
             amountInDstToken: this.swapFeeBtc,
-            usdValue: (abortSignal?: AbortSignal) => this.wrapper.prices.getBtcUsdValue(this.swapFeeBtc, abortSignal)
+            usdValue: (abortSignal?: AbortSignal, preFetchedUsdPrice?: number) =>
+                this.wrapper.prices.getBtcUsdValue(this.swapFeeBtc, abortSignal, preFetchedUsdPrice)
         };
     }
 
@@ -186,7 +188,8 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
         return {
             amountInSrcToken: this.networkFee,
             amountInDstToken: this.networkFeeBtc,
-            usdValue: (abortSignal?: AbortSignal) => this.wrapper.prices.getBtcUsdValue(this.networkFeeBtc, abortSignal)
+            usdValue: (abortSignal?: AbortSignal, preFetchedUsdPrice?: number) =>
+                this.wrapper.prices.getBtcUsdValue(this.networkFeeBtc, abortSignal, preFetchedUsdPrice)
         };
     }
 
