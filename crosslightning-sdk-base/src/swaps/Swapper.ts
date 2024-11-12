@@ -1085,4 +1085,8 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
         return this.chains[chainIdentifier].swapContract.randomSigner();
     }
 
+    getChains(): ChainIds<T>[] {
+        return Object.keys(this.chains);
+    }
+
 }
