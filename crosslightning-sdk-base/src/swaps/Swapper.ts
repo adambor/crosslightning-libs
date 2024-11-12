@@ -869,7 +869,6 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
      *  or output amount (exactIn=false), NOTE: For regular -> BTC-LN (lightning) swaps the passed amount is ignored and
      *  invoice's pre-set amount is used instead.
      *
-     * @param chainId
      * @param signer
      * @param srcToken Source token of the swap, user pays this token
      * @param dstToken Destination token of the swap, user receives this token

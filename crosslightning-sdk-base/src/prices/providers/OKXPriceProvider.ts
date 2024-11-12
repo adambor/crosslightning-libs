@@ -2,6 +2,7 @@ import {CtorCoinTypes} from "../abstract/IPriceProvider";
 import {ExchangePriceProvider} from "./abstract/ExchangePriceProvider";
 import {httpGet} from "../../utils/Utils";
 import {MultiChain} from "../../swaps/Swapper";
+import {BinanceResponse} from "./BinancePriceProvider";
 
 export type OKXResponse = {
     code: string;
@@ -34,6 +35,16 @@ export class OKXPriceProvider<T extends MultiChain> extends ExchangePriceProvide
         );
 
         return parseFloat(response.data[0].idxPx);
+    }
+
+    protected async fetchUsdPrice(abortSignal?: AbortSignal): Promise<number> {
+        const response = await httpGet<OKXResponse>(
+            this.url+"/market/index-tickers?instId=BTC-USD",
+            this.httpRequestTimeout,
+            abortSignal
+        );
+
+        return parseFloat(response.data[0].idxPx)/100000000;
     }
 
 }

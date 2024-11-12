@@ -1,5 +1,6 @@
 import * as BN from "bn.js";
 import {ChainIds, MultiChain} from "../../swaps/Swapper";
+import {Token} from "../../swaps/ISwap";
 
 export type PriceInfoType = {
     isValid: boolean,
@@ -45,6 +46,14 @@ export abstract class ISwapPrice<T extends MultiChain = MultiChain> {
      * @protected
      */
     protected abstract getPrice<C extends ChainIds<T>>(chainIdentifier: C, token: string, abortSignal?: AbortSignal): Promise<BN>;
+
+    /**
+     * Returns the price of bitcoin in USD, (sats/USD)
+     *
+     * @param abortSignal
+     * @protected
+     */
+    protected abstract getUsdPrice(abortSignal?: AbortSignal): Promise<number>;
 
     /**
      * Checks whether the swap amounts are valid given the current market rate for a given pair
@@ -154,6 +163,10 @@ export abstract class ISwapPrice<T extends MultiChain = MultiChain> {
         return this.getPrice(chainIdentifier, token, abortSignal);
     }
 
+    public preFetchUsdPrice(abortSignal?: AbortSignal): Promise<number> {
+        return this.getUsdPrice(abortSignal);
+    }
+
     /**
      * Returns amount of {toToken} that are equivalent to {fromAmount} satoshis
      *
@@ -218,6 +231,41 @@ export abstract class ISwapPrice<T extends MultiChain = MultiChain> {
         const coin = this.getDecimals(chainIdentifier, tokenAddress.toString());
         if(coin==null) throw new Error("Token not found");
         return coin===-1;
+    }
+
+    public async getBtcUsdValue(
+        btcSats: BN,
+        abortSignal?: AbortSignal,
+        preFetchedPrice?: number
+    ): Promise<number> {
+        return btcSats.toNumber()*(preFetchedPrice || await this.getUsdPrice(abortSignal));
+    }
+
+    public async getTokenUsdValue<C extends ChainIds<T>>(
+        chainId: C,
+        tokenAmount: BN,
+        token: string,
+        abortSignal?: AbortSignal,
+        preFetchedPrice?: number
+    ): Promise<number> {
+        const [btcAmount, usdPrice] = await Promise.all([
+            this.getToBtcSwapAmount(chainId, tokenAmount, token, abortSignal),
+            preFetchedPrice==null ? this.preFetchUsdPrice(abortSignal) : Promise.resolve(preFetchedPrice)
+        ]);
+        return btcAmount.toNumber()*usdPrice;
+    }
+
+    public getUsdValue<C extends ChainIds<T>>(
+        amount: BN,
+        token: Token<C>,
+        abortSignal?: AbortSignal,
+        preFetchedUsdPrice?: number
+    ): Promise<number> {
+        if(token.chain==="BTC") {
+            return this.getBtcUsdValue(amount, abortSignal, preFetchedUsdPrice);
+        } else {
+            return this.getTokenUsdValue(token.chainId, amount, token.address, abortSignal, preFetchedUsdPrice);
+        }
     }
 
 }

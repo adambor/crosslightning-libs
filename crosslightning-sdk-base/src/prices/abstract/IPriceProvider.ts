@@ -50,6 +50,14 @@ export abstract class IPriceProvider<T extends MultiChain> {
     protected abstract fetchPrice(token: CoinType, abortSignal?: AbortSignal): Promise<BN>;
 
     /**
+     * Fetches the USD price of BTC
+     *
+     * @param abortSignal
+     * @protected
+     */
+    protected abstract fetchUsdPrice(abortSignal?: AbortSignal): Promise<number>;
+
+    /**
      * Returns coin price in uSat (microSat)
      *
      * @param chainIdentifier
@@ -71,6 +79,16 @@ export abstract class IPriceProvider<T extends MultiChain> {
         }
 
         return this.fetchPrice(coin, abortSignal);
+    }
+
+    /**
+     * Returns coin price in uSat (microSat)
+     *
+     * @param abortSignal
+     * @throws {Error} if token is not found
+     */
+    getUsdPrice(abortSignal?: AbortSignal): Promise<number> {
+        return this.fetchUsdPrice(abortSignal);
     }
 
     /**

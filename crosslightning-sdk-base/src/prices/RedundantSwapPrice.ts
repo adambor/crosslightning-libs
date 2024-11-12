@@ -178,4 +178,44 @@ export class RedundantSwapPrice<T extends MultiChain> extends ICachedSwapPrice<T
         return this.coinsDecimals[chainIdentifier][token.toString()];
     }
 
+
+    /**
+     * Fetches BTC price in USD in parallel from multiple maybe operational price APIs
+     *
+     * @param abortSignal
+     * @private
+     */
+    private async fetchUsdPriceFromMaybeOperationalPriceApis(abortSignal?: AbortSignal): Promise<number> {
+        try {
+            return await promiseAny<number>(this.getMaybeOperationalPriceApis().map(
+                obj => obj.priceApi.getUsdPrice(abortSignal).then(price => {
+                    logger.debug("fetchPrice(): Price from "+obj.priceApi.constructor.name+": ", price.toString(10));
+                    obj.operational = true;
+                    return price;
+                }).catch(e => {
+                    if(abortSignal!=null) abortSignal.throwIfAborted();
+                    obj.operational = false;
+                    throw e;
+                })
+            ))
+        } catch (e) {
+            if(abortSignal!=null) abortSignal.throwIfAborted();
+            throw e.find(err => !(err instanceof RequestError)) || e[0];
+        }
+    }
+
+    protected fetchUsdPrice(abortSignal?: AbortSignal): Promise<number> {
+        return tryWithRetries(() => {
+            const operationalPriceApi = this.getOperationalPriceApi();
+            if(operationalPriceApi!=null) {
+                return operationalPriceApi.priceApi.getUsdPrice(abortSignal).catch(err => {
+                    if(abortSignal!=null) abortSignal.throwIfAborted();
+                    operationalPriceApi.operational = false;
+                    return this.fetchUsdPriceFromMaybeOperationalPriceApis(abortSignal);
+                });
+            }
+            return this.fetchUsdPriceFromMaybeOperationalPriceApis(abortSignal);
+        }, null, RequestError, abortSignal);
+    }
+
 }

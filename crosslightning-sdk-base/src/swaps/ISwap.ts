@@ -38,6 +38,7 @@ export function isISwapInit<T extends SwapData>(obj: any): obj is ISwapInit<T> {
 export type Fee = {
     amountInSrcToken: BN;
     amountInDstToken: BN;
+    usdValue: () => Promise<number>;
 }
 
 export type BtcToken<L = boolean> = {
@@ -344,15 +345,27 @@ export abstract class ISwap<
      */
     abstract getOutAmount(): BN;
 
+    public getOutAmountUsd(): Promise<number> {
+        return this.wrapper.prices.getUsdValue(this.getOutAmount(), this.getOutToken());
+    }
+
     /**
      * Returns input amount of the swap, user needs to pay this much
      */
     abstract getInAmount(): BN;
 
+    public getInAmountUsd(): Promise<number> {
+        return this.wrapper.prices.getUsdValue(this.getInAmount(), this.getInToken());
+    }
+
     /**
      * Returns input amount if the swap without the fees (swap fee, network fee)
      */
     abstract getInAmountWithoutFee(): BN;
+
+    public getInAmountWithoutFeeUsd(): Promise<number> {
+        return this.wrapper.prices.getUsdValue(this.getInAmountWithoutFee(), this.getInToken());
+    }
 
     /**
      * Returns total fee for the swap, the fee is represented in source currency & destination currency, but is

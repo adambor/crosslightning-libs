@@ -1,6 +1,7 @@
 import {ISwapPrice, PriceInfoType} from "./abstract/ISwapPrice";
 import {ChainIds, MultiChain} from "../swaps/Swapper";
 import * as BN from "bn.js";
+import {Token} from "../swaps/ISwap";
 
 
 export class SwapPriceWithChain<T extends MultiChain, ChainIdentifier extends ChainIds<T>> {
@@ -69,6 +70,10 @@ export class SwapPriceWithChain<T extends MultiChain, ChainIdentifier extends Ch
         return this.swapPrice.preFetchPrice<ChainIdentifier>(this.chainIdentifier, token, abortSignal);
     }
 
+    public preFetchUsdPrice(abortSignal?: AbortSignal): Promise<number> {
+        return this.swapPrice.preFetchUsdPrice(abortSignal);
+    }
+
     /**
      * Returns amount of {toToken} that are equivalent to {fromAmount} satoshis
      *
@@ -117,6 +122,32 @@ export class SwapPriceWithChain<T extends MultiChain, ChainIdentifier extends Ch
      */
     public shouldIgnore(tokenAddress: string): boolean {
         return this.swapPrice.shouldIgnore<ChainIdentifier>(this.chainIdentifier, tokenAddress);
+    }
+
+    public async getBtcUsdValue(
+        btcSats: BN,
+        abortSignal?: AbortSignal,
+        preFetchedPrice?: number
+    ): Promise<number> {
+        return this.swapPrice.getBtcUsdValue(btcSats, abortSignal, preFetchedPrice);
+    }
+
+    public async getTokenUsdValue(
+        tokenAmount: BN,
+        token: string,
+        abortSignal?: AbortSignal,
+        preFetchedPrice?: number
+    ): Promise<number> {
+        return this.swapPrice.getTokenUsdValue(this.chainIdentifier, tokenAmount, token, abortSignal, preFetchedPrice);
+    }
+
+    public getUsdValue(
+        amount: BN,
+        token: Token<ChainIdentifier>,
+        abortSignal?: AbortSignal,
+        preFetchedUsdPrice?: number
+    ): Promise<number> {
+        return this.swapPrice.getUsdValue(amount, token, abortSignal, preFetchedUsdPrice);
     }
 
 }

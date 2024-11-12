@@ -14,7 +14,7 @@ export class BinancePriceProvider<T extends MultiChain> extends ExchangePricePro
         super(coinsMap, url, httpRequestTimeout);
     }
 
-    async fetchPair(pair: string, abortSignal?: AbortSignal) {
+    protected async fetchPair(pair: string, abortSignal?: AbortSignal) {
         const response = await httpGet<BinanceResponse>(
             this.url+"/ticker/price?symbol="+pair,
             this.httpRequestTimeout,
@@ -22,6 +22,16 @@ export class BinancePriceProvider<T extends MultiChain> extends ExchangePricePro
         );
 
         return parseFloat(response.price);
+    }
+
+    protected async fetchUsdPrice(abortSignal?: AbortSignal): Promise<number> {
+        const response = await httpGet<BinanceResponse>(
+            this.url+"/ticker/price?symbol=BTCUSDC",
+            this.httpRequestTimeout,
+            abortSignal
+        );
+
+        return parseFloat(response.price)/100000000;
     }
 
 }

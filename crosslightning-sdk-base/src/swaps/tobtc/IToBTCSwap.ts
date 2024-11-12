@@ -165,14 +165,16 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
     getFee(): Fee {
         return {
             amountInSrcToken: this.swapFee.add(this.networkFee),
-            amountInDstToken: this.swapFeeBtc.add(this.networkFeeBtc)
+            amountInDstToken: this.swapFeeBtc.add(this.networkFeeBtc),
+            usdValue: (abortSignal?: AbortSignal) => this.wrapper.prices.getBtcUsdValue(this.swapFeeBtc.add(this.networkFeeBtc), abortSignal)
         }
     }
 
     getSwapFee(): Fee {
         return {
             amountInSrcToken: this.swapFee,
-            amountInDstToken: this.swapFeeBtc
+            amountInDstToken: this.swapFeeBtc,
+            usdValue: (abortSignal?: AbortSignal) => this.wrapper.prices.getBtcUsdValue(this.swapFeeBtc, abortSignal)
         };
     }
 
@@ -183,7 +185,8 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
     getNetworkFee(): Fee {
         return {
             amountInSrcToken: this.networkFee,
-            amountInDstToken: this.networkFeeBtc
+            amountInDstToken: this.networkFeeBtc,
+            usdValue: (abortSignal?: AbortSignal) => this.wrapper.prices.getBtcUsdValue(this.networkFeeBtc, abortSignal)
         };
     }
 

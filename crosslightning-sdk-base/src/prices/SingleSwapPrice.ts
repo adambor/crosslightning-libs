@@ -40,4 +40,8 @@ export class SingleSwapPrice<T extends MultiChain> extends ICachedSwapPrice<T> {
         return this.priceProvider.getDecimals(chainIdentifier, token.toString());
     }
 
+    protected fetchUsdPrice(abortSignal?: AbortSignal): Promise<number> {
+        return this.priceProvider.getUsdPrice(abortSignal);
+    }
+
 }

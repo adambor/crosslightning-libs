@@ -148,6 +148,9 @@ export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T
         return this.data.getClaimerBounty();
     }
 
+    getClaimerBountyUsd(): Promise<number> {
+        return this.wrapper.prices.getTokenUsdValue(this.chainIdentifier, this.data.getClaimerBounty(), this.wrapper.contract.getNativeCurrencyAddress());
+    }
 
     //////////////////////////////
     //// Bitcoin tx

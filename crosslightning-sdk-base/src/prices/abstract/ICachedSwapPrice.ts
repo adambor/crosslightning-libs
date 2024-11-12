@@ -14,6 +14,10 @@ export abstract class ICachedSwapPrice<T extends MultiChain> extends ISwapPrice<
             }
         }
     } = {};
+    usdCache: {
+        price: Promise<number>,
+        expiry: number
+    };
     cacheTimeout: number;
 
     protected constructor(maxAllowedFeeDiffPPM: BN, cacheTimeout?: number) {
@@ -22,6 +26,7 @@ export abstract class ICachedSwapPrice<T extends MultiChain> extends ISwapPrice<
     }
 
     protected abstract fetchPrice<C extends ChainIds<T>>(chainIdentifier: C, token: string, abortSignal?: AbortSignal): Promise<BN>;
+    protected abstract fetchUsdPrice(abortSignal?: AbortSignal): Promise<number>;
 
     protected getPrice<C extends ChainIds<T>>(chainIdentifier: C, tokenAddress: string, abortSignal?: AbortSignal): Promise<BN> {
         const token = tokenAddress.toString();
@@ -48,6 +53,34 @@ export abstract class ICachedSwapPrice<T extends MultiChain> extends ISwapPrice<
                 this.cache[chainIdentifier][token]!=null &&
                 this.cache[chainIdentifier][token].price===thisFetch
             ) delete this.cache[token];
+            throw e;
+        });
+        return thisFetch;
+    }
+
+    /**
+     * Returns BTC price in USD (sats/USD)
+     *
+     * @param abortSignal
+     * @throws {Error} if token is not found
+     */
+    protected getUsdPrice(abortSignal?: AbortSignal): Promise<number> {
+        if(this.usdCache!=null && this.usdCache.expiry>Date.now()) {
+            //Cache still fresh
+            return this.usdCache.price.catch(e => this.fetchUsdPrice(abortSignal));
+        }
+
+        //Refresh cache
+        const thisFetch = this.fetchUsdPrice();
+        this.usdCache = {
+            price: thisFetch,
+            expiry: Date.now()+this.cacheTimeout
+        };
+        thisFetch.catch(e => {
+            if(
+                this.usdCache!=null &&
+                this.usdCache.price===thisFetch
+            ) delete this.usdCache;
             throw e;
         });
         return thisFetch;

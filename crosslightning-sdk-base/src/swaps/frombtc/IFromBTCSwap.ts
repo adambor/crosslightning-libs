@@ -139,7 +139,8 @@ export abstract class IFromBTCSwap<
     getSwapFee(): Fee {
         return {
             amountInSrcToken: this.swapFeeBtc,
-            amountInDstToken: this.swapFee
+            amountInDstToken: this.swapFee,
+            usdValue: (abortSignal?: AbortSignal) => this.wrapper.prices.getBtcUsdValue(this.swapFeeBtc, abortSignal)
         };
     }
 
@@ -151,8 +152,16 @@ export abstract class IFromBTCSwap<
         return this.data.getSecurityDeposit();
     }
 
-    getTotalDeposit():BN {
+    getSecurityDepositUsd(): Promise<number> {
+        return this.wrapper.prices.getTokenUsdValue(this.chainIdentifier, this.data.getSecurityDeposit(), this.wrapper.contract.getNativeCurrencyAddress());
+    }
+
+    getTotalDeposit(): BN {
         return this.data.getTotalDeposit();
+    }
+
+    getTotalDepositUsd(): Promise<number> {
+        return this.wrapper.prices.getTokenUsdValue(this.chainIdentifier, this.data.getTotalDeposit(), this.wrapper.contract.getNativeCurrencyAddress());
     }
 
     getInitiator(): string {

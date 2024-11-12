@@ -4,8 +4,8 @@ import {HttpPriceProvider} from "./abstract/HttpPriceProvider";
 import {httpGet} from "../../utils/Utils";
 import {MultiChain} from "../../swaps/Swapper";
 
-export type CoinGeckoResponse = {
-    [coinId: string]: {sats: number}
+export type CoinGeckoResponse<Currency extends string> = {
+    [coinId: string]: {[c in Currency]: number}
 };
 
 export class CoinGeckoPriceProvider<T extends MultiChain> extends HttpPriceProvider<T> {
@@ -15,13 +15,23 @@ export class CoinGeckoPriceProvider<T extends MultiChain> extends HttpPriceProvi
     }
 
     protected async fetchPrice(token: CoinType, abortSignal?: AbortSignal): Promise<BN> {
-        let response = await httpGet<CoinGeckoResponse>(
+        let response = await httpGet<CoinGeckoResponse<"sats">>(
             this.url+"/simple/price?ids="+token.coinId+"&vs_currencies=sats&precision=6",
             this.httpRequestTimeout,
             abortSignal
         );
 
         return new BN(response[token.coinId].sats*1000000);
+    }
+
+    protected async fetchUsdPrice(abortSignal?: AbortSignal): Promise<number> {
+        let response = await httpGet<CoinGeckoResponse<"usd">>(
+            this.url+"/simple/price?ids=bitcoin&vs_currencies=usd&precision=9",
+            this.httpRequestTimeout,
+            abortSignal
+        );
+
+        return response["bitcoin"].usd/100000000;
     }
 
 }
