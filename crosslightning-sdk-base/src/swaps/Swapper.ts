@@ -1076,7 +1076,13 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
     }
 
     withChain<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier): SwapperWithChain<T, ChainIdentifier> {
+        if(this.chains[chainIdentifier]==null) throw new Error("Invalid chain identifier! Unknown chain: "+chainIdentifier);
         return new SwapperWithChain<T, ChainIdentifier>(this, chainIdentifier);
+    }
+
+    randomSigner<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier): T[ChainIdentifier]["Signer"] {
+        if(this.chains[chainIdentifier]==null) throw new Error("Invalid chain identifier! Unknown chain: "+chainIdentifier);
+        return this.chains[chainIdentifier].swapContract.randomSigner();
     }
 
 }

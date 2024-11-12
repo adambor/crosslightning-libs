@@ -13,7 +13,6 @@ import {FromBTCSwap} from "./frombtc/onchain/FromBTCSwap";
 import {ToBTCLNSwap} from "./tobtc/ln/ToBTCLNSwap";
 import {ToBTCSwap} from "./tobtc/onchain/ToBTCSwap";
 import {SwapperWithSigner} from "./SwapperWithSigner";
-import {ISwapPrice} from "../prices/abstract/ISwapPrice";
 import {SwapPriceWithChain} from "../prices/SwapPriceWithChain";
 import {MempoolApi} from "../btc/mempool/MempoolApi";
 import {MempoolBitcoinRpc} from "../btc/mempool/MempoolBitcoinRpc";
@@ -269,6 +268,10 @@ export class SwapperWithChain<T extends MultiChain, ChainIdentifier extends Chai
 
     withSigner(signer: T[ChainIdentifier]["Signer"]) {
         return new SwapperWithSigner<T, ChainIdentifier>(this, signer);
+    }
+
+    randomSigner(): T[ChainIdentifier]["Signer"] {
+        return this.swapper.randomSigner(this.chainIdentifier);
     }
 
 }

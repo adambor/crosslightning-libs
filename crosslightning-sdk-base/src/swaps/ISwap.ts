@@ -2,7 +2,7 @@ import {SwapType} from "./SwapType";
 import {EventEmitter} from "events";
 import * as BN from "bn.js";
 import {Buffer} from "buffer";
-import {ISwapWrapper, ISwapWrapperOptions} from "./ISwapWrapper";
+import {ISwapWrapper} from "./ISwapWrapper";
 import {ChainType, SignatureData, SwapCommitStatus, SwapData} from "crosslightning-base";
 import {isPriceInfoType, PriceInfoType} from "../prices/abstract/ISwapPrice";
 import {getLogger, LoggerType, timeoutPromise} from "../utils/Utils";
