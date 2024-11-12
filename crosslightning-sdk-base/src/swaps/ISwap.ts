@@ -326,8 +326,8 @@ export abstract class ISwap<
      * @param signer Signer to check with this swap's initiator
      * @throws {Error} When signer's address doesn't match with the swap's initiator one
      */
-    checkSigner(signer: T["Signer"]): void {
-        if(signer.getAddress()!==this.getInitiator()) throw new Error("Invalid signer provided!");
+    checkSigner(signer: T["Signer"] | string): void {
+        if((typeof(signer)==="string" ? signer : signer.getAddress())!==this.getInitiator()) throw new Error("Invalid signer provided!");
     }
 
     //////////////////////////////
