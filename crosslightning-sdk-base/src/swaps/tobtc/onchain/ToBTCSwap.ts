@@ -5,7 +5,7 @@ import * as BN from "bn.js";
 import {ChainType, SwapData} from "crosslightning-base";
 import {Buffer} from "buffer";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
-import {BtcToken} from "../../ISwap";
+import {BtcToken, TokenAmount, Token, BitcoinTokens, toTokenAmount} from "../../Tokens";
 
 
 export type ToBTCSwapInit<T extends SwapData> = IToBTCSwapInit<T> & {
@@ -16,14 +16,15 @@ export type ToBTCSwapInit<T extends SwapData> = IToBTCSwapInit<T> & {
 };
 
 export function isToBTCSwapInit<T extends SwapData>(obj: any): obj is ToBTCSwapInit<T> {
-    return typeof(obj.address)==="string" &&
+    return typeof (obj.address) === "string" &&
         BN.isBN(obj.amount) &&
-        typeof(obj.confirmationTarget)==="number" &&
-        typeof(obj.satsPerVByte)==="number" &&
+        typeof (obj.confirmationTarget) === "number" &&
+        typeof (obj.satsPerVByte) === "number" &&
         isIToBTCSwapInit<T>(obj);
 }
 
 export class ToBTCSwap<T extends ChainType = ChainType> extends IToBTCSwap<T> {
+    protected readonly outputToken: BtcToken<false> = BitcoinTokens.BTC;
     protected readonly TYPE = SwapType.TO_BTC;
 
     protected readonly wrapper: ToBTCWrapper<T>;
@@ -76,15 +77,8 @@ export class ToBTCSwap<T extends ChainType = ChainType> extends IToBTCSwap<T> {
     //////////////////////////////
     //// Amounts & fees
 
-    getOutAmount(): BN {
-        return this.amount
-    }
-
-    getOutToken(): BtcToken<false> {
-        return {
-            chain: "BTC",
-            lightning: false
-        };
+    getOutput(): TokenAmount<T["ChainId"], BtcToken<false>> {
+        return toTokenAmount(this.amount, this.outputToken, this.wrapper.prices);
     }
 
 

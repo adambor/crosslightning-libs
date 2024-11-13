@@ -23,7 +23,7 @@ import {RequestError} from "../../../errors/RequestError";
 import {LightningNetworkApi, LNNodeLiquidity} from "../../../btc/LightningNetworkApi";
 import {ISwapPrice} from "../../../prices/abstract/ISwapPrice";
 import {EventEmitter} from "events";
-import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
+import {AmountData, ISwapWrapperOptions, WrapperCtorTokens} from "../../ISwapWrapper";
 import {LNURL, LNURLWithdrawParamsWithUrl} from "../../../utils/LNURL";
 
 export type FromBTCLNOptions = {
@@ -43,6 +43,7 @@ export class FromBTCLNWrapper<
      * @param contract Underlying contract handling the swaps
      * @param prices Swap pricing handler
      * @param chainEvents On-chain event listener
+     * @param tokens
      * @param swapDataDeserializer Deserializer for SwapData
      * @param lnApi
      * @param options
@@ -54,12 +55,13 @@ export class FromBTCLNWrapper<
         contract: T["Contract"],
         chainEvents: T["Events"],
         prices: ISwapPrice,
+        tokens: WrapperCtorTokens,
         swapDataDeserializer: new (data: any) => T["Data"],
         lnApi: LightningNetworkApi,
         options: ISwapWrapperOptions,
         events?: EventEmitter
     ) {
-        super(chainIdentifier, storage, contract, chainEvents, prices, swapDataDeserializer, options, events);
+        super(chainIdentifier, storage, contract, chainEvents, prices, tokens, swapDataDeserializer, options, events);
         this.lnApi = lnApi;
     }
 
@@ -416,7 +418,7 @@ export class FromBTCLNWrapper<
                         quote.lnurlK1 = withdrawRequest.k1;
                         quote.lnurlCallback = withdrawRequest.callback;
 
-                        const amountIn = quote.getInAmount();
+                        const amountIn = quote.getInput().rawAmount;
                         if(amountIn.lt(min)) throw new UserError("Amount less than LNURL-withdraw minimum");
                         if(amountIn.gt(max)) throw new UserError("Amount more than LNURL-withdraw maximum");
 

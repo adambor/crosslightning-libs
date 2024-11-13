@@ -1,8 +1,7 @@
 import {ISwapPrice, PriceInfoType} from "./abstract/ISwapPrice";
 import {ChainIds, MultiChain} from "../swaps/Swapper";
 import * as BN from "bn.js";
-import {Token} from "../swaps/ISwap";
-
+import {Token} from "../swaps/Tokens";
 
 export class SwapPriceWithChain<T extends MultiChain, ChainIdentifier extends ChainIds<T>> {
 

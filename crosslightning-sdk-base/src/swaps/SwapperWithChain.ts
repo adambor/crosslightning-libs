@@ -3,7 +3,7 @@ import * as BN from "bn.js";
 import {IntermediaryDiscovery, SwapBounds} from "../intermediaries/IntermediaryDiscovery";
 import {SwapType} from "./SwapType";
 import {LnForGasSwap} from "./swapforgas/ln/LnForGasSwap";
-import {BtcToken, ISwap, SCToken, Token} from "./ISwap";
+import {ISwap} from "./ISwap";
 import {IToBTCSwap} from "./tobtc/IToBTCSwap";
 import {IFromBTCSwap} from "./frombtc/IFromBTCSwap";
 import {ChainIds, MultiChain, Swapper, SwapperBtcUtils, SwapperOptions} from "./Swapper";
@@ -17,6 +17,7 @@ import {SwapPriceWithChain} from "../prices/SwapPriceWithChain";
 import {MempoolApi} from "../btc/mempool/MempoolApi";
 import {MempoolBitcoinRpc} from "../btc/mempool/MempoolBitcoinRpc";
 import {Network} from "bitcoinjs-lib";
+import {BtcToken, SCToken, Token} from "./Tokens";
 
 export class SwapperWithChain<T extends MultiChain, ChainIdentifier extends ChainIds<T>> implements SwapperBtcUtils {
 

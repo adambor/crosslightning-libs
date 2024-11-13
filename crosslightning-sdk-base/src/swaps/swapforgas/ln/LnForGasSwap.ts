@@ -6,12 +6,13 @@ import {LnForGasWrapper} from "./LnForGasWrapper";
 import {Buffer} from "buffer";
 import {PaymentAuthError} from "../../../errors/PaymentAuthError";
 import {getLogger, timeoutPromise} from "../../../utils/Utils";
-import {BtcToken, Fee, isISwapInit, ISwap, ISwapInit, SCToken, Token} from "../../ISwap";
+import {Fee, isISwapInit, ISwap, ISwapInit} from "../../ISwap";
 import {PriceInfoType} from "../../../prices/abstract/ISwapPrice";
 import {
     InvoiceStatusResponseCodes,
     TrustedIntermediaryAPI
 } from "../../../intermediaries/TrustedIntermediaryAPI";
+import {BitcoinTokens, BtcToken, SCToken, TokenAmount, toTokenAmount} from "../../Tokens";
 
 export enum LnForGasSwapState {
     EXPIRED = -2,
@@ -70,7 +71,7 @@ export class LnForGasSwap<T extends ChainType = ChainType> extends ISwap<T, LnFo
      */
     protected tryCalculateSwapFee() {
         if(this.swapFeeBtc==null) {
-            this.swapFeeBtc = this.swapFee.mul(this.getInAmount()).div(this.getOutAmountWithoutFee());
+            this.swapFeeBtc = this.swapFee.mul(this.getInput().rawAmount).div(this.getOutAmountWithoutFee());
         }
     }
 
@@ -82,7 +83,7 @@ export class LnForGasSwap<T extends ChainType = ChainType> extends ISwap<T, LnFo
         if(this.pricingInfo==null) return null;
         const priceData = await this.wrapper.prices.isValidAmountReceive(
             this.chainIdentifier,
-            this.getInAmount(),
+            this.getInput().rawAmount,
             this.pricingInfo.satsBaseFee,
             this.pricingInfo.feePPM,
             this.data.getAmount(),
@@ -138,21 +139,6 @@ export class LnForGasSwap<T extends ChainType = ChainType> extends ISwap<T, LnFo
         return (decoded.timeExpireDate*1000);
     }
 
-    getInToken(): BtcToken<true> {
-        return {
-            chain: "BTC",
-            lightning: true
-        }
-    }
-
-    getOutToken(): SCToken {
-        return {
-            chain: "SC",
-            chainId: this.chainIdentifier,
-            address: this.wrapper.contract.getNativeCurrencyAddress()
-        };
-    }
-
     isFinished(): boolean {
         return this.state===LnForGasSwapState.FINISHED || this.state===LnForGasSwapState.FAILED || this.state===LnForGasSwapState.EXPIRED;
     }
@@ -178,26 +164,29 @@ export class LnForGasSwap<T extends ChainType = ChainType> extends ISwap<T, LnFo
     //// Amounts & fees
 
     protected getOutAmountWithoutFee(): BN {
-        return this.getOutAmount().add(this.swapFee);
+        return this.outputAmount.add(this.swapFee);
     }
 
-    getOutAmount(): BN {
-        return this.outputAmount;
+    getOutput(): TokenAmount<T["ChainId"], SCToken<T["ChainId"]>> {
+        return toTokenAmount(this.outputAmount, this.wrapper.tokens[this.wrapper.contract.getNativeCurrencyAddress()], this.wrapper.prices);
     }
 
-    getInAmountWithoutFee(): BN {
-        return this.getInAmount().sub(this.swapFeeBtc);
-    }
-
-    getInAmount(): BN {
+    getInputWithoutFee(): TokenAmount<T["ChainId"], BtcToken<true>> {
         const parsed = bolt11Decode(this.pr);
-        return new BN(parsed.millisatoshis).add(new BN(999)).div(new BN(1000));
+        const amount = new BN(parsed.millisatoshis).add(new BN(999)).div(new BN(1000));
+        return toTokenAmount(amount.sub(this.swapFeeBtc), BitcoinTokens.BTCLN, this.wrapper.prices);
+    }
+
+    getInput(): TokenAmount<T["ChainId"], BtcToken<true>> {
+        const parsed = bolt11Decode(this.pr);
+        const amount = new BN(parsed.millisatoshis).add(new BN(999)).div(new BN(1000));
+        return toTokenAmount(amount, BitcoinTokens.BTCLN, this.wrapper.prices);
     }
 
     getSwapFee(): Fee {
         return {
-            amountInSrcToken: this.swapFeeBtc,
-            amountInDstToken: this.swapFee,
+            amountInSrcToken: toTokenAmount(this.swapFeeBtc, BitcoinTokens.BTCLN, this.wrapper.prices),
+            amountInDstToken: toTokenAmount(this.swapFee, this.wrapper.tokens[this.wrapper.contract.getNativeCurrencyAddress()], this.wrapper.prices),
             usdValue: (abortSignal?: AbortSignal, preFetchedUsdPrice?: number) =>
                 this.wrapper.prices.getBtcUsdValue(this.swapFeeBtc, abortSignal, preFetchedUsdPrice)
         };
@@ -205,7 +194,7 @@ export class LnForGasSwap<T extends ChainType = ChainType> extends ISwap<T, LnFo
 
     getRealSwapFeePercentagePPM(): BN {
         const feeWithoutBaseFee = this.swapFeeBtc.sub(this.pricingInfo.satsBaseFee);
-        return feeWithoutBaseFee.mul(new BN(1000000)).div(this.getInAmountWithoutFee());
+        return feeWithoutBaseFee.mul(new BN(1000000)).div(this.getInputWithoutFee().rawAmount);
     }
 
 

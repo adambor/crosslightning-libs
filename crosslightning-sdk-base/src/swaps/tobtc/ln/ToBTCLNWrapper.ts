@@ -9,7 +9,7 @@ import {
     SwapCommitStatus
 } from "crosslightning-base";
 import {Intermediary, SingleChainReputationType} from "../../../intermediaries/Intermediary";
-import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
+import {AmountData, ISwapWrapperOptions, WrapperCtorTokens} from "../../ISwapWrapper";
 import {ISwapPrice} from "../../../prices/abstract/ISwapPrice";
 import {EventEmitter} from "events";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
@@ -19,7 +19,6 @@ import {IntermediaryAPI, ToBTCLNResponseType} from "../../../intermediaries/Inte
 import {RequestError} from "../../../errors/RequestError";
 import {LNURL, LNURLPayParamsWithUrl} from "../../../utils/LNURL";
 import {IToBTCSwapInit} from "../IToBTCSwap";
-import {MultiChain} from "../../Swapper";
 
 export type AbortControllerTyped<T> = AbortController & {
     abort: (reason: T) => void,
@@ -52,6 +51,7 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
         contract: T["Contract"],
         chainEvents: T["Events"],
         prices: ISwapPrice,
+        tokens: WrapperCtorTokens,
         swapDataDeserializer: new (data: any) => T["Data"],
         options?: ToBTCLNWrapperOptions,
         events?: EventEmitter
@@ -60,7 +60,7 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
         options.paymentTimeoutSeconds ??= 3*24*60*60;
         options.lightningBaseFee ??= 10;
         options.lightningFeePPM ??= 2000;
-        super(chainIdentifier, storage, contract, chainEvents, prices, swapDataDeserializer, options, events);
+        super(chainIdentifier, storage, contract, chainEvents, prices, tokens, swapDataDeserializer, options, events);
     }
 
     /**

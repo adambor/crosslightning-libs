@@ -14,6 +14,8 @@ import {ISwapPrice, PriceInfoType} from "../prices/abstract/ISwapPrice";
 import * as BN from "bn.js";
 import {IntermediaryError} from "../errors/IntermediaryError";
 import {getLogger, mapToArray, tryWithRetries} from "../utils/Utils";
+import {SCToken} from "./Tokens";
+import {ChainIds, MultiChain} from "./Swapper";
 
 export type AmountData = {
     amount: BN,
@@ -25,6 +27,15 @@ export type ISwapWrapperOptions = {
     getRequestTimeout?: number,
     postRequestTimeout?: number
 };
+
+export type WrapperCtorTokens<T extends MultiChain = MultiChain> = {
+    ticker: string,
+    name: string,
+    chains: {[chainId in ChainIds<T>]?: {
+        address: string,
+        decimals: number
+    }}
+}[];
 
 export abstract class ISwapWrapper<
     T extends ChainType,
@@ -43,6 +54,9 @@ export abstract class ISwapWrapper<
     readonly swapDataDeserializer: new (data: any) => T["Data"];
     readonly events: EventEmitter;
     readonly options: O;
+    readonly tokens: {
+        [tokenAddress: string]: SCToken<T["ChainId"]>
+    };
 
     swapData: Map<string, S>;
     isInitialized: boolean = false;
@@ -53,6 +67,7 @@ export abstract class ISwapWrapper<
      * @param contract Underlying contract handling the swaps
      * @param prices Swap pricing handler
      * @param chainEvents On-chain event listener
+     * @param tokens Chain specific token data
      * @param swapDataDeserializer Deserializer for SwapData
      * @param options
      * @param events Instance to use for emitting events
@@ -63,6 +78,7 @@ export abstract class ISwapWrapper<
         contract: T["Contract"],
         chainEvents: T["Events"],
         prices: ISwapPrice,
+        tokens: WrapperCtorTokens,
         swapDataDeserializer: new (data: any) => T["Data"],
         options: O,
         events?: EventEmitter
@@ -75,6 +91,19 @@ export abstract class ISwapWrapper<
         this.swapDataDeserializer = swapDataDeserializer;
         this.events = events || new EventEmitter();
         this.options = options;
+        this.tokens = {};
+        for(let tokenData of tokens) {
+            const chainData = tokenData.chains[chainIdentifier];
+            if(chainData==null) continue;
+            this.tokens[chainData.address] = {
+                chain: "SC",
+                chainId: this.chainIdentifier,
+                address: chainData.address,
+                decimals: chainData.decimals,
+                ticker: tokenData.ticker,
+                name: tokenData.name
+            };
+        }
     }
 
     /**

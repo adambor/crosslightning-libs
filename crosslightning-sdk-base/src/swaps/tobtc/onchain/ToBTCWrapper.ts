@@ -8,7 +8,7 @@ import {Intermediary, SingleChainReputationType} from "../../../intermediaries/I
 import {ISwapPrice} from "../../../prices/abstract/ISwapPrice";
 import {EventEmitter} from "events";
 import {BitcoinRpc} from "crosslightning-base/dist";
-import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
+import {AmountData, ISwapWrapperOptions, WrapperCtorTokens} from "../../ISwapWrapper";
 import {Network, networks, address} from "bitcoinjs-lib";
 import * as BN from "bn.js";
 import {Buffer} from "buffer";
@@ -19,7 +19,6 @@ import {SwapType} from "../../SwapType";
 import {extendAbortController, tryWithRetries} from "../../../utils/Utils";
 import {IntermediaryAPI, ToBTCResponseType} from "../../../intermediaries/IntermediaryAPI";
 import {RequestError} from "../../../errors/RequestError";
-import {MultiChain} from "../../Swapper";
 
 export type ToBTCOptions = {
     confirmationTarget?: number,
@@ -48,6 +47,7 @@ export class ToBTCWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCSwa
      * @param contract Chain specific swap contract
      * @param prices Swap pricing handler
      * @param chainEvents Smart chain on-chain event listener
+     * @param tokens
      * @param swapDataDeserializer Deserializer for chain specific SwapData
      * @param btcRpc Bitcoin RPC api
      * @param options
@@ -59,6 +59,7 @@ export class ToBTCWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCSwa
         contract: T["Contract"],
         chainEvents: T["Events"],
         prices: ISwapPrice,
+        tokens: WrapperCtorTokens,
         swapDataDeserializer: new (data: any) => T["Data"],
         btcRpc: BitcoinRpc<any>,
         options?: ToBTCWrapperOptions,
@@ -71,7 +72,7 @@ export class ToBTCWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCSwa
         options.bitcoinBlocktime = options.bitcoinBlocktime|| (60*10);
         options.maxExpectedOnchainSendSafetyFactor = options.maxExpectedOnchainSendSafetyFactor || 4;
         options.maxExpectedOnchainSendGracePeriodBlocks = options.maxExpectedOnchainSendGracePeriodBlocks || 12;
-        super(chainIdentifier, storage, contract, chainEvents, prices, swapDataDeserializer, options, events);
+        super(chainIdentifier, storage, contract, chainEvents, prices, tokens, swapDataDeserializer, options, events);
         this.btcRpc = btcRpc;
     }
 

@@ -15,7 +15,7 @@ import {Intermediary} from "../../../intermediaries/Intermediary";
 import {BitcoinRpcWithTxoListener} from "../../../btc/BitcoinRpcWithTxoListener";
 import {ISwapPrice} from "../../../prices/abstract/ISwapPrice";
 import {networks, address} from "bitcoinjs-lib";
-import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
+import {AmountData, ISwapWrapperOptions, WrapperCtorTokens} from "../../ISwapWrapper";
 import {Buffer} from "buffer";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {SwapType} from "../../SwapType";
@@ -53,6 +53,7 @@ export class FromBTCWrapper<
      * @param contract Underlying contract handling the swaps
      * @param chainEvents On-chain event listener
      * @param prices Pricing to use
+     * @param tokens
      * @param swapDataDeserializer Deserializer for SwapData
      * @param btcRelay
      * @param synchronizer Btc relay synchronizer
@@ -66,6 +67,7 @@ export class FromBTCWrapper<
         contract: T["Contract"],
         chainEvents: T["Events"],
         prices: ISwapPrice,
+        tokens: WrapperCtorTokens,
         swapDataDeserializer: new (data: any) => T["Data"],
         btcRelay: BtcRelay<any, T["TX"], any>,
         synchronizer: RelaySynchronizer<any, T["TX"], any>,
@@ -80,7 +82,7 @@ export class FromBTCWrapper<
         options.maxConfirmations = options.maxConfirmations || 6;
         options.minSendWindow = options.minSendWindow || 30*60; //Minimum time window for user to send in the on-chain funds for From BTC swap
         options.bitcoinBlocktime = options.bitcoinBlocktime || 10*60;
-        super(chainIdentifier, storage, contract, chainEvents, prices, swapDataDeserializer, options, events);
+        super(chainIdentifier, storage, contract, chainEvents, prices, tokens, swapDataDeserializer, options, events);
         this.btcRelay = btcRelay;
         this.synchronizer = synchronizer;
         this.btcRpc = btcRpc;

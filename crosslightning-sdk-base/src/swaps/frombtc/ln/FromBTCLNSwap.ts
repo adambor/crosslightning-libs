@@ -4,13 +4,13 @@ import {IFromBTCSwap} from "../IFromBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
 import {
-    AbstractSigner, ChainType,
+    ChainType,
     SignatureData,
     SignatureVerificationError,
     SwapCommitStatus,
     SwapData
 } from "crosslightning-base";
-import {BtcToken, isISwapInit, ISwapInit} from "../../ISwap";
+import {isISwapInit, ISwapInit} from "../../ISwap";
 import {Buffer} from "buffer";
 import {LNURL, LNURLWithdraw, LNURLWithdrawParamsWithUrl} from "../../../utils/LNURL";
 import {UserError} from "../../../errors/UserError";
@@ -22,6 +22,7 @@ import {
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {PaymentAuthError} from "../../../errors/PaymentAuthError";
 import {getLogger, timeoutPromise, tryWithRetries} from "../../../utils/Utils";
+import {BitcoinTokens, BtcToken, TokenAmount, toTokenAmount} from "../../Tokens";
 
 export enum FromBTCLNSwapState {
     QUOTE_EXPIRED = -2,
@@ -50,6 +51,7 @@ export function isFromBTCLNSwapInit<T extends SwapData>(obj: any): obj is FromBT
 }
 
 export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T, FromBTCLNSwapState> {
+    protected readonly inputToken: BtcToken<true> = BitcoinTokens.BTCLN;
     protected readonly TYPE = SwapType.FROM_BTCLN;
 
     protected readonly PRE_COMMIT_STATE = FromBTCLNSwapState.PR_PAID;
@@ -92,13 +94,6 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
 
     //////////////////////////////
     //// Getters & utils
-
-    getInToken(): BtcToken<true> {
-        return {
-            chain: "BTC",
-            lightning: true
-        };
-    }
 
     getPaymentHash(): Buffer {
         if(this.pr==null) return null;
@@ -165,9 +160,10 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
     //////////////////////////////
     //// Amounts & fees
 
-    getInAmount(): BN {
+    getInput(): TokenAmount<T["ChainId"], BtcToken<true>> {
         const parsed = bolt11Decode(this.pr);
-        return new BN(parsed.millisatoshis).add(new BN(999)).div(new BN(1000));
+        const amount = new BN(parsed.millisatoshis).add(new BN(999)).div(new BN(1000));
+        return toTokenAmount(amount, this.inputToken, this.wrapper.prices);
     }
 
     /**

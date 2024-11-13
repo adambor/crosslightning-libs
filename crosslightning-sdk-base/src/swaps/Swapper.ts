@@ -14,7 +14,7 @@ import {decode as bolt11Decode} from "bolt11";
 import * as BN from "bn.js";
 import {IFromBTCSwap} from "./frombtc/IFromBTCSwap";
 import {IToBTCSwap} from "./tobtc/IToBTCSwap";
-import {BtcToken, ISwap, SCToken, Token} from "./ISwap";
+import {ISwap} from "./ISwap";
 import {IntermediaryError} from "../errors/IntermediaryError";
 import {SwapType} from "./SwapType";
 import {FromBTCLNSwap} from "./frombtc/ln/FromBTCLNSwap";
@@ -34,10 +34,11 @@ import {MempoolBitcoinBlock} from "../btc/mempool/MempoolBitcoinBlock";
 import {LocalStorageManager} from "../storage/LocalStorageManager";
 import {Intermediary} from "../intermediaries/Intermediary";
 import {LNURL, LNURLPay, LNURLWithdraw} from "../utils/LNURL";
-import {AmountData} from "./ISwapWrapper";
+import {AmountData, WrapperCtorTokens} from "./ISwapWrapper";
 import {getLogger, objectMap} from "../utils/Utils";
 import {OutOfBoundsError} from "../errors/RequestError";
 import {SwapperWithChain} from "./SwapperWithChain";
+import {BtcToken, SCToken, Token} from "./Tokens";
 
 export type SwapperOptions = {
     intermediaryUrl?: string | string[],
@@ -149,6 +150,7 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
         bitcoinRpc: MempoolBitcoinRpc,
         chainsData: CtorMultiChainData<T>,
         pricing: ISwapPrice<T>,
+        tokens: WrapperCtorTokens<T>,
         options?: SwapperOptions
     ) {
         super();
@@ -176,6 +178,7 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
                 swapContract,
                 chainEvents,
                 pricing,
+                tokens,
                 chainData.swapDataConstructor,
                 options
             );
@@ -185,6 +188,7 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
                 swapContract,
                 chainEvents,
                 pricing,
+                tokens,
                 chainData.swapDataConstructor,
                 this.bitcoinRpc,
                 {
@@ -199,6 +203,7 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
                 swapContract,
                 chainEvents,
                 pricing,
+                tokens,
                 chainData.swapDataConstructor,
                 bitcoinRpc,
                 options
@@ -209,6 +214,7 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
                 swapContract,
                 chainEvents,
                 pricing,
+                tokens,
                 chainData.swapDataConstructor,
                 btcRelay,
                 synchronizer,
@@ -225,6 +231,7 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
                 swapContract,
                 chainEvents,
                 pricing,
+                tokens,
                 chainData.swapDataConstructor,
                 {
                     getRequestTimeout: options.getRequestTimeout,
@@ -573,10 +580,10 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
         quotes.sort((a, b) => {
             if(amountData.exactIn) {
                 //Compare outputs
-                return b.quote.getOutAmount().cmp(a.quote.getOutAmount());
+                return b.quote.getOutput().rawAmount.cmp(a.quote.getOutput().rawAmount);
             } else {
                 //Compare inputs
-                return a.quote.getInAmount().cmp(b.quote.getInAmount());
+                return a.quote.getInput().rawAmount.cmp(b.quote.getInput().rawAmount);
             }
         });
 

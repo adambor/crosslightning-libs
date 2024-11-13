@@ -5,8 +5,9 @@ import * as createHash from "create-hash";
 import {FromBTCWrapper} from "./FromBTCWrapper";
 import * as BN from "bn.js";
 import {ChainType, SwapCommitStatus, SwapData} from "crosslightning-base";
-import {BtcToken, isISwapInit, ISwapInit} from "../../ISwap";
+import {isISwapInit, ISwapInit} from "../../ISwap";
 import {Buffer} from "buffer";
+import {BitcoinTokens, BtcToken, SCToken, TokenAmount, toTokenAmount} from "../../Tokens";
 
 export enum FromBTCSwapState {
     FAILED = -2,
@@ -29,6 +30,7 @@ export function isFromBTCSwapInit<T extends SwapData>(obj: any): obj is FromBTCS
 }
 
 export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T, FromBTCSwapState> {
+    protected readonly inputToken: BtcToken<false> = BitcoinTokens.BTC;
     protected readonly TYPE = SwapType.FROM_BTC;
 
     protected readonly PRE_COMMIT_STATE = FromBTCSwapState.PR_CREATED;
@@ -63,13 +65,6 @@ export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T
 
     //////////////////////////////
     //// Getters & utils
-
-    getInToken(): BtcToken<false> {
-        return {
-            chain: "BTC",
-            lightning: false
-        };
-    }
 
     getTxoHash(): Buffer {
         const parsedOutputScript = address.toOutputScript(this.address, this.wrapper.options.bitcoinNetwork);
@@ -137,19 +132,15 @@ export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T
     //////////////////////////////
     //// Amounts & fees
 
-    getInAmount(): BN {
-        return new BN(this.amount);
+    getInput(): TokenAmount<T["ChainId"], BtcToken<false>> {
+        return toTokenAmount(new BN(this.amount), this.inputToken, this.wrapper.prices);
     }
 
     /**
      * Returns claimer bounty, acting as a reward for watchtowers to claim the swap automatically
      */
-    getClaimerBounty(): BN {
-        return this.data.getClaimerBounty();
-    }
-
-    getClaimerBountyUsd(): Promise<number> {
-        return this.wrapper.prices.getTokenUsdValue(this.chainIdentifier, this.data.getClaimerBounty(), this.wrapper.contract.getNativeCurrencyAddress());
+    getClaimerBounty(): TokenAmount<T["ChainId"], SCToken<T["ChainId"]>> {
+        return toTokenAmount(this.data.getClaimerBounty(), this.wrapper.tokens[this.wrapper.contract.getNativeCurrencyAddress()], this.wrapper.prices);
     }
 
     //////////////////////////////

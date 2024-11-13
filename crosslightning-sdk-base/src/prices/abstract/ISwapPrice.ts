@@ -1,6 +1,6 @@
 import * as BN from "bn.js";
 import {ChainIds, MultiChain} from "../../swaps/Swapper";
-import {Token} from "../../swaps/ISwap";
+import {Token} from "../../swaps/Tokens";
 
 export type PriceInfoType = {
     isValid: boolean,

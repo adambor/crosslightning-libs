@@ -1,6 +1,6 @@
 
 import {IFromBTCWrapper} from "./IFromBTCWrapper";
-import {BtcToken, Fee, ISwap, ISwapInit, SCToken} from "../ISwap";
+import {Fee, ISwap, ISwapInit} from "../ISwap";
 import * as BN from "bn.js";
 import {
     ChainType,
@@ -9,13 +9,14 @@ import {
 } from "crosslightning-base";
 import {PriceInfoType} from "../../prices/abstract/ISwapPrice";
 import {extendAbortController, tryWithRetries} from "../../utils/Utils";
+import {BtcToken, SCToken, TokenAmount, toTokenAmount} from "../Tokens";
 
 
 export abstract class IFromBTCSwap<
     T extends ChainType = ChainType,
     S extends number = number
 > extends ISwap<T, S> {
-
+    protected abstract readonly inputToken: BtcToken;
     protected abstract readonly PRE_COMMIT_STATE: S;
     protected abstract readonly COMMIT_STATE: S;
     protected abstract readonly CLAIM_STATE: S;
@@ -36,7 +37,7 @@ export abstract class IFromBTCSwap<
      */
     protected tryCalculateSwapFee() {
         if(this.swapFeeBtc==null) {
-            this.swapFeeBtc = this.swapFee.mul(this.getInAmount()).div(this.getOutAmountWithoutFee());
+            this.swapFeeBtc = this.swapFee.mul(this.getInput().rawAmount).div(this.getOutAmountWithoutFee());
         }
     }
 
@@ -53,7 +54,7 @@ export abstract class IFromBTCSwap<
         if(this.pricingInfo==null) return null;
         const priceData = await this.wrapper.prices.isValidAmountReceive(
             this.chainIdentifier,
-            this.getInAmount(),
+            this.getInput().rawAmount,
             this.pricingInfo.satsBaseFee,
             this.pricingInfo.feePPM,
             this.data.getAmount(),
@@ -73,22 +74,12 @@ export abstract class IFromBTCSwap<
 
     getRealSwapFeePercentagePPM(): BN {
         const feeWithoutBaseFee = this.swapFeeBtc.sub(this.pricingInfo.satsBaseFee);
-        return feeWithoutBaseFee.mul(new BN(1000000)).div(this.getInAmountWithoutFee());
+        return feeWithoutBaseFee.mul(new BN(1000000)).div(this.getInputWithoutFee().rawAmount);
     }
 
 
     //////////////////////////////
     //// Getters & utils
-
-    abstract getInToken(): BtcToken;
-
-    getOutToken(): SCToken {
-        return {
-            chain: "SC",
-            chainId: this.chainIdentifier,
-            address: this.data.getToken()
-        };
-    }
 
     async isQuoteValid(): Promise<boolean> {
         try {
@@ -125,48 +116,40 @@ export abstract class IFromBTCSwap<
     //// Amounts & fees
 
     protected getOutAmountWithoutFee(): BN {
-        return this.getOutAmount().add(this.swapFee);
+        return this.data.getAmount().add(this.swapFee);
     }
 
-    getOutAmount(): BN {
-        return this.data.getAmount();
+    getOutput(): TokenAmount<T["ChainId"], SCToken<T["ChainId"]>> {
+        return toTokenAmount(this.data.getAmount(), this.wrapper.tokens[this.data.getToken()], this.wrapper.prices);
     }
 
-    getInAmountWithoutFee(): BN {
-        return this.getInAmount().sub(this.swapFeeBtc);
+    getInputWithoutFee(): TokenAmount<T["ChainId"], BtcToken> {
+        return toTokenAmount(this.getInput().rawAmount.sub(this.swapFeeBtc), this.inputToken, this.wrapper.prices);
     }
 
     getSwapFee(): Fee {
         return {
-            amountInSrcToken: this.swapFeeBtc,
-            amountInDstToken: this.swapFee,
+            amountInSrcToken: toTokenAmount(this.swapFeeBtc, this.inputToken, this.wrapper.prices),
+            amountInDstToken: toTokenAmount(this.swapFee, this.wrapper.tokens[this.data.getToken()], this.wrapper.prices),
             usdValue: (abortSignal?: AbortSignal, preFetchedUsdPrice?: number) =>
                 this.wrapper.prices.getBtcUsdValue(this.swapFeeBtc, abortSignal, preFetchedUsdPrice)
         };
     }
 
-    getClaimFee(): Promise<BN> {
-        return this.wrapper.contract.getClaimFee(this.getInitiator(), this.data);
+    getSecurityDeposit(): TokenAmount<T["ChainId"], SCToken<T["ChainId"]>> {
+        return toTokenAmount(this.data.getSecurityDeposit(), this.wrapper.tokens[this.wrapper.contract.getNativeCurrencyAddress()], this.wrapper.prices);
     }
 
-    getSecurityDeposit(): BN {
-        return this.data.getSecurityDeposit();
-    }
-
-    getSecurityDepositUsd(): Promise<number> {
-        return this.wrapper.prices.getTokenUsdValue(this.chainIdentifier, this.data.getSecurityDeposit(), this.wrapper.contract.getNativeCurrencyAddress());
-    }
-
-    getTotalDeposit(): BN {
-        return this.data.getTotalDeposit();
-    }
-
-    getTotalDepositUsd(): Promise<number> {
-        return this.wrapper.prices.getTokenUsdValue(this.chainIdentifier, this.data.getTotalDeposit(), this.wrapper.contract.getNativeCurrencyAddress());
+    getTotalDeposit(): TokenAmount<T["ChainId"], SCToken<T["ChainId"]>> {
+        return toTokenAmount(this.data.getTotalDeposit(), this.wrapper.tokens[this.wrapper.contract.getNativeCurrencyAddress()], this.wrapper.prices);
     }
 
     getInitiator(): string {
         return this.data.getClaimer();
+    }
+
+    getClaimFee(): Promise<BN> {
+        return this.wrapper.contract.getClaimFee(this.getInitiator(), this.data);
     }
 
 

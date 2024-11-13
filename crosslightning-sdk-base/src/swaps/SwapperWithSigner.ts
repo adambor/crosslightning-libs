@@ -3,7 +3,7 @@ import * as BN from "bn.js";
 import {IntermediaryDiscovery, SwapBounds} from "../intermediaries/IntermediaryDiscovery";
 import {SwapType} from "./SwapType";
 import {LnForGasSwap} from "./swapforgas/ln/LnForGasSwap";
-import {BtcToken, ISwap, SCToken, Token} from "./ISwap";
+import {ISwap} from "./ISwap";
 import {IToBTCSwap} from "./tobtc/IToBTCSwap";
 import {IFromBTCSwap} from "./frombtc/IFromBTCSwap";
 import {ChainIds, MultiChain, SwapperBtcUtils} from "./Swapper";
@@ -18,6 +18,7 @@ import {MempoolBitcoinRpc} from "../btc/mempool/MempoolBitcoinRpc";
 import {Network} from "bitcoinjs-lib";
 import {SwapPriceWithChain} from "../prices/SwapPriceWithChain";
 import {SwapWithSigner, wrapSwapWithSigner} from "./SwapWithSigner";
+import {BtcToken, SCToken, Token} from "./Tokens";
 
 export class SwapperWithSigner<T extends MultiChain, ChainIdentifier extends ChainIds<T>> implements SwapperBtcUtils {
 
@@ -220,7 +221,7 @@ export class SwapperWithSigner<T extends MultiChain, ChainIdentifier extends Cha
      * @param addressLnurlLightningInvoice Bitcoin on-chain address, lightning invoice, LNURL-pay to pay or
      *  LNURL-withdrawal to withdraw money from
      */
-    create(srcToken: Token, dstToken: Token, amount: BN, exactIn: boolean, addressLnurlLightningInvoice?: string): Promise<SwapWithSigner<ISwap<T[ChainIdentifier]>>> {
+    create(srcToken: Token<ChainIdentifier>, dstToken: Token<ChainIdentifier>, amount: BN, exactIn: boolean, addressLnurlLightningInvoice?: string): Promise<SwapWithSigner<ISwap<T[ChainIdentifier]>>> {
         return this.swapper.create(this.signer.getAddress(), srcToken as any, dstToken as any, amount, exactIn, addressLnurlLightningInvoice)
             .then(swap => wrapSwapWithSigner(swap, this.signer));
     }

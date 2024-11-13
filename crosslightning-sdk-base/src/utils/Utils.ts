@@ -1,5 +1,4 @@
 import {RequestError} from "../errors/RequestError";
-import {Input} from "bitcoinjs-lib/src/transaction";
 
 type Constructor<T = any> = new (...args: any[]) => T;
 

@@ -6,6 +6,7 @@ import {ISwapWrapper} from "./ISwapWrapper";
 import {ChainType, SignatureData, SwapCommitStatus, SwapData} from "crosslightning-base";
 import {isPriceInfoType, PriceInfoType} from "../prices/abstract/ISwapPrice";
 import {getLogger, LoggerType, timeoutPromise} from "../utils/Utils";
+import {Token, TokenAmount} from "./Tokens";
 
 export type ISwapInit<T extends SwapData> = {
     pricingInfo: PriceInfoType,
@@ -35,40 +36,14 @@ export function isISwapInit<T extends SwapData>(obj: any): obj is ISwapInit<T> {
         (obj.data == null || typeof obj.data === 'object');
 }
 
-export type Fee = {
-    amountInSrcToken: BN;
-    amountInDstToken: BN;
+export type Fee<
+    ChainIdentifier extends string = string,
+    TSrc extends Token<ChainIdentifier> = Token<ChainIdentifier>,
+    TDst extends Token<ChainIdentifier> = Token<ChainIdentifier>
+> = {
+    amountInSrcToken: TokenAmount<ChainIdentifier, TSrc>;
+    amountInDstToken: TokenAmount<ChainIdentifier, TDst>;
     usdValue: (abortSignal?: AbortSignal, preFetchedUsdPrice?: number) => Promise<number>;
-}
-
-export type BtcToken<L = boolean> = {
-    chain: "BTC",
-    lightning: L
-};
-
-export function isBtcToken(obj: any): obj is BtcToken {
-    return typeof(obj)==="object" &&
-        obj.chain==="BTC" &&
-        typeof(obj.lightning)==="boolean";
-}
-
-export type SCToken<ChainIdentifier extends string = string> = {
-    chain: "SC",
-    chainId: ChainIdentifier,
-    address: string
-}
-
-export function isSCToken(obj: any): obj is SCToken {
-    return typeof(obj)==="object" &&
-        obj.chain==="SC" &&
-        typeof(obj.chainId)==="string" &&
-        typeof(obj.address)==="string";
-}
-
-export type Token<ChainIdentifier extends string = string> = BtcToken | SCToken<ChainIdentifier>;
-
-export function isToken(obj: any): obj is Token {
-    return isBtcToken(obj) || isSCToken(obj);
 }
 
 export abstract class ISwap<
@@ -286,16 +261,6 @@ export abstract class ISwap<
     }
 
     /**
-     * Returns the input token for the swap
-     */
-    abstract getInToken(): Token;
-
-    /**
-     * Returns the output token for the swap
-     */
-    abstract getOutToken(): Token;
-
-    /**
      * Returns the type of the swap
      */
     getType(): SwapType {
@@ -360,29 +325,17 @@ export abstract class ISwap<
     /**
      * Returns output amount of the swap, user receives this much
      */
-    abstract getOutAmount(): BN;
-
-    public getOutAmountUsd(): Promise<number> {
-        return this.wrapper.prices.getUsdValue(this.getOutAmount(), this.getOutToken());
-    }
+    abstract getOutput(): TokenAmount;
 
     /**
      * Returns input amount of the swap, user needs to pay this much
      */
-    abstract getInAmount(): BN;
-
-    public getInAmountUsd(): Promise<number> {
-        return this.wrapper.prices.getUsdValue(this.getInAmount(), this.getInToken());
-    }
+    abstract getInput(): TokenAmount;
 
     /**
      * Returns input amount if the swap without the fees (swap fee, network fee)
      */
-    abstract getInAmountWithoutFee(): BN;
-
-    public getInAmountWithoutFeeUsd(): Promise<number> {
-        return this.wrapper.prices.getUsdValue(this.getInAmountWithoutFee(), this.getInToken());
-    }
+    abstract getInputWithoutFee(): TokenAmount;
 
     /**
      * Returns total fee for the swap, the fee is represented in source currency & destination currency, but is

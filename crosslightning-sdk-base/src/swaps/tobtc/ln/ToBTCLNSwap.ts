@@ -8,7 +8,7 @@ import {Buffer} from "buffer";
 import * as createHash from "create-hash";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {LNURL, LNURLDecodedSuccessAction, LNURLPaySuccessAction, isLNURLPaySuccessAction} from "../../../utils/LNURL";
-import {BtcToken} from "../../ISwap";
+import {BtcToken, TokenAmount, Token, BitcoinTokens, toTokenAmount} from "../../Tokens";
 
 export type ToBTCLNSwapInit<T extends SwapData> = IToBTCSwapInit<T> & {
     confidence: number;
@@ -18,14 +18,15 @@ export type ToBTCLNSwapInit<T extends SwapData> = IToBTCSwapInit<T> & {
 };
 
 export function isToBTCLNSwapInit<T extends SwapData>(obj: any): obj is ToBTCLNSwapInit<T> {
-    return typeof(obj.confidence)==="number" &&
-        typeof(obj.pr)==="string" &&
-        (obj.lnurl==null || typeof(obj.lnurl)==="string") &&
-        (obj.successAction==null || isLNURLPaySuccessAction(obj.successAction)) &&
+    return typeof (obj.confidence) === "number" &&
+        typeof (obj.pr) === "string" &&
+        (obj.lnurl == null || typeof (obj.lnurl) === "string") &&
+        (obj.successAction == null || isLNURLPaySuccessAction(obj.successAction)) &&
         isIToBTCSwapInit<T>(obj);
 }
 
 export class ToBTCLNSwap<T extends ChainType = ChainType> extends IToBTCSwap<T> {
+    protected outputToken: BtcToken<true> = BitcoinTokens.BTCLN;
     protected readonly TYPE = SwapType.TO_BTCLN;
 
     private readonly confidence: number;
@@ -71,16 +72,10 @@ export class ToBTCLNSwap<T extends ChainType = ChainType> extends IToBTCSwap<T> 
     //////////////////////////////
     //// Amounts & fees
 
-    getOutAmount(): BN {
+    getOutput(): TokenAmount<T["ChainId"], BtcToken<true>> {
         const parsedPR = bolt11Decode(this.pr);
-        return new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
-    }
-
-    getOutToken(): BtcToken<true> {
-        return {
-            chain: "BTC",
-            lightning: true
-        };
+        const amount = new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
+        return toTokenAmount(amount, this.outputToken, this.wrapper.prices);
     }
 
 
