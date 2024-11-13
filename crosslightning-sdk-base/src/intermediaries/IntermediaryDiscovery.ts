@@ -39,7 +39,15 @@ export type TokenBounds = {
     }
 }
 
+export type MultichainTokenBounds = {
+    [chainId: string]: TokenBounds
+}
+
 export type SwapBounds = {
+    [key in SwapType]?: TokenBounds
+}
+
+export type MultichainSwapBounds = {
     [key in SwapType]?: TokenBounds
 }
 
@@ -224,6 +232,38 @@ export class IntermediaryDiscovery extends EventEmitter {
     init(abortSignal?: AbortSignal): Promise<void> {
         logger.info("init(): Initializing with registryUrl: "+this.registryUrl+" intermediary array: "+(this.overrideNodeUrls || []).join());
         return this.reloadIntermediaries(abortSignal);
+    }
+
+    getMultichainSwapBounds(): MultichainSwapBounds {
+        const bounds: MultichainSwapBounds = {};
+
+        this.intermediaries.forEach(intermediary => {
+            for(let swapType in intermediary.services) {
+
+                const swapService: SwapHandlerInfoType = intermediary.services[swapType];
+                if(bounds[swapType]==null) bounds[swapType] = {};
+                const multichainBounds: MultichainTokenBounds = bounds[swapType];
+                for(let chainId in swapService.chainTokens) {
+                    multichainBounds[chainId] = {};
+                    const tokenBounds: TokenBounds = multichainBounds[chainId];
+
+                    for(let token of swapService.chainTokens[chainId]) {
+                        const tokenMinMax = tokenBounds[token];
+                        if(tokenMinMax==null) {
+                            tokenBounds[token] = {
+                                min: new BN(swapService.min),
+                                max: new BN(swapService.max)
+                            }
+                        } else {
+                            tokenMinMax.min = BN.min(tokenMinMax.min, new BN(swapService.min));
+                            tokenMinMax.max = BN.min(tokenMinMax.max, new BN(swapService.max));
+                        }
+                    }
+                }
+            }
+        });
+
+        return bounds;
     }
 
     /**

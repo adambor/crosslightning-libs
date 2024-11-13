@@ -8,7 +8,7 @@ import {ToBTCLNWrapper} from "./tobtc/ln/ToBTCLNWrapper";
 import {ToBTCWrapper} from "./tobtc/onchain/ToBTCWrapper";
 import {FromBTCLNWrapper} from "./frombtc/ln/FromBTCLNWrapper";
 import {FromBTCWrapper} from "./frombtc/onchain/FromBTCWrapper";
-import {IntermediaryDiscovery, SwapBounds} from "../intermediaries/IntermediaryDiscovery";
+import {IntermediaryDiscovery, MultichainSwapBounds, SwapBounds} from "../intermediaries/IntermediaryDiscovery";
 import {address, Network, networks} from "bitcoinjs-lib";
 import {decode as bolt11Decode} from "bolt11";
 import * as BN from "bn.js";
@@ -342,12 +342,19 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
         return null;
     }
 
+    getSwapBounds<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier | string): SwapBounds;
+    getSwapBounds(): MultichainSwapBounds;
+
     /**
      * Returns swap bounds (minimums & maximums) for different swap types & tokens
      */
-    getSwapBounds<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier | string): SwapBounds {
+    getSwapBounds<ChainIdentifier extends ChainIds<T>>(chainIdentifier?: ChainIdentifier | string): SwapBounds | MultichainSwapBounds {
         if(this.intermediaryDiscovery!=null) {
-            return this.intermediaryDiscovery.getSwapBounds(chainIdentifier);
+            if(chainIdentifier==null) {
+                return this.intermediaryDiscovery.getMultichainSwapBounds();
+            } else {
+                return this.intermediaryDiscovery.getSwapBounds(chainIdentifier);
+            }
         }
         return null;
     }
