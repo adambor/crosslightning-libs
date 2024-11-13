@@ -119,6 +119,10 @@ export abstract class IFromBTCSwap<
         return this.data.getAmount().add(this.swapFee);
     }
 
+    getOutputWithoutFee(): TokenAmount<T["ChainId"], SCToken<T["ChainId"]>> {
+        return toTokenAmount(this.data.getAmount().add(this.swapFee), this.wrapper.tokens[this.data.getToken()], this.wrapper.prices);
+    }
+
     getOutput(): TokenAmount<T["ChainId"], SCToken<T["ChainId"]>> {
         return toTokenAmount(this.data.getAmount(), this.wrapper.tokens[this.data.getToken()], this.wrapper.prices);
     }
