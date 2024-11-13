@@ -256,8 +256,15 @@ export class SwapperWithChain<T extends MultiChain, ChainIdentifier extends Chai
     /**
      * Returns the token balance of the wallet
      */
-    getBalance(signer: string, token: string): Promise<BN> {
-        return this.swapper.getBalance(this.chainIdentifier, signer, token);
+    getBalance(signer: string, token: string | SCToken<ChainIdentifier>): Promise<BN> {
+        let tokenAddress: string;
+        if(typeof(token) === 'string') {
+            tokenAddress = token;
+        } else {
+            if(this.chainIdentifier!==token.chainId) throw new Error("Invalid token, chainId mismatch!");
+            tokenAddress = token.address;
+        }
+        return this.swapper.getBalance(this.chainIdentifier, signer, tokenAddress);
     }
 
     /**
@@ -268,10 +275,17 @@ export class SwapperWithChain<T extends MultiChain, ChainIdentifier extends Chai
     }
 
     /**
-     * Returns the address of the native currency of the chain
+     * Returns the address of the native token of the chain
      */
-    getNativeCurrency(): string {
-        return this.swapper.getNativeCurrency(this.chainIdentifier);
+    getNativeToken(): SCToken<ChainIdentifier> {
+        return this.swapper.getNativeToken(this.chainIdentifier);
+    }
+
+    /**
+     * Returns the address of the native token's address of the chain
+     */
+    getNativeTokenAddress(): string {
+        return this.swapper.getNativeTokenAddress(this.chainIdentifier);
     }
 
     withSigner(signer: T[ChainIdentifier]["Signer"]) {

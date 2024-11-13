@@ -257,7 +257,7 @@ export class SwapperWithSigner<T extends MultiChain, ChainIdentifier extends Cha
     /**
      * Returns the token balance of the wallet
      */
-    getBalance(token: string): Promise<BN> {
+    getBalance(token: string | SCToken<ChainIdentifier>): Promise<BN> {
         return this.swapper.getBalance(this.signer.getAddress(), token);
     }
 
@@ -269,10 +269,17 @@ export class SwapperWithSigner<T extends MultiChain, ChainIdentifier extends Cha
     }
 
     /**
-     * Returns the address of the native currency of the chain
+     * Returns the address of the native token of the chain
      */
-    getNativeCurrency(): string {
-        return this.swapper.getNativeCurrency();
+    getNativeToken(): SCToken<ChainIdentifier> {
+        return this.swapper.getNativeToken();
+    }
+
+    /**
+     * Returns the address of the native token's address of the chain
+     */
+    getNativeTokenAddress(): string {
+        return this.swapper.getNativeTokenAddress();
     }
 
 }

@@ -145,6 +145,11 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
     readonly mempoolApi: MempoolApi;
     readonly bitcoinRpc: MempoolBitcoinRpc;
     readonly bitcoinNetwork: Network;
+    readonly tokens: {
+        [chainId: string]: {
+            [tokenAddress: string]: SCToken
+        }
+    };
 
     constructor(
         bitcoinRpc: MempoolBitcoinRpc,
@@ -165,6 +170,22 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
         this.prices = pricing;
         this.bitcoinRpc = bitcoinRpc;
         this.mempoolApi = bitcoinRpc.api;
+
+        this.tokens = {};
+        for(let tokenData of tokens) {
+            for(let chainId in tokenData.chains) {
+                const chainData = tokenData.chains[chainId];
+                this.tokens[chainId] ??= {};
+                this.tokens[chainId][chainData.address] = {
+                    chain: "SC",
+                    chainId,
+                    ticker: tokenData.ticker,
+                    name: tokenData.name,
+                    decimals: chainData.decimals,
+                    address: chainData.address
+                }
+            }
+        }
 
         this.chains = objectMap<CtorMultiChainData<T>, MultiChainData<T>>(chainsData, <InputKey extends keyof CtorMultiChainData<T>>(chainData: CtorMultiChainData<T>[InputKey], key: string) => {
             const {swapContract, chainEvents, btcRelay, defaultTrustedIntermediaryUrl} = chainData;
@@ -1073,10 +1094,22 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
         }
     }
 
+    getBalance<ChainIdentifier extends ChainIds<T>>(signer: string, token: SCToken<ChainIdentifier>): Promise<BN>;
+    getBalance<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier | string, signer: string, token: string): Promise<BN>;
+
     /**
      * Returns the token balance of the wallet
      */
-    getBalance<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier | string, signer: string, token: string): Promise<BN> {
+    getBalance<ChainIdentifier extends ChainIds<T>>(chainIdentifierOrSigner: ChainIdentifier | string, signerOrToken: string | SCToken<ChainIdentifier>, token?: string): Promise<BN> {
+        let chainIdentifier: ChainIdentifier | string;
+        let signer: string;
+        if(typeof(signerOrToken)==="string") {
+            chainIdentifier = chainIdentifierOrSigner;
+            signer = signerOrToken;
+        } else {
+            token = signerOrToken.address;
+            signer = chainIdentifierOrSigner;
+        }
         if(this.chains[chainIdentifier]==null) throw new Error("Invalid chain identifier! Unknown chain: "+chainIdentifier);
         return this.chains[chainIdentifier].swapContract.getBalance(signer, token, false);
     }
@@ -1086,15 +1119,23 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
      */
     getNativeBalance<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier | string, signer: string): Promise<BN> {
         if(this.chains[chainIdentifier]==null) throw new Error("Invalid chain identifier! Unknown chain: "+chainIdentifier);
-        return this.chains[chainIdentifier].swapContract.getBalance(signer, this.getNativeCurrency(chainIdentifier), false);
+        return this.chains[chainIdentifier].swapContract.getBalance(signer, this.getNativeTokenAddress(chainIdentifier), false);
+    }
+
+    /**
+     * Returns the address of the native token's address of the chain
+     */
+    getNativeTokenAddress<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier | string): string {
+        if(this.chains[chainIdentifier]==null) throw new Error("Invalid chain identifier! Unknown chain: "+chainIdentifier);
+        return this.chains[chainIdentifier].swapContract.getNativeCurrencyAddress();
     }
 
     /**
      * Returns the address of the native currency of the chain
      */
-    getNativeCurrency<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier | string): string {
+    getNativeToken<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier | string): SCToken<ChainIdentifier> {
         if(this.chains[chainIdentifier]==null) throw new Error("Invalid chain identifier! Unknown chain: "+chainIdentifier);
-        return this.chains[chainIdentifier].swapContract.getNativeCurrencyAddress();
+        return this.tokens[chainIdentifier][this.chains[chainIdentifier].swapContract.getNativeCurrencyAddress()] as SCToken<ChainIdentifier>;
     }
 
     withChain<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier | string): SwapperWithChain<T, ChainIdentifier> {
