@@ -470,12 +470,32 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
     }
 
     /**
-     * Returns the set of supported tokens by all the intermediaries we know of offering a specific swapType service
+     * Returns a set of supported tokens by all the intermediaries offering a specific swap service
+     *
+     * @param swapType Swap service type to check supported tokens for
+     */
+    getSupportedTokens(swapType: SwapType): SCToken[] {
+        const tokens: SCToken[] = [];
+        this.intermediaryDiscovery.intermediaries.forEach(lp => {
+            if(lp.services[swapType]==null) return;
+            if(lp.services[swapType].chainTokens==null) return;
+            for(let chainId in lp.services[swapType].chainTokens) {
+                for(let tokenAddress of lp.services[swapType].chainTokens[chainId]) {
+                    const token = this.tokens?.[chainId]?.[tokenAddress];
+                    if(token!=null) tokens.push(token);
+                }
+            }
+        });
+        return tokens;
+    }
+
+    /**
+     * Returns the set of supported token addresses by all the intermediaries we know of offering a specific swapType service
      *
      * @param chainIdentifier
      * @param swapType Specific swap type for which to obtain supported tokens
      */
-    getSupportedTokens<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier | string, swapType: SwapType): Set<string> {
+    getSupportedTokenAddresses<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier | string, swapType: SwapType): Set<string> {
         const set = new Set<string>();
         this.intermediaryDiscovery.intermediaries.forEach(lp => {
             if(lp.services[swapType]==null) return;

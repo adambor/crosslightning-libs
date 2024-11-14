@@ -119,12 +119,26 @@ export class SwapperWithChain<T extends MultiChain, ChainIdentifier extends Chai
     }
 
     /**
+     * Returns a set of supported tokens by all the intermediaries offering a specific swap service
+     *
+     * @param swapType Swap service type to check supported tokens for
+     */
+    getSupportedTokens(swapType: SwapType): SCToken[] {
+        const arr: SCToken[] = [];
+        this.getSupportedTokenAddresses(swapType).forEach(tokenAddress => {
+            const token = this.swapper.tokens?.[this.chainIdentifier]?.[tokenAddress];
+            if(token!=null) arr.push(token);
+        });
+        return arr;
+    }
+
+    /**
      * Returns the set of supported tokens by all the intermediaries we know of offering a specific swapType service
      *
      * @param swapType Specific swap type for which to obtain supported tokens
      */
-    getSupportedTokens(swapType: SwapType): Set<string> {
-        return this.swapper.getSupportedTokens(this.chainIdentifier, swapType);
+    getSupportedTokenAddresses(swapType: SwapType): Set<string> {
+        return this.swapper.getSupportedTokenAddresses(this.chainIdentifier, swapType);
     }
 
     createToBTCSwap(
