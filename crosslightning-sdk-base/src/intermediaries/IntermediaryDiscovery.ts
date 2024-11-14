@@ -241,10 +241,10 @@ export class IntermediaryDiscovery extends EventEmitter {
             for(let swapType in intermediary.services) {
 
                 const swapService: SwapHandlerInfoType = intermediary.services[swapType];
-                if(bounds[swapType]==null) bounds[swapType] = {};
+                bounds[swapType] ??= {};
                 const multichainBounds: MultichainTokenBounds = bounds[swapType];
                 for(let chainId in swapService.chainTokens) {
-                    multichainBounds[chainId] = {};
+                    multichainBounds[chainId] ??= {};
                     const tokenBounds: TokenBounds = multichainBounds[chainId];
 
                     for(let token of swapService.chainTokens[chainId]) {
