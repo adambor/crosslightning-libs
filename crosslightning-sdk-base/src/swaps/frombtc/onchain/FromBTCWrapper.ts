@@ -399,9 +399,7 @@ export class FromBTCWrapper<
                             expiry: signatureExpiry,
                             swapFee: resp.swapFee,
                             feeRate: await feeRatePromise,
-                            prefix: resp.prefix,
-                            timeout: resp.timeout,
-                            signature: resp.signature,
+                            signatureData: resp,
                             data,
                             address: resp.btcAddress,
                             amount: resp.amount

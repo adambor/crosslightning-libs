@@ -1114,19 +1114,20 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
         }
     }
 
-    getBalance<ChainIdentifier extends ChainIds<T>>(signer: string, token: SCToken<ChainIdentifier>): Promise<BN>;
+    getBalance<ChainIdentifier extends ChainIds<T>>(signer: string, token: SCToken<ChainIdentifier | string>): Promise<BN>;
     getBalance<ChainIdentifier extends ChainIds<T>>(chainIdentifier: ChainIdentifier | string, signer: string, token: string): Promise<BN>;
 
     /**
      * Returns the token balance of the wallet
      */
-    getBalance<ChainIdentifier extends ChainIds<T>>(chainIdentifierOrSigner: ChainIdentifier | string, signerOrToken: string | SCToken<ChainIdentifier>, token?: string): Promise<BN> {
+    getBalance<ChainIdentifier extends ChainIds<T>>(chainIdentifierOrSigner: ChainIdentifier | string, signerOrToken: string | SCToken<ChainIdentifier | string>, token?: string): Promise<BN> {
         let chainIdentifier: ChainIdentifier | string;
         let signer: string;
         if(typeof(signerOrToken)==="string") {
             chainIdentifier = chainIdentifierOrSigner;
             signer = signerOrToken;
         } else {
+            chainIdentifier = signerOrToken.chainId;
             token = signerOrToken.address;
             signer = chainIdentifierOrSigner;
         }

@@ -15,9 +15,7 @@ export type ISwapInit<T extends SwapData> = {
     swapFee: BN,
     swapFeeBtc?: BN,
     feeRate: any,
-    prefix?: string,
-    timeout?: string,
-    signature?: string,
+    signatureData?: SignatureData,
     data?: T
 };
 
@@ -30,9 +28,12 @@ export function isISwapInit<T extends SwapData>(obj: any): obj is ISwapInit<T> {
         BN.isBN(obj.swapFee) &&
         (obj.swapFeeBtc == null || BN.isBN(obj.swapFeeBtc)) &&
         obj.feeRate != null &&
-        (obj.prefix == null || typeof obj.prefix === 'string') &&
-        (obj.timeout == null || typeof obj.timeout === 'string') &&
-        (obj.signature == null || typeof obj.signature === 'string') &&
+        (obj.signatureData == null || (
+            typeof(obj.signatureData) === 'object' &&
+            typeof(obj.signatureData.prefix)==="string" &&
+            typeof(obj.signatureData.timeout)==="string" &&
+            typeof(obj.signatureData.signature)==="string"
+        )) &&
         (obj.data == null || typeof obj.data === 'object');
 }
 
