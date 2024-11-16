@@ -230,7 +230,13 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
             await this._saveAndEmit(FromBTCLNSwapState.PR_PAID);
         }
 
-        if(this.state===FromBTCLNSwapState.PR_CREATED) throw new PaymentAuthError(resp.msg, resp.code, (resp as any).data);
+        if(this.state===FromBTCLNSwapState.PR_CREATED) {
+            if(resp.code===PaymentAuthorizationResponseCodes.EXPIRED) {
+                await this._saveAndEmit(FromBTCLNSwapState.QUOTE_EXPIRED);
+            }
+
+            throw new PaymentAuthError(resp.msg, resp.code, (resp as any).data);
+        }
     }
 
     /**
