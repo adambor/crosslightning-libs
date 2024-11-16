@@ -1,6 +1,6 @@
 import {HttpPriceProvider} from "./HttpPriceProvider";
 import {CoinType} from "../../abstract/IPriceProvider";
-import BN from "bn.js";
+import * as BN from "bn.js";
 import {MultiChain} from "../../../swaps/Swapper";
 
 export abstract class ExchangePriceProvider<T extends MultiChain> extends HttpPriceProvider<T> {

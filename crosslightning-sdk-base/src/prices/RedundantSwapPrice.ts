@@ -134,15 +134,18 @@ export class RedundantSwapPrice<T extends MultiChain> extends ICachedSwapPrice<T
     private async fetchPriceFromMaybeOperationalPriceApis<C extends ChainIds<T>>(chainIdentifier: C, token: string, abortSignal?: AbortSignal) {
         try {
             return await promiseAny<BN>(this.getMaybeOperationalPriceApis().map(
-                obj => obj.priceApi.getPrice(chainIdentifier, token, abortSignal).then(price => {
-                    logger.debug("fetchPrice(): Price from "+obj.priceApi.constructor.name+": ", price.toString(10));
-                    obj.operational = true;
-                    return price;
-                }).catch(e => {
-                    if(abortSignal!=null) abortSignal.throwIfAborted();
-                    obj.operational = false;
-                    throw e;
-                })
+                obj => (async () => {
+                    try {
+                        const price = await obj.priceApi.getPrice(chainIdentifier, token, abortSignal);
+                        logger.debug("fetchPrice(): Price from "+obj.priceApi.constructor.name+": ", price.toString(10));
+                        obj.operational = true;
+                        return price;
+                    } catch (e) {
+                        if(abortSignal!=null) abortSignal.throwIfAborted();
+                        obj.operational = false;
+                        throw e;
+                    }
+                })()
             ))
         } catch (e) {
             if(abortSignal!=null) abortSignal.throwIfAborted();
@@ -188,15 +191,18 @@ export class RedundantSwapPrice<T extends MultiChain> extends ICachedSwapPrice<T
     private async fetchUsdPriceFromMaybeOperationalPriceApis(abortSignal?: AbortSignal): Promise<number> {
         try {
             return await promiseAny<number>(this.getMaybeOperationalPriceApis().map(
-                obj => obj.priceApi.getUsdPrice(abortSignal).then(price => {
-                    logger.debug("fetchPrice(): Price from "+obj.priceApi.constructor.name+": ", price.toString(10));
-                    obj.operational = true;
-                    return price;
-                }).catch(e => {
-                    if(abortSignal!=null) abortSignal.throwIfAborted();
-                    obj.operational = false;
-                    throw e;
-                })
+                obj => (async () => {
+                    try {
+                        const price = await obj.priceApi.getUsdPrice(abortSignal);
+                        logger.debug("fetchPrice(): USD price from "+obj.priceApi.constructor.name+": ", price.toString(10));
+                        obj.operational = true;
+                        return price;
+                    } catch (e) {
+                        if(abortSignal!=null) abortSignal.throwIfAborted();
+                        obj.operational = false;
+                        throw e;
+                    }
+                })()
             ))
         } catch (e) {
             if(abortSignal!=null) abortSignal.throwIfAborted();
