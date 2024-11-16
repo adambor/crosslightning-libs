@@ -57,7 +57,7 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
         events?: EventEmitter
     ) {
         if(options==null) options = {};
-        options.paymentTimeoutSeconds ??= 3*24*60*60;
+        options.paymentTimeoutSeconds ??= 4*24*60*60;
         options.lightningBaseFee ??= 10;
         options.lightningFeePPM ??= 2000;
         super(chainIdentifier, storage, contract, chainEvents, prices, tokens, swapDataDeserializer, options, events);
@@ -438,7 +438,7 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
         lnurl: string | LNURLPayParamsWithUrl,
         amountData: AmountData,
         lps: Intermediary[],
-        options: ToBTCLNOptions & {comment: string},
+        options: ToBTCLNOptions & {comment?: string},
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
     ): Promise<{
@@ -446,6 +446,8 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
         intermediary: Intermediary
     }[]> {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
+        options ??= {};
+        options.expirySeconds ??= this.options.paymentTimeoutSeconds;
         options.expiryTimestamp ??= new BN(Math.floor(Date.now()/1000)+options.expirySeconds);
 
         const _abortController = extendAbortController(abortSignal);

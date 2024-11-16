@@ -66,11 +66,37 @@ export type LNURLPay = {
     params: LNURLPayParamsWithUrl
 }
 
+export function isLNURLPay(value: any): value is LNURLPay {
+    return (
+        typeof value === "object" &&
+        value != null &&
+        value.type === "pay" &&
+        BN.isBN(value.min) &&
+        BN.isBN(value.max) &&
+        typeof value.commentMaxLength === "number" &&
+        typeof value.shortDescription === "string" &&
+        (value.longDescription === undefined || typeof value.longDescription === "string") &&
+        (value.icon === undefined || typeof value.icon === "string") &&
+        isLNURLPayParams(value.params)
+    );
+}
+
 export type LNURLWithdraw= {
     type: "withdraw",
     min: BN,
     max: BN,
     params: LNURLWithdrawParamsWithUrl
+}
+
+export function isLNURLWithdraw(value: any): value is LNURLWithdraw {
+    return (
+        typeof value === "object" &&
+        value != null &&
+        value.type === "withdraw" &&
+        BN.isBN(value.min) &&
+        BN.isBN(value.max) &&
+        isLNURLWithdrawParams(value.params)
+    );
 }
 
 export type LNURLOk = {
