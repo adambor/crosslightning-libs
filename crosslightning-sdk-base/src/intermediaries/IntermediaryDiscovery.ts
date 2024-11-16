@@ -48,7 +48,7 @@ export type SwapBounds = {
 }
 
 export type MultichainSwapBounds = {
-    [key in SwapType]?: TokenBounds
+    [key in SwapType]?: MultichainTokenBounds
 }
 
 /**
