@@ -3,7 +3,8 @@ import {IFromBTCWrapper} from "../IFromBTCWrapper";
 import * as BN from "bn.js";
 import {decode as bolt11Decode, PaymentRequestObject, TagsObject} from "bolt11";
 import {
-    ChainSwapType, ChainType,
+    ChainSwapType,
+    ChainType,
     ClaimEvent,
     InitializeEvent,
     IStorageManager,
@@ -76,24 +77,23 @@ export class FromBTCLNWrapper<
             if(result!==null) return true;
         }
 
-        if(swap.state===FromBTCLNSwapState.PR_PAID) {
+        if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) {
             //Check if it's already committed
             const status = await tryWithRetries(() => this.contract.getCommitStatus(swap.getInitiator(), swap.data));
             switch(status) {
-                case SwapCommitStatus.PAID:
-                    swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
-                    return true;
-                case SwapCommitStatus.EXPIRED:
-                case SwapCommitStatus.REFUNDABLE:
-                    swap.state = FromBTCLNSwapState.FAILED;
-                    return true;
                 case SwapCommitStatus.COMMITED:
                     swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
+                    return true;
+                case SwapCommitStatus.EXPIRED:
+                    swap.state = FromBTCLNSwapState.QUOTE_EXPIRED;
+                    return true;
+                case SwapCommitStatus.PAID:
+                    swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
                     return true;
             }
 
             if(!await swap.isQuoteValid()) {
-                swap.state = FromBTCLNSwapState.FAILED;
+                swap.state = FromBTCLNSwapState.QUOTE_EXPIRED;
                 return true;
             }
 
@@ -108,7 +108,7 @@ export class FromBTCLNWrapper<
                 return true;
             }
 
-            if(commitStatus===SwapCommitStatus.NOT_COMMITED || commitStatus===SwapCommitStatus.EXPIRED || commitStatus===SwapCommitStatus.REFUNDABLE) {
+            if(commitStatus===SwapCommitStatus.NOT_COMMITED || commitStatus===SwapCommitStatus.EXPIRED) {
                 swap.state = FromBTCLNSwapState.FAILED;
                 return true;
             }
@@ -117,8 +117,22 @@ export class FromBTCLNWrapper<
         }
     }
 
+    protected tickSwap(swap: FromBTCLNSwap<T>): void {
+        switch(swap.state) {
+            case FromBTCLNSwapState.PR_CREATED:
+                if(swap.getTimeoutTime()<Date.now()) swap._saveAndEmit(FromBTCLNSwapState.QUOTE_EXPIRED);
+                break;
+            case FromBTCLNSwapState.PR_PAID:
+                if(swap.expiry<Date.now()) swap._saveAndEmit(FromBTCLNSwapState.QUOTE_SOFT_EXPIRED);
+                break;
+            case FromBTCLNSwapState.CLAIM_COMMITED:
+                if(this.contract.isExpired(swap.getInitiator(), swap.data)) swap._saveAndEmit(FromBTCLNSwapState.EXPIRED);
+                break;
+        }
+    }
+
     protected async processEventInitialize(swap: FromBTCLNSwap<T>, event: InitializeEvent<T["Data"]>): Promise<boolean> {
-        if(swap.state===FromBTCLNSwapState.PR_PAID) {
+        if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) {
             const swapData = await event.swapData();
             if(swap.data!=null && !swap.data.equals(swapData)) return false;
             swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
@@ -128,7 +142,7 @@ export class FromBTCLNWrapper<
     }
 
     protected processEventClaim(swap: FromBTCLNSwap<T>, event: ClaimEvent<T["Data"]>): Promise<boolean> {
-        if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
+        if(swap.state!==FromBTCLNSwapState.FAILED) {
             swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
             return Promise.resolve(true);
         }
@@ -136,7 +150,7 @@ export class FromBTCLNWrapper<
     }
 
     protected processEventRefund(swap: FromBTCLNSwap<T>, event: RefundEvent<T["Data"]>): Promise<boolean> {
-        if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
+        if(swap.state!==FromBTCLNSwapState.CLAIM_CLAIMED) {
             swap.state = FromBTCLNSwapState.FAILED;
             return Promise.resolve(true);
         }

@@ -65,6 +65,13 @@ export class LnForGasSwap<T extends ChainType = ChainType> extends ISwap<T, LnFo
         this.logger = getLogger(this.constructor.name+"("+this.getPaymentHashString()+"): ");
     }
 
+    protected upgradeVersion() {
+        if(this.version == null) {
+            //Noop
+            this.version = 1;
+        }
+    }
+
     /**
      * In case swapFee in BTC is not supplied it recalculates it based on swap price
      * @protected

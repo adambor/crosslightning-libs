@@ -2,9 +2,11 @@ import {IFromBTCWrapper} from "../IFromBTCWrapper";
 import {FromBTCSwap, FromBTCSwapInit, FromBTCSwapState} from "./FromBTCSwap";
 import * as BN from "bn.js";
 import {
-    ChainSwapType, ChainType,
+    ChainSwapType,
+    ChainType,
     ClaimEvent,
-    InitializeEvent, IStorageManager,
+    InitializeEvent,
+    IStorageManager,
     RefundEvent,
     RelaySynchronizer,
     SwapCommitStatus,
@@ -14,7 +16,7 @@ import {EventEmitter} from "events";
 import {Intermediary} from "../../../intermediaries/Intermediary";
 import {BitcoinRpcWithTxoListener} from "../../../btc/BitcoinRpcWithTxoListener";
 import {ISwapPrice} from "../../../prices/abstract/ISwapPrice";
-import {networks, address} from "bitcoinjs-lib";
+import {address, networks} from "bitcoinjs-lib";
 import {AmountData, ISwapWrapperOptions, WrapperCtorTokens} from "../../ISwapWrapper";
 import {Buffer} from "buffer";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
@@ -89,14 +91,11 @@ export class FromBTCWrapper<
     }
 
     protected async checkPastSwap(swap: FromBTCSwap<T>): Promise<boolean> {
-        if(swap.state===FromBTCSwapState.PR_CREATED) {
+        if(swap.state===FromBTCSwapState.PR_CREATED || swap.state===FromBTCSwapState.QUOTE_SOFT_EXPIRED) {
             const status = await tryWithRetries(() => this.contract.getCommitStatus(swap.getInitiator(), swap.data));
             switch(status) {
                 case SwapCommitStatus.COMMITED:
                     swap.state = FromBTCSwapState.CLAIM_COMMITED;
-                    return true;
-                case SwapCommitStatus.REFUNDABLE:
-                    swap.state = FromBTCSwapState.FAILED;
                     return true;
                 case SwapCommitStatus.EXPIRED:
                     swap.state = FromBTCSwapState.QUOTE_EXPIRED;
@@ -137,8 +136,19 @@ export class FromBTCWrapper<
         }
     }
 
+    protected tickSwap(swap: FromBTCSwap<T>): void {
+        switch(swap.state) {
+            case FromBTCSwapState.PR_CREATED:
+                if(swap.expiry<Date.now()) swap._saveAndEmit(FromBTCSwapState.QUOTE_SOFT_EXPIRED);
+                break;
+            case FromBTCSwapState.CLAIM_COMMITED:
+                if(swap.getTimeoutTime()<Date.now()) swap._saveAndEmit(FromBTCSwapState.EXPIRED);
+                break;
+        }
+    }
+
     protected processEventInitialize(swap: FromBTCSwap<T>, event: InitializeEvent<T["Data"]>): Promise<boolean> {
-        if(swap.state===FromBTCSwapState.PR_CREATED) {
+        if(swap.state===FromBTCSwapState.PR_CREATED || swap.state===FromBTCSwapState.QUOTE_SOFT_EXPIRED) {
             if(swap.data!=null && !swap.data.getSequence().eq(event.sequence)) return Promise.resolve(false);
             swap.state = FromBTCSwapState.CLAIM_COMMITED;
             return Promise.resolve(true);
@@ -147,7 +157,7 @@ export class FromBTCWrapper<
     }
 
     protected processEventClaim(swap: FromBTCSwap<T>, event: ClaimEvent<T["Data"]>): Promise<boolean> {
-        if(swap.state===FromBTCSwapState.PR_CREATED || swap.state===FromBTCSwapState.CLAIM_COMMITED || swap.state===FromBTCSwapState.BTC_TX_CONFIRMED) {
+        if(swap.state!==FromBTCSwapState.FAILED) {
             swap.state = FromBTCSwapState.CLAIM_CLAIMED;
             return Promise.resolve(true);
         }
@@ -155,7 +165,7 @@ export class FromBTCWrapper<
     }
 
     protected processEventRefund(swap: FromBTCSwap<T>, event: RefundEvent<T["Data"]>): Promise<boolean> {
-        if(swap.state===FromBTCSwapState.PR_CREATED || swap.state===FromBTCSwapState.CLAIM_COMMITED || swap.state===FromBTCSwapState.BTC_TX_CONFIRMED) {
+        if(swap.state!==FromBTCSwapState.CLAIM_CLAIMED) {
             swap.state = FromBTCSwapState.FAILED;
             return Promise.resolve(true);
         }

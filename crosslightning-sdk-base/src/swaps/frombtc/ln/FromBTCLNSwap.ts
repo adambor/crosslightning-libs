@@ -3,13 +3,7 @@ import {FromBTCLNWrapper} from "./FromBTCLNWrapper";
 import {IFromBTCSwap} from "../IFromBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
-import {
-    ChainType,
-    SignatureData,
-    SignatureVerificationError,
-    SwapCommitStatus,
-    SwapData
-} from "crosslightning-base";
+import {ChainType, SignatureData, SignatureVerificationError, SwapCommitStatus, SwapData} from "crosslightning-base";
 import {isISwapInit, ISwapInit} from "../../ISwap";
 import {Buffer} from "buffer";
 import {LNURL, LNURLWithdraw, LNURLWithdrawParamsWithUrl} from "../../../utils/LNURL";
@@ -21,12 +15,14 @@ import {
 } from "../../../intermediaries/IntermediaryAPI";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
 import {PaymentAuthError} from "../../../errors/PaymentAuthError";
-import {getLogger, timeoutPromise, tryWithRetries} from "../../../utils/Utils";
+import {extendAbortController, getLogger, timeoutPromise, tryWithRetries} from "../../../utils/Utils";
 import {BitcoinTokens, BtcToken, TokenAmount, toTokenAmount} from "../../Tokens";
 
 export enum FromBTCLNSwapState {
-    QUOTE_EXPIRED = -2,
-    FAILED = -1,
+    FAILED = -4,
+    QUOTE_EXPIRED = -3,
+    QUOTE_SOFT_EXPIRED = -2,
+    EXPIRED = -1,
     PR_CREATED = 0,
     PR_PAID = 1,
     CLAIM_COMMITED = 2,
@@ -53,11 +49,6 @@ export function isFromBTCLNSwapInit<T extends SwapData>(obj: any): obj is FromBT
 export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T, FromBTCLNSwapState> {
     protected readonly inputToken: BtcToken<true> = BitcoinTokens.BTCLN;
     protected readonly TYPE = SwapType.FROM_BTCLN;
-
-    protected readonly PRE_COMMIT_STATE = FromBTCLNSwapState.PR_PAID;
-    protected readonly COMMIT_STATE = FromBTCLNSwapState.CLAIM_COMMITED;
-    protected readonly CLAIM_STATE = FromBTCLNSwapState.CLAIM_CLAIMED;
-    protected readonly FAIL_STATE = FromBTCLNSwapState.FAILED;
 
     protected readonly lnurlFailSignal: AbortController = new AbortController();
 
@@ -91,6 +82,31 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
         this.logger = getLogger(this.constructor.name+"("+this.getPaymentHashString()+"): ");
     }
 
+    protected upgradeVersion() {
+        if (this.version == null) {
+            switch (this.state) {
+                case -2:
+                    this.state = FromBTCLNSwapState.QUOTE_EXPIRED;
+                    break;
+                case -1:
+                    this.state = FromBTCLNSwapState.FAILED;
+                    break;
+                case 0:
+                    this.state = FromBTCLNSwapState.PR_CREATED
+                    break;
+                case 1:
+                    this.state = FromBTCLNSwapState.PR_PAID
+                    break;
+                case 2:
+                    this.state = FromBTCLNSwapState.CLAIM_COMMITED
+                    break;
+                case 3:
+                    this.state = FromBTCLNSwapState.CLAIM_CLAIMED
+                    break;
+            }
+            this.version = 1;
+        }
+    }
 
     //////////////////////////////
     //// Getters & utils
@@ -207,6 +223,9 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
         let resp: PaymentAuthorizationResponse = {code: PaymentAuthorizationResponseCodes.PENDING, msg: ""};
         while(!abortController.signal.aborted && resp.code===PaymentAuthorizationResponseCodes.PENDING) {
             resp = await IntermediaryAPI.getPaymentAuthorization(this.url, this.data.getHash());
+            if(this.getTimeoutTime()<Date.now() && resp.code!==PaymentAuthorizationResponseCodes.AUTH_DATA) {
+                resp = {code: PaymentAuthorizationResponseCodes.EXPIRED, msg: ""};
+            }
             if(resp.code===PaymentAuthorizationResponseCodes.PENDING)
                 await timeoutPromise(checkIntervalSeconds*1000, abortController.signal);
         }
@@ -227,10 +246,13 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
                 timeout: sigData.timeout,
                 signature: sigData.signature
             };
-            await this._saveAndEmit(FromBTCLNSwapState.PR_PAID);
+            if(this.state===FromBTCLNSwapState.PR_CREATED || this.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) {
+                await this._saveAndEmit(FromBTCLNSwapState.PR_PAID);
+            }
+            return;
         }
 
-        if(this.state===FromBTCLNSwapState.PR_CREATED) {
+        if(this.state===FromBTCLNSwapState.PR_CREATED || this.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) {
             if(resp.code===PaymentAuthorizationResponseCodes.EXPIRED) {
                 await this._saveAndEmit(FromBTCLNSwapState.QUOTE_EXPIRED);
             }
@@ -251,7 +273,7 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
             this.state===FromBTCLNSwapState.CLAIM_CLAIMED ||
             this.state===FromBTCLNSwapState.FAILED
         ) return true;
-        if(this.state===FromBTCLNSwapState.QUOTE_EXPIRED) return false;
+        if(this.state===FromBTCLNSwapState.QUOTE_EXPIRED || this.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) return false;
         const resp = await IntermediaryAPI.getPaymentAuthorization(this.url, this.data.getHash());
         switch(resp.code) {
             case PaymentAuthorizationResponseCodes.AUTH_DATA:
@@ -333,12 +355,47 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
      */
     async commit(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
         this.checkSigner(signer);
-        let txResult = await super.commit(signer, noWaitForConfirmation, abortSignal, skipChecks);
-        if(!noWaitForConfirmation) {
-            await this.waitTillCommited(abortSignal);
-            return txResult;
+        const result = await this.wrapper.contract.sendAndConfirm(
+            signer, await this.txsCommit(skipChecks), !noWaitForConfirmation, abortSignal
+        );
+
+        this.commitTxId = result[0];
+        if(this.state===FromBTCLNSwapState.PR_PAID || this.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) {
+            await this._saveAndEmit(FromBTCLNSwapState.CLAIM_COMMITED);
         }
-        return txResult;
+        return result[0];
+    }
+
+    async waitTillCommited(abortSignal?: AbortSignal): Promise<void> {
+        if(this.state===FromBTCLNSwapState.CLAIM_COMMITED || this.state===FromBTCLNSwapState.CLAIM_CLAIMED) return Promise.resolve();
+        if(this.state!==FromBTCLNSwapState.PR_PAID && this.state!==FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) throw new Error("Invalid state");
+
+        const abortController = extendAbortController(abortSignal);
+        const result = await Promise.race([
+            this.watchdogWaitTillCommited(abortController.signal),
+            this.waitTillState(FromBTCLNSwapState.CLAIM_COMMITED, "gte", abortController.signal).then(() => 0)
+        ]);
+        abortController.abort();
+
+        if(result===0) this.logger.debug("waitTillCommited(): Resolved from state changed");
+        if(result===true) this.logger.debug("waitTillCommited(): Resolved from watchdog - commited");
+        if(result===false) {
+            this.logger.debug("waitTillCommited(): Resolved from watchdog - signature expired");
+            if(
+                this.state===FromBTCLNSwapState.PR_PAID ||
+                this.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED
+            ) {
+                await this._saveAndEmit(FromBTCLNSwapState.QUOTE_EXPIRED);
+            }
+            return;
+        }
+
+        if(
+            this.state===FromBTCLNSwapState.PR_PAID ||
+            this.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED
+        ) {
+            await this._saveAndEmit(FromBTCLNSwapState.CLAIM_COMMITED);
+        }
     }
 
 
@@ -355,6 +412,64 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
     txsClaim(signer?: T["Signer"]): Promise<T["TX"][]> {
         if(this.state!==FromBTCLNSwapState.CLAIM_COMMITED) throw new Error("Must be in CLAIM_COMMITED state!");
         return this.wrapper.contract.txsClaimWithSecret(signer ?? this.getInitiator(), this.data, this.secret, true, true);
+    }
+
+    /**
+     * Claims and finishes the swap
+     *
+     * @param signer Signer to sign the transactions with, can also be different to the initializer
+     * @param noWaitForConfirmation Do not wait for transaction confirmation
+     * @param abortSignal Abort signal to stop waiting for transaction confirmation
+     */
+    async claim(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+        const result = await this.wrapper.contract.sendAndConfirm(
+            signer, await this.txsClaim(), !noWaitForConfirmation, abortSignal
+        );
+
+        this.claimTxId = result[0];
+        await this._saveAndEmit(FromBTCLNSwapState.CLAIM_CLAIMED);
+        return result[0];
+    }
+
+    /**
+     * Waits till the swap is successfully claimed
+     *
+     * @param abortSignal AbortSignal
+     * @throws {Error} If swap is in invalid state (must be BTC_TX_CONFIRMED)
+     * @throws {Error} If the LP refunded sooner than we were able to claim
+     */
+    async waitTillClaimed(abortSignal?: AbortSignal): Promise<void> {
+        if(this.state===FromBTCLNSwapState.CLAIM_CLAIMED) return Promise.resolve();
+        if(this.state!==FromBTCLNSwapState.CLAIM_COMMITED) throw new Error("Invalid state (not CLAIM_COMMITED)");
+
+        const abortController = new AbortController();
+        if(abortSignal!=null) abortSignal.addEventListener("abort", () => abortController.abort(abortSignal.reason));
+        const res = await Promise.race([
+            this.watchdogWaitTillResult(abortController.signal),
+            this.waitTillState(FromBTCLNSwapState.CLAIM_CLAIMED, "eq", abortController.signal).then(() => 0),
+            this.waitTillState(FromBTCLNSwapState.EXPIRED, "eq", abortController.signal).then(() => 1),
+        ]);
+        abortController.abort();
+
+        if(res===0) {
+            this.logger.debug("waitTillClaimed(): Resolved from state change (CLAIM_CLAIMED)");
+            return;
+        }
+        if(res===1) {
+            this.logger.debug("waitTillClaimed(): Resolved from state change (EXPIRED)");
+            throw new Error("Swap expired during claiming");
+        }
+        this.logger.debug("waitTillClaimed(): Resolved from watchdog");
+
+        if(res===SwapCommitStatus.PAID) {
+            if((this.state as FromBTCLNSwapState)!==FromBTCLNSwapState.CLAIM_CLAIMED) await this._saveAndEmit(FromBTCLNSwapState.CLAIM_CLAIMED);
+        }
+        if(res===SwapCommitStatus.NOT_COMMITED || res===SwapCommitStatus.EXPIRED) {
+            if(
+                (this.state as FromBTCLNSwapState)!==FromBTCLNSwapState.CLAIM_CLAIMED &&
+                (this.state as FromBTCLNSwapState)!==FromBTCLNSwapState.FAILED
+            ) await this._saveAndEmit(FromBTCLNSwapState.FAILED);
+        }
     }
 
 
@@ -382,8 +497,6 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
 
         this.commitTxId = result[0] || this.commitTxId;
         this.claimTxId = result[result.length-1] || this.claimTxId;
-        this.state = FromBTCLNSwapState.CLAIM_CLAIMED;
-
         await this._saveAndEmit(FromBTCLNSwapState.CLAIM_CLAIMED);
     }
 
@@ -400,7 +513,7 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
      */
     async txsCommitAndClaim(skipChecks?: boolean): Promise<T["TX"][]> {
         if(this.state===FromBTCLNSwapState.CLAIM_COMMITED) return await this.txsClaim();
-        if(this.state!==FromBTCLNSwapState.PR_PAID) throw new Error("Must be in PR_PAID state!");
+        if(this.state!==FromBTCLNSwapState.PR_PAID && this.state!==FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) throw new Error("Must be in PR_PAID state!");
 
         const initTxs = await this.txsCommit(skipChecks);
         const claimTxs = await this.wrapper.contract.txsClaimWithSecret(this.getInitiator(), this.data, this.secret, true, true, null, true);

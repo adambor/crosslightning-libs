@@ -60,6 +60,7 @@ export abstract class ISwapWrapper<
 
     swapData: Map<string, S>;
     isInitialized: boolean = false;
+    tickInterval: NodeJS.Timer = null;
 
     /**
      * @param chainIdentifier
@@ -260,6 +261,8 @@ export abstract class ISwapWrapper<
      */
     protected abstract checkPastSwap(swap: S): Promise<boolean>;
 
+    protected abstract tickSwap(swap: S): void;
+
     /**
      * Processes batch of SC on-chain events
      * @param events
@@ -352,6 +355,12 @@ export abstract class ISwapWrapper<
             this.chainEvents.registerListener(this.boundProcessEvents);
         }
 
+        this.tickInterval = setInterval(() => {
+            this.swapData.forEach(value => {
+                this.tickSwap(value);
+            })
+        }, 1000);
+
         this.logger.info("init(): Swap wrapper initialized, num swaps: "+this.swapData.size);
 
         this.isInitialized = true;
@@ -365,6 +374,7 @@ export abstract class ISwapWrapper<
         this.isInitialized = false;
         this.chainEvents.unregisterListener(this.boundProcessEvents);
         this.logger.info("stop(): Swap wrapper stopped");
+        if(this.tickInterval!=null) clearInterval(this.tickInterval);
     }
 
     /**

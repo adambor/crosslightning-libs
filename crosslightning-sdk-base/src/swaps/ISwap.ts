@@ -3,9 +3,9 @@ import {EventEmitter} from "events";
 import * as BN from "bn.js";
 import {Buffer} from "buffer";
 import {ISwapWrapper} from "./ISwapWrapper";
-import {ChainType, SignatureData, SwapCommitStatus, SwapData} from "crosslightning-base";
+import {ChainType, SignatureData, SignatureVerificationError, SwapCommitStatus, SwapData} from "crosslightning-base";
 import {isPriceInfoType, PriceInfoType} from "../prices/abstract/ISwapPrice";
-import {getLogger, LoggerType, timeoutPromise} from "../utils/Utils";
+import {getLogger, LoggerType, timeoutPromise, tryWithRetries} from "../utils/Utils";
 import {Token, TokenAmount} from "./Tokens";
 
 export type ISwapInit<T extends SwapData> = {
@@ -53,6 +53,8 @@ export abstract class ISwap<
 > {
     readonly chainIdentifier: string;
 
+    protected readonly currentVersion: number = 1;
+    protected version: number;
     protected logger: LoggerType;
     protected readonly abstract TYPE: SwapType;
     protected readonly wrapper: ISwapWrapper<T, ISwap<T, S>>;
@@ -92,6 +94,7 @@ export abstract class ISwap<
         this.wrapper = wrapper;
         if(isISwapInit(swapInitOrObj)) {
             Object.assign(this, swapInitOrObj);
+            this.version = this.currentVersion;
         } else {
             this.expiry = swapInitOrObj.expiry;
             this.url = swapInitOrObj.url;
@@ -120,8 +123,35 @@ export abstract class ISwap<
             this.commitTxId = swapInitOrObj.commitTxId;
             this.claimTxId = swapInitOrObj.claimTxId;
             this.refundTxId = swapInitOrObj.refundTxId;
+
+            this.version = swapInitOrObj.version;
         }
         this.logger = getLogger(this.constructor.name+"("+this.getPaymentHashString()+"): ");
+        if(this.version!==this.currentVersion) {
+            this.upgradeVersion();
+        }
+    }
+
+    protected abstract upgradeVersion(): void;
+
+    /**
+     * Periodically checks for init signature's expiry
+     *
+     * @param abortSignal
+     * @param interval How often to check (in seconds), default to 5s
+     * @protected
+     */
+    protected async watchdogWaitTillSignatureExpiry(abortSignal?: AbortSignal, interval: number = 5): Promise<void> {
+        let expired = false
+        while(!expired) {
+            await timeoutPromise(interval*1000, abortSignal);
+            try {
+                expired = await this.wrapper.contract.isInitAuthorizationExpired(this.data, this.signatureData);
+            } catch (e) {
+                this.logger.error("watchdogWaitTillSignatureExpiry(): Error when checking signature expiry: ", e);
+            }
+        }
+        if(abortSignal!=null) abortSignal.throwIfAborted();
     }
 
     /**
@@ -131,17 +161,22 @@ export abstract class ISwap<
      * @param interval How often to check (in seconds), default to 5s
      * @protected
      */
-    protected async watchdogWaitTillCommited(abortSignal?: AbortSignal, interval: number = 5): Promise<void> {
+    protected async watchdogWaitTillCommited(abortSignal?: AbortSignal, interval: number = 5): Promise<boolean> {
         let status: SwapCommitStatus = SwapCommitStatus.NOT_COMMITED;
         while(status===SwapCommitStatus.NOT_COMMITED) {
             await timeoutPromise(interval*1000, abortSignal);
             try {
                 status = await this.wrapper.contract.getCommitStatus(this.getInitiator(), this.data);
+                if(
+                    status===SwapCommitStatus.NOT_COMMITED &&
+                    await this.wrapper.contract.isInitAuthorizationExpired(this.data, this.signatureData)
+                ) return false;
             } catch (e) {
-                this.logger.error("watchdogWaitTillCommited(): Error when fetching commit status: ", e);
+                this.logger.error("watchdogWaitTillCommited(): Error when fetching commit status or signature expiry: ", e);
             }
         }
         if(abortSignal!=null) abortSignal.throwIfAborted();
+        return true;
     }
 
     /**
@@ -296,11 +331,6 @@ export abstract class ISwap<
     abstract isFailed(): boolean;
 
     /**
-     * Checks if the swap's quote is still valid
-     */
-    abstract isQuoteValid(): Promise<boolean>;
-
-    /**
      * Returns the intiator address of the swap - address that created this swap
      */
     abstract getInitiator(): string;
@@ -312,6 +342,27 @@ export abstract class ISwap<
     checkSigner(signer: T["Signer"] | string): void {
         if((typeof(signer)==="string" ? signer : signer.getAddress())!==this.getInitiator()) throw new Error("Invalid signer provided!");
     }
+
+    /**
+     * Checks if the swap's quote is still valid
+     */
+    async isQuoteValid(): Promise<boolean> {
+        try {
+            await tryWithRetries(
+                () => this.wrapper.contract.isValidInitAuthorization(
+                    this.data, this.signatureData, this.feeRate
+                ),
+                null,
+                SignatureVerificationError
+            );
+            return true;
+        } catch (e) {
+            if(e instanceof SignatureVerificationError) {
+                return false;
+            }
+        }
+    }
+
 
     //////////////////////////////
     //// Amounts & fees
@@ -377,7 +428,8 @@ export abstract class ISwap<
             commitTxId: this.commitTxId,
             claimTxId: this.claimTxId,
             refundTxId: this.refundTxId,
-            expiry: this.expiry
+            expiry: this.expiry,
+            version: this.version
         }
     }
 

@@ -1,11 +1,5 @@
 import {IToBTCSwap, ToBTCSwapState} from "./IToBTCSwap";
-import {
-    ChainType,
-    ClaimEvent,
-    InitializeEvent,
-    RefundEvent,
-    SwapCommitStatus
-} from "crosslightning-base";
+import {ChainType, ClaimEvent, InitializeEvent, RefundEvent, SwapCommitStatus} from "crosslightning-base";
 import {AmountData, ISwapWrapper, ISwapWrapperOptions} from "../ISwapWrapper";
 import {tryWithRetries} from "../../utils/Utils";
 import {Intermediary, SingleChainReputationType} from "../../intermediaries/Intermediary";
@@ -26,7 +20,13 @@ export abstract class IToBTCWrapper<
      * @private
      */
     private async syncStateFromChain(swap: S): Promise<boolean> {
-        if(swap.state===ToBTCSwapState.CREATED || swap.state===ToBTCSwapState.COMMITED) {
+        if(
+            swap.state===ToBTCSwapState.CREATED ||
+            swap.state===ToBTCSwapState.QUOTE_SOFT_EXPIRED ||
+            swap.state===ToBTCSwapState.COMMITED ||
+            swap.state===ToBTCSwapState.SOFT_CLAIMED ||
+            swap.state===ToBTCSwapState.REFUNDABLE
+        ) {
             const res = await tryWithRetries(() => this.contract.getCommitStatus(swap.getInitiator(), swap.data));
             switch(res) {
                 case SwapCommitStatus.PAID:
@@ -103,13 +103,13 @@ export abstract class IToBTCWrapper<
     protected async checkPastSwap(swap: S): Promise<boolean> {
         let changed = await this.syncStateFromChain(swap);
 
-        if(swap.state===ToBTCSwapState.CREATED && !await swap.isQuoteValid()) {
+        if((swap.state===ToBTCSwapState.CREATED || swap.state===ToBTCSwapState.QUOTE_SOFT_EXPIRED) && !await swap.isQuoteValid()) {
             //Check if quote is still valid
             swap.state = ToBTCSwapState.QUOTE_EXPIRED;
             changed ||= true;
         }
 
-        if(swap.state===ToBTCSwapState.COMMITED) {
+        if(swap.state===ToBTCSwapState.COMMITED || swap.state===ToBTCSwapState.SOFT_CLAIMED) {
             //Check if that maybe already concluded
             changed ||= await swap.checkIntermediarySwapProcessed(false);
         }
@@ -117,18 +117,30 @@ export abstract class IToBTCWrapper<
         return changed;
     }
 
+    protected tickSwap(swap: S): void {
+        switch(swap.state) {
+            case ToBTCSwapState.CREATED:
+                if(swap.expiry<Date.now()) swap._saveAndEmit(ToBTCSwapState.QUOTE_SOFT_EXPIRED);
+                break;
+            case ToBTCSwapState.COMMITED:
+            case ToBTCSwapState.SOFT_CLAIMED:
+                if(this.contract.isExpired(swap.getInitiator(), swap.data)) swap._saveAndEmit(ToBTCSwapState.REFUNDABLE);
+                break;
+        }
+    }
+
     protected async processEventInitialize(swap: S, event: InitializeEvent<T["Data"]>): Promise<boolean> {
-        if(swap.state==ToBTCSwapState.CREATED) {
+        if(swap.state===ToBTCSwapState.CREATED || swap.state===ToBTCSwapState.QUOTE_SOFT_EXPIRED) {
             const swapData = await event.swapData();
             if(swap.data!=null && !swap.data.equals(swapData)) return false;
-            if(swap.state===ToBTCSwapState.CREATED) swap.state = ToBTCSwapState.COMMITED;
+            if(swap.state===ToBTCSwapState.CREATED || swap.state===ToBTCSwapState.QUOTE_SOFT_EXPIRED) swap.state = ToBTCSwapState.COMMITED;
             swap.data = swapData;
             return true;
         }
     }
 
     protected processEventClaim(swap: S, event: ClaimEvent<T["Data"]>): Promise<boolean> {
-        if(swap.state===ToBTCSwapState.CREATED || swap.state===ToBTCSwapState.COMMITED || swap.state===ToBTCSwapState.REFUNDABLE) {
+        if(swap.state!==ToBTCSwapState.REFUNDED) {
             swap.state = ToBTCSwapState.CLAIMED;
             swap._setPaymentResult({secret: event.secret, txId: event.secret});
             return Promise.resolve(true);
@@ -137,7 +149,7 @@ export abstract class IToBTCWrapper<
     }
 
     protected processEventRefund(swap: S, event: RefundEvent<T["Data"]>): Promise<boolean> {
-        if(swap.state===ToBTCSwapState.CREATED || swap.state===ToBTCSwapState.COMMITED || swap.state===ToBTCSwapState.REFUNDABLE) {
+        if(swap.state!==ToBTCSwapState.CLAIMED) {
             swap.state = ToBTCSwapState.REFUNDED;
             return Promise.resolve(true);
         }

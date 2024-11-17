@@ -8,10 +8,13 @@ import {ChainType, SwapCommitStatus, SwapData} from "crosslightning-base";
 import {isISwapInit, ISwapInit} from "../../ISwap";
 import {Buffer} from "buffer";
 import {BitcoinTokens, BtcToken, SCToken, TokenAmount, toTokenAmount} from "../../Tokens";
+import {extendAbortController} from "../../../utils/Utils";
 
 export enum FromBTCSwapState {
-    FAILED = -2,
-    QUOTE_EXPIRED = -1,
+    FAILED = -4,
+    EXPIRED = -3,
+    QUOTE_EXPIRED = -2,
+    QUOTE_SOFT_EXPIRED = -1,
     PR_CREATED = 0,
     CLAIM_COMMITED = 1,
     BTC_TX_CONFIRMED = 2,
@@ -32,11 +35,6 @@ export function isFromBTCSwapInit<T extends SwapData>(obj: any): obj is FromBTCS
 export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T, FromBTCSwapState> {
     protected readonly inputToken: BtcToken<false> = BitcoinTokens.BTC;
     protected readonly TYPE = SwapType.FROM_BTC;
-
-    protected readonly PRE_COMMIT_STATE = FromBTCSwapState.PR_CREATED;
-    protected readonly COMMIT_STATE = FromBTCSwapState.CLAIM_COMMITED;
-    protected readonly CLAIM_STATE = FromBTCSwapState.CLAIM_CLAIMED;
-    protected readonly FAIL_STATE = FromBTCSwapState.FAILED;
 
     readonly wrapper: FromBTCWrapper<T>;
 
@@ -60,6 +58,32 @@ export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T
             this.vout = initOrObject.vout;
         }
         this.tryCalculateSwapFee();
+    }
+
+    protected upgradeVersion() {
+        if(this.version == null) {
+            switch(this.state) {
+                case -2:
+                    this.state = FromBTCSwapState.FAILED
+                    break;
+                case -1:
+                    this.state = FromBTCSwapState.QUOTE_EXPIRED
+                    break;
+                case 0:
+                    this.state = FromBTCSwapState.PR_CREATED
+                    break;
+                case 1:
+                    this.state = FromBTCSwapState.CLAIM_COMMITED
+                    break;
+                case 2:
+                    this.state = FromBTCSwapState.BTC_TX_CONFIRMED
+                    break;
+                case 3:
+                    this.state = FromBTCSwapState.CLAIM_CLAIMED
+                    break;
+            }
+            this.version = 1;
+        }
     }
 
 
@@ -159,7 +183,7 @@ export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T
         checkIntervalSeconds?: number,
         updateCallback?: (txId: string, confirmations: number, targetConfirmations: number, txEtaMs: number) => void
     ): Promise<void> {
-        if(this.state!==FromBTCSwapState.CLAIM_COMMITED) throw new Error("Must be in COMMITED state!");
+        if(this.state!==FromBTCSwapState.CLAIM_COMMITED && this.state!==FromBTCSwapState.EXPIRED) throw new Error("Must be in COMMITED state!");
 
         const result = await this.wrapper.btcRpc.waitForAddressTxo(
             this.address,
@@ -176,7 +200,10 @@ export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T
 
         this.txId = result.tx.txid;
         this.vout = result.vout;
-        if(this.state<FromBTCSwapState.BTC_TX_CONFIRMED) {
+        if(
+            (this.state as FromBTCSwapState)!==FromBTCSwapState.CLAIM_CLAIMED &&
+            (this.state as FromBTCSwapState)!==FromBTCSwapState.FAILED
+        ) {
             this.state = FromBTCSwapState.BTC_TX_CONFIRMED;
         }
 
@@ -200,6 +227,59 @@ export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T
             vout: result.vout,
             confirmations: result.tx.confirmations,
             targetConfirmations: this.data.getConfirmations()
+        }
+    }
+
+
+    //////////////////////////////
+    //// Commit
+
+    /**
+     * Commits the swap on-chain, locking the tokens from the intermediary in a PTLC
+     *
+     * @param signer Signer to sign the transactions with, must be the same as used in the initialization
+     * @param noWaitForConfirmation Do not wait for transaction confirmation
+     * @param abortSignal Abort signal to stop waiting for the transaction confirmation and abort
+     * @param skipChecks Skip checks like making sure init signature is still valid and swap wasn't commited yet
+     *  (this is handled when swap is created (quoted), if you commit right after quoting, you can use skipChecks=true)
+     * @throws {Error} If invalid signer is provided that doesn't match the swap data
+     */
+    async commit(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
+        this.checkSigner(signer);
+        const result = await this.wrapper.contract.sendAndConfirm(
+            signer, await this.txsCommit(skipChecks), !noWaitForConfirmation, abortSignal
+        );
+
+        this.commitTxId = result[0];
+        if(this.state===FromBTCSwapState.PR_CREATED || this.state===FromBTCSwapState.QUOTE_SOFT_EXPIRED) {
+            await this._saveAndEmit(FromBTCSwapState.CLAIM_COMMITED);
+        }
+        return result[0];
+    }
+
+    async waitTillCommited(abortSignal?: AbortSignal): Promise<void> {
+        if(this.state===FromBTCSwapState.CLAIM_COMMITED || this.state===FromBTCSwapState.CLAIM_CLAIMED) return Promise.resolve();
+        if(this.state!==FromBTCSwapState.PR_CREATED && this.state!==FromBTCSwapState.QUOTE_SOFT_EXPIRED) throw new Error("Invalid state");
+
+        const abortController = extendAbortController(abortSignal);
+        const result = await Promise.race([
+            this.watchdogWaitTillCommited(abortController.signal),
+            this.waitTillState(FromBTCSwapState.CLAIM_COMMITED, "gte", abortController.signal).then(() => 0)
+        ]);
+        abortController.abort();
+
+        if(result===0) this.logger.debug("waitTillCommited(): Resolved from state changed");
+        if(result===true) this.logger.debug("waitTillCommited(): Resolved from watchdog - commited");
+        if(result===false) {
+            this.logger.debug("waitTillCommited(): Resolved from watchdog - signature expired");
+            if(this.state===FromBTCSwapState.PR_CREATED || this.state===FromBTCSwapState.QUOTE_SOFT_EXPIRED) {
+                await this._saveAndEmit(FromBTCSwapState.QUOTE_EXPIRED);
+            }
+            return;
+        }
+
+        if(this.state===FromBTCSwapState.PR_CREATED || this.state===FromBTCSwapState.QUOTE_SOFT_EXPIRED) {
+            await this._saveAndEmit(FromBTCSwapState.CLAIM_COMMITED);
         }
     }
 
@@ -254,8 +334,49 @@ export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T
         }
 
         this.claimTxId = txIds[0];
-        await this._saveAndEmit(this.CLAIM_STATE);
+        await this._saveAndEmit(FromBTCSwapState.CLAIM_CLAIMED);
         return txIds[0];
+    }
+
+    /**
+     * Waits till the swap is successfully claimed
+     *
+     * @param abortSignal AbortSignal
+     * @throws {Error} If swap is in invalid state (must be BTC_TX_CONFIRMED)
+     * @throws {Error} If the LP refunded sooner than we were able to claim
+     */
+    async waitTillClaimed(abortSignal?: AbortSignal): Promise<void> {
+        if(this.state===FromBTCSwapState.CLAIM_CLAIMED) return Promise.resolve();
+        if(this.state!==FromBTCSwapState.BTC_TX_CONFIRMED) throw new Error("Invalid state (not BTC_TX_CONFIRMED)");
+
+        const abortController = new AbortController();
+        if(abortSignal!=null) abortSignal.addEventListener("abort", () => abortController.abort(abortSignal.reason));
+        const res = await Promise.race([
+            this.watchdogWaitTillResult(abortController.signal),
+            this.waitTillState(FromBTCSwapState.CLAIM_CLAIMED, "eq", abortController.signal).then(() => 0),
+            this.waitTillState(FromBTCSwapState.FAILED, "eq", abortController.signal).then(() => 1),
+        ]);
+        abortController.abort();
+
+        if(res===0) {
+            this.logger.debug("waitTillClaimed(): Resolved from state change (CLAIM_CLAIMED)");
+            return;
+        }
+        if(res===1) {
+            this.logger.debug("waitTillClaimed(): Resolved from state change (FAILED)");
+            throw new Error("Offerer refunded during claiming");
+        }
+        this.logger.debug("waitTillClaimed(): Resolved from watchdog");
+
+        if(res===SwapCommitStatus.PAID) {
+            if((this.state as FromBTCSwapState)!==FromBTCSwapState.CLAIM_CLAIMED) await this._saveAndEmit(FromBTCSwapState.CLAIM_CLAIMED);
+        }
+        if(res===SwapCommitStatus.NOT_COMMITED || res===SwapCommitStatus.EXPIRED) {
+            if(
+                (this.state as FromBTCSwapState)!==FromBTCSwapState.CLAIM_CLAIMED &&
+                (this.state as FromBTCSwapState)!==FromBTCSwapState.FAILED
+            ) await this._saveAndEmit(FromBTCSwapState.FAILED);
+        }
     }
 
 

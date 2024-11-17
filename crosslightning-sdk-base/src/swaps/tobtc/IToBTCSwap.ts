@@ -2,7 +2,7 @@ import {IToBTCWrapper} from "./IToBTCWrapper";
 import {Fee, isISwapInit, ISwap, ISwapInit} from "../ISwap";
 import * as BN from "bn.js";
 import {
-    AbstractSigner, ChainType,
+    ChainType,
     SignatureVerificationError,
     SwapCommitStatus,
     SwapData
@@ -15,7 +15,7 @@ import {
 } from "../../intermediaries/IntermediaryAPI";
 import {IntermediaryError} from "../../errors/IntermediaryError";
 import {extendAbortController, timeoutPromise, tryWithRetries} from "../../utils/Utils";
-import {BitcoinTokens, BtcToken, SCToken, TokenAmount, toTokenAmount} from "../Tokens";
+import {BtcToken, SCToken, TokenAmount, toTokenAmount} from "../Tokens";
 
 export type IToBTCSwapInit<T extends SwapData> = ISwapInit<T> & {
     networkFee: BN,
@@ -45,6 +45,32 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
         } else {
             this.networkFee = initOrObject.networkFee==null ? null : new BN(initOrObject.networkFee);
             this.networkFeeBtc = initOrObject.networkFeeBtc==null ? null : new BN(initOrObject.networkFeeBtc);
+        }
+    }
+
+    protected upgradeVersion() {
+        if(this.version == null) {
+            switch(this.state) {
+                case -2:
+                    this.state = ToBTCSwapState.REFUNDED
+                    break;
+                case -1:
+                    this.state = ToBTCSwapState.QUOTE_EXPIRED
+                    break;
+                case 0:
+                    this.state = ToBTCSwapState.CREATED
+                    break;
+                case 1:
+                    this.state = ToBTCSwapState.COMMITED
+                    break;
+                case 2:
+                    this.state = ToBTCSwapState.CLAIMED
+                    break;
+                case 3:
+                    this.state = ToBTCSwapState.REFUNDABLE
+                    break;
+            }
+            this.version = 1;
         }
     }
 
@@ -120,23 +146,6 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
 
     isFailed(): boolean {
         return this.state===ToBTCSwapState.REFUNDED;
-    }
-
-    async isQuoteValid(): Promise<boolean> {
-        try {
-            await tryWithRetries(
-                () => this.wrapper.contract.isValidInitAuthorization(
-                    this.data, this.signatureData, this.feeRate
-                ),
-                null,
-                SignatureVerificationError
-            );
-            return true;
-        } catch (e) {
-            if(e instanceof SignatureVerificationError) {
-                return false;
-            }
-        }
     }
 
     /**
@@ -221,7 +230,11 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
         );
 
         this.commitTxId = result[0];
-        await this._saveAndEmit(ToBTCSwapState.COMMITED);
+        if(this.state===ToBTCSwapState.CREATED || this.state===ToBTCSwapState.QUOTE_SOFT_EXPIRED) {
+            await this._saveAndEmit(ToBTCSwapState.COMMITED);
+        } else {
+            await this._save();
+        }
         return result[0];
     }
 
@@ -251,19 +264,28 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
      */
     async waitTillCommited(abortSignal?: AbortSignal): Promise<void> {
         if(this.state===ToBTCSwapState.COMMITED || this.state===ToBTCSwapState.CLAIMED) return Promise.resolve();
-        if(this.state!==ToBTCSwapState.CREATED) throw new Error("Invalid state (not CREATED)");
+        if(this.state!==ToBTCSwapState.CREATED && this.state!==ToBTCSwapState.QUOTE_SOFT_EXPIRED) throw new Error("Invalid state (not CREATED)");
 
         const abortController = extendAbortController(abortSignal);
         const result = await Promise.race([
-            this.watchdogWaitTillCommited(abortController.signal).then(() => 0),
-            this.waitTillState(ToBTCSwapState.COMMITED, "gte", abortController.signal).then(() => 1)
+            this.watchdogWaitTillCommited(abortController.signal),
+            this.waitTillState(ToBTCSwapState.COMMITED, "gte", abortController.signal).then(() => 0)
         ]);
         abortController.abort();
 
-        if(result===0) this.logger.debug("waitTillCommited(): Resolved from watchdog");
-        if(result===1) this.logger.debug("waitTillCommited(): Resolved from state change");
+        if(result===0) this.logger.debug("waitTillCommited(): Resolved from state change");
+        if(result===true) this.logger.debug("waitTillCommited(): Resolved from watchdog - commited");
+        if(result===false) {
+            this.logger.debug("waitTillCommited(): Resolved from watchdog - signature expiry");
+            if(this.state===ToBTCSwapState.QUOTE_SOFT_EXPIRED || this.state===ToBTCSwapState.CREATED) {
+                await this._saveAndEmit(ToBTCSwapState.QUOTE_EXPIRED);
+            }
+            return;
+        }
 
-        if(this.state<ToBTCSwapState.COMMITED) await this._saveAndEmit(ToBTCSwapState.COMMITED);
+        if(this.state===ToBTCSwapState.QUOTE_SOFT_EXPIRED || this.state===ToBTCSwapState.CREATED) {
+            await this._saveAndEmit(ToBTCSwapState.COMMITED);
+        }
     }
 
 
@@ -285,16 +307,17 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
      */
     async waitForPayment(abortSignal?: AbortSignal, checkIntervalSeconds?: number): Promise<boolean> {
         if(this.state===ToBTCSwapState.CLAIMED) return Promise.resolve(true);
-        if(this.state!==ToBTCSwapState.COMMITED) throw new Error("Invalid state (not COMMITED)");
+        if(this.state!==ToBTCSwapState.COMMITED && this.state!==ToBTCSwapState.SOFT_CLAIMED) throw new Error("Invalid state (not COMMITED)");
 
         const abortController = extendAbortController(abortSignal);
         const result = await Promise.race([
-            this.waitTillState(ToBTCSwapState.CLAIMED, "eq", abortController.signal) as Promise<null>,
+            this.waitTillState(ToBTCSwapState.CLAIMED, "gte", abortController.signal) as Promise<null>,
             this.waitTillIntermediarySwapProcessed(abortController.signal, checkIntervalSeconds)
         ]);
         abortController.abort();
 
         if(typeof result !== "object") {
+            if((this.state as ToBTCSwapState)===ToBTCSwapState.REFUNDABLE) throw new Error("Swap expired");
             this.logger.debug("waitTillRefunded(): Resolved from state change");
             return true;
         }
@@ -318,8 +341,7 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
                 if(this.wrapper.contract.isExpired(this.getInitiator(), this.data)) throw new Error("Swap expired");
                 throw new IntermediaryError("Swap expired");
             case RefundAuthorizationResponseCodes.NOT_FOUND:
-                // @ts-ignore
-                if(this.state===ToBTCSwapState.CLAIMED) return true;
+                if((this.state as ToBTCSwapState)===ToBTCSwapState.CLAIMED) return true;
                 throw new Error("Intermediary swap not found");
         }
     }
@@ -333,8 +355,13 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
             resp.code===RefundAuthorizationResponseCodes.PENDING || resp.code===RefundAuthorizationResponseCodes.NOT_FOUND
         )) {
             resp = await IntermediaryAPI.getRefundAuthorization(this.url, this.data.getHash(), this.data.getSequence());
-            if(resp.code===RefundAuthorizationResponseCodes.PAID && !await this._setPaymentResult(resp.data, true)) {
-                resp = {code: RefundAuthorizationResponseCodes.PENDING, msg: ""};
+            if(resp.code===RefundAuthorizationResponseCodes.PAID) {
+                const validResponse = await this._setPaymentResult(resp.data, true);
+                if(validResponse) {
+                    this.state = ToBTCSwapState.SOFT_CLAIMED;
+                } else {
+                    resp = {code: RefundAuthorizationResponseCodes.PENDING, msg: ""};
+                }
             }
             if(
                 resp.code===RefundAuthorizationResponseCodes.PENDING ||
@@ -361,7 +388,10 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
         switch(resp.code) {
             case RefundAuthorizationResponseCodes.PAID:
                 const processed = await this._setPaymentResult(resp.data, true);
-                if(save) await this._saveAndEmit();
+                if(processed) {
+                    this.state = ToBTCSwapState.SOFT_CLAIMED;
+                    if(save) await this._saveAndEmit();
+                }
                 return processed;
             case RefundAuthorizationResponseCodes.REFUND_DATA:
                 await tryWithRetries(
@@ -428,27 +458,34 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
      *
      * @param abortSignal   AbortSignal
      * @throws {Error} When swap is not in a valid state (must be COMMITED)
+     * @throws {Error} If we tried to refund but claimer was able to claim first
      */
     async waitTillRefunded(abortSignal?: AbortSignal): Promise<void> {
         if(this.state===ToBTCSwapState.REFUNDED) return Promise.resolve();
-        if(this.state!==ToBTCSwapState.COMMITED) throw new Error("Invalid state (not COMMITED)");
+        if(this.state!==ToBTCSwapState.COMMITED && this.state!==ToBTCSwapState.SOFT_CLAIMED) throw new Error("Invalid state (not COMMITED)");
 
         const abortController = new AbortController();
         if(abortSignal!=null) abortSignal.addEventListener("abort", () => abortController.abort(abortSignal.reason));
         const res = await Promise.race([
             this.watchdogWaitTillResult(abortController.signal),
-            this.waitTillState(ToBTCSwapState.REFUNDED, "eq", abortController.signal)
+            this.waitTillState(ToBTCSwapState.REFUNDED, "eq", abortController.signal).then(() => 0),
+            this.waitTillState(ToBTCSwapState.CLAIMED, "eq", abortController.signal).then(() => 1),
         ]);
         abortController.abort();
 
-        if(res==null) {
-            this.logger.debug("waitTillRefunded(): Resolved from state change");
-        } else {
-            this.logger.debug("waitTillRefunded(): Resolved from watchdog");
+        if(res===0) {
+            this.logger.debug("waitTillRefunded(): Resolved from state change (REFUNDED)");
+            return;
         }
+        if(res===1) {
+            this.logger.debug("waitTillRefunded(): Resolved from state change (CLAIMED)");
+            throw new Error("Tried to refund swap, but claimer claimed it in the meantime!");
+        }
+        this.logger.debug("waitTillRefunded(): Resolved from watchdog");
 
         if(res===SwapCommitStatus.PAID) {
             await this._saveAndEmit(ToBTCSwapState.CLAIMED);
+            throw new Error("Tried to refund swap, but claimer claimed it in the meantime!");
         }
         if(res===SwapCommitStatus.NOT_COMMITED) {
             await this._saveAndEmit(ToBTCSwapState.REFUNDED);
@@ -471,10 +508,12 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
 }
 
 export enum ToBTCSwapState {
-    REFUNDED = -2,
-    QUOTE_EXPIRED = -1,
+    REFUNDED = -3,
+    QUOTE_EXPIRED = -2,
+    QUOTE_SOFT_EXPIRED = -1,
     CREATED = 0,
     COMMITED = 1,
-    CLAIMED = 2,
-    REFUNDABLE = 3
+    SOFT_CLAIMED = 2,
+    CLAIMED = 3,
+    REFUNDABLE = 4
 }

@@ -64,4 +64,6 @@ export class LnForGasWrapper<T extends ChainType> extends ISwapWrapper<T, LnForG
         return signer===swap.getRecipient();
     }
 
+    protected tickSwap(swap: LnForGasSwap<T>): void {}
+
 }
