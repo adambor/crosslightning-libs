@@ -255,6 +255,7 @@ export class LnForGasSwap<T extends ChainType = ChainType> extends ISwap<T, LnFo
     async waitForPayment(abortSignal?: AbortSignal, checkIntervalSeconds: number = 5): Promise<void> {
         if(this.state!==LnForGasSwapState.PR_CREATED) throw new Error("Must be in PR_CREATED state!");
 
+        this.initiated = true;
         await this._save();
 
         while(!abortSignal.aborted && this.state===LnForGasSwapState.PR_CREATED) {

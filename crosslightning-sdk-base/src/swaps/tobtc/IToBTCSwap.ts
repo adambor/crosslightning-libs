@@ -249,6 +249,7 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
     async txsCommit(skipChecks?: boolean): Promise<T["TX"][]> {
         if(!this.canCommit()) throw new Error("Must be in CREATED state!");
 
+        this.initiated = true;
         await this._save();
 
         return await this.wrapper.contract.txsInitPayIn(
@@ -311,7 +312,7 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
 
         const abortController = extendAbortController(abortSignal);
         const result = await Promise.race([
-            this.waitTillState(ToBTCSwapState.CLAIMED, "gte", abortController.signal) as Promise<null>,
+            this.waitTillState(ToBTCSwapState.CLAIMED, "gte", abortController.signal),
             this.waitTillIntermediarySwapProcessed(abortController.signal, checkIntervalSeconds)
         ]);
         abortController.abort();
@@ -325,7 +326,7 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
 
         switch(result.code) {
             case RefundAuthorizationResponseCodes.PAID:
-                await this._save();
+                await this._saveAndEmit();
                 return true;
             case RefundAuthorizationResponseCodes.REFUND_DATA:
                 await tryWithRetries(

@@ -300,8 +300,7 @@ export abstract class ISwapWrapper<
             this.logger.info("processEvents(): "+event.constructor.name+" processed for "+swap.getPaymentHashString()+" swap: ", swap);
 
             if(swapChanged) {
-                await (swap.isQuoteExpired() ? this.storage.removeSwapData(swap) : swap._save());
-                swap._emitEvent();
+                await swap._saveAndEmit();
             }
         }
         return true;

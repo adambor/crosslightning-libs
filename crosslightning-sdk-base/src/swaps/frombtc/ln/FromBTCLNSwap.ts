@@ -214,6 +214,7 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
             this.prPosted = true;
         }
 
+        this.initiated = true;
         await this._save();
 
         let lnurlFailListener = () => abortController.abort(this.lnurlFailSignal.signal.reason);
@@ -223,9 +224,6 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
         let resp: PaymentAuthorizationResponse = {code: PaymentAuthorizationResponseCodes.PENDING, msg: ""};
         while(!abortController.signal.aborted && resp.code===PaymentAuthorizationResponseCodes.PENDING) {
             resp = await IntermediaryAPI.getPaymentAuthorization(this.url, this.data.getHash());
-            if(this.getTimeoutTime()<Date.now() && resp.code!==PaymentAuthorizationResponseCodes.AUTH_DATA) {
-                resp = {code: PaymentAuthorizationResponseCodes.EXPIRED, msg: ""};
-            }
             if(resp.code===PaymentAuthorizationResponseCodes.PENDING)
                 await timeoutPromise(checkIntervalSeconds*1000, abortController.signal);
         }
@@ -273,7 +271,7 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
             this.state===FromBTCLNSwapState.CLAIM_CLAIMED ||
             this.state===FromBTCLNSwapState.FAILED
         ) return true;
-        if(this.state===FromBTCLNSwapState.QUOTE_EXPIRED || this.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) return false;
+        if(this.state===FromBTCLNSwapState.QUOTE_EXPIRED || (this.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED && this.signatureData!=null)) return false;
         const resp = await IntermediaryAPI.getPaymentAuthorization(this.url, this.data.getHash());
         switch(resp.code) {
             case PaymentAuthorizationResponseCodes.AUTH_DATA:
@@ -291,12 +289,14 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
                         timeout: resp.data.timeout,
                         signature: resp.data.signature
                     };
+                    this.initiated = true;
                     if(save) await this._saveAndEmit();
                     return true;
                 } catch (e) {}
                 return null;
             case PaymentAuthorizationResponseCodes.EXPIRED:
                 this.state = FromBTCLNSwapState.QUOTE_EXPIRED;
+                this.initiated = true;
                 if(save) await this._saveAndEmit();
                 return false;
             default:
@@ -368,7 +368,7 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
 
     async waitTillCommited(abortSignal?: AbortSignal): Promise<void> {
         if(this.state===FromBTCLNSwapState.CLAIM_COMMITED || this.state===FromBTCLNSwapState.CLAIM_CLAIMED) return Promise.resolve();
-        if(this.state!==FromBTCLNSwapState.PR_PAID && this.state!==FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) throw new Error("Invalid state");
+        if(this.state!==FromBTCLNSwapState.PR_PAID && (this.state!==FromBTCLNSwapState.QUOTE_SOFT_EXPIRED && this.signatureData!=null)) throw new Error("Invalid state");
 
         const abortController = extendAbortController(abortSignal);
         const result = await Promise.race([
@@ -513,7 +513,7 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
      */
     async txsCommitAndClaim(skipChecks?: boolean): Promise<T["TX"][]> {
         if(this.state===FromBTCLNSwapState.CLAIM_COMMITED) return await this.txsClaim();
-        if(this.state!==FromBTCLNSwapState.PR_PAID && this.state!==FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) throw new Error("Must be in PR_PAID state!");
+        if(this.state!==FromBTCLNSwapState.PR_PAID && (this.state!==FromBTCLNSwapState.QUOTE_SOFT_EXPIRED || this.signatureData==null)) throw new Error("Must be in PR_PAID state!");
 
         const initTxs = await this.txsCommit(skipChecks);
         const claimTxs = await this.wrapper.contract.txsClaimWithSecret(this.getInitiator(), this.data, this.secret, true, true, null, true);

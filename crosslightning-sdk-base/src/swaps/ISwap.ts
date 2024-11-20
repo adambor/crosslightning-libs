@@ -55,6 +55,7 @@ export abstract class ISwap<
 
     protected readonly currentVersion: number = 1;
     protected version: number;
+    protected initiated: boolean = false;
     protected logger: LoggerType;
     protected readonly abstract TYPE: SwapType;
     protected readonly wrapper: ISwapWrapper<T, ISwap<T, S>>;
@@ -125,6 +126,7 @@ export abstract class ISwap<
             this.refundTxId = swapInitOrObj.refundTxId;
 
             this.version = swapInitOrObj.version;
+            this.initiated = swapInitOrObj.initiated;
         }
         this.logger = getLogger(this.constructor.name+"("+this.getPaymentHashString()+"): ");
         if(this.version!==this.currentVersion) {
@@ -363,6 +365,10 @@ export abstract class ISwap<
         }
     }
 
+    isInitiated(): boolean {
+        return this.initiated;
+    }
+
 
     //////////////////////////////
     //// Amounts & fees
@@ -429,13 +435,21 @@ export abstract class ISwap<
             claimTxId: this.claimTxId,
             refundTxId: this.refundTxId,
             expiry: this.expiry,
-            version: this.version
+            version: this.version,
+            initiated: this.initiated
         }
     }
 
     _save(): Promise<void> {
-        this.wrapper.swapData.set(this.getPaymentHashString(), this);
-        return this.wrapper.storage.saveSwapData(this);
+        if(this.isQuoteExpired()) {
+            this.wrapper.swapData.delete(this.getPaymentHashString());
+            if(!this.initiated) return Promise.resolve();
+            return this.wrapper.storage.removeSwapData(this).then(() => {});
+        } else {
+            this.wrapper.swapData.set(this.getPaymentHashString(), this);
+            if(!this.initiated) return Promise.resolve();
+            return this.wrapper.storage.saveSwapData(this);
+        }
     }
 
     async _saveAndEmit(state?: S): Promise<void> {

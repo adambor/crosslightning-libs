@@ -34,7 +34,7 @@ export class LnForGasWrapper<T extends ChainType> extends ISwapWrapper<T, LnForG
             amount, this.contract.getNativeCurrencyAddress(), resp
         );
 
-        return new LnForGasSwap(this, {
+        const quote = new LnForGasSwap(this, {
             pr: resp.pr,
             outputAmount: resp.total,
             recipient: signer,
@@ -44,6 +44,8 @@ export class LnForGasWrapper<T extends ChainType> extends ISwapWrapper<T, LnForG
             swapFee: resp.swapFee,
             feeRate: ""
         });
+        await quote._save();
+        return quote;
     }
 
     protected async checkPastSwap(swap: LnForGasSwap<T>): Promise<boolean> {

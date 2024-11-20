@@ -403,7 +403,7 @@ export class FromBTCWrapper<
                             this.verifyIntermediaryLiquidity(data.getAmount(), liquidityPromise),
                         ]);
 
-                        return new FromBTCSwap<T>(this, {
+                        const quote = new FromBTCSwap<T>(this, {
                             pricingInfo,
                             url: lp.url,
                             expiry: signatureExpiry,
@@ -414,6 +414,8 @@ export class FromBTCWrapper<
                             address: resp.btcAddress,
                             amount: resp.amount
                         } as FromBTCSwapInit<T["Data"]>);
+                        await quote._save();
+                        return quote;
                     } catch (e) {
                         abortController.abort(e);
                         throw e;

@@ -67,17 +67,16 @@ export class FromBTCLNWrapper<
     }
 
     protected async checkPastSwap(swap: FromBTCLNSwap<T>): Promise<boolean> {
-        if(swap.state===FromBTCLNSwapState.PR_CREATED) {
+        if(swap.state===FromBTCLNSwapState.PR_CREATED || (swap.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED && swap.signatureData==null)) {
             if(swap.getTimeoutTime()<Date.now()) {
-                swap.state = FromBTCLNSwapState.QUOTE_EXPIRED;
-                return true;
+                swap.state = FromBTCLNSwapState.QUOTE_SOFT_EXPIRED;
             }
 
             const result = await swap.checkIntermediaryPaymentReceived(false);
             if(result!==null) return true;
         }
 
-        if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) {
+        if(swap.state===FromBTCLNSwapState.PR_PAID || (swap.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED && swap.signatureData!=null)) {
             //Check if it's already committed
             const status = await tryWithRetries(() => this.contract.getCommitStatus(swap.getInitiator(), swap.data));
             switch(status) {
@@ -120,7 +119,7 @@ export class FromBTCLNWrapper<
     protected tickSwap(swap: FromBTCLNSwap<T>): void {
         switch(swap.state) {
             case FromBTCLNSwapState.PR_CREATED:
-                if(swap.getTimeoutTime()<Date.now()) swap._saveAndEmit(FromBTCLNSwapState.QUOTE_EXPIRED);
+                if(swap.getTimeoutTime()<Date.now()) swap._saveAndEmit(FromBTCLNSwapState.QUOTE_SOFT_EXPIRED);
                 break;
             case FromBTCLNSwapState.PR_PAID:
                 if(swap.expiry<Date.now()) swap._saveAndEmit(FromBTCLNSwapState.QUOTE_SOFT_EXPIRED);
@@ -332,7 +331,7 @@ export class FromBTCLNWrapper<
                             this.verifyLnNodeCapacity(lp, decodedPr, amountIn, lnCapacityPromise, abortController.signal)
                         ]);
 
-                        return new FromBTCLNSwap<T>(this, {
+                        const quote = new FromBTCLNSwap<T>(this, {
                             pricingInfo,
                             url: lp.url,
                             expiry: decodedPr.timeExpireDate*1000,
@@ -346,6 +345,8 @@ export class FromBTCLNWrapper<
                             pr: resp.pr,
                             secret: secret.toString("hex")
                         } as FromBTCLNSwapInit<T["Data"]>);
+                        await quote._save();
+                        return quote;
                     } catch (e) {
                         abortController.abort(e);
                         throw e;

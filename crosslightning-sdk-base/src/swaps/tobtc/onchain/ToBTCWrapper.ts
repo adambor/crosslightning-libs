@@ -250,7 +250,7 @@ export class ToBTCWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCSwa
                         ]);
                         abortController.signal.throwIfAborted();
 
-                        return new ToBTCSwap<T>(this, {
+                        const quote = new ToBTCSwap<T>(this, {
                             pricingInfo,
                             url: lp.url,
                             expiry: signatureExpiry,
@@ -264,6 +264,8 @@ export class ToBTCWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCSwa
                             confirmationTarget: options.confirmationTarget,
                             satsPerVByte: resp.satsPervByte.toNumber()
                         } as ToBTCSwapInit<T["Data"]>);
+                        await quote._save();
+                        return quote;
                     } catch (e) {
                         abortController.abort(e);
                         throw e;

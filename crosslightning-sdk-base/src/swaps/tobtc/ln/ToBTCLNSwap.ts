@@ -151,7 +151,9 @@ export class ToBTCLNSwap<T extends ChainType = ChainType> extends IToBTCSwap<T> 
             ...super.serialize(),
             pr: this.pr,
             confidence: this.confidence,
-            secret: this.secret
+            secret: this.secret,
+            lnurl: this.lnurl,
+            successAction: this.successAction
         };
     }
 

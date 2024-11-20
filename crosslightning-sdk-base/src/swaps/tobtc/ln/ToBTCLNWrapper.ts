@@ -214,7 +214,7 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
 
             lp.reputation[amountData.token.toString()] = reputation;
 
-            return new ToBTCLNSwap<T>(this, {
+            const quote = new ToBTCLNSwap<T>(this, {
                 pricingInfo,
                 url: lp.url,
                 expiry: signatureExpiry,
@@ -227,6 +227,8 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
                 confidence: resp.confidence,
                 pr
             } as IToBTCSwapInit<T["Data"]>);
+            await quote._save();
+            return quote;
         } catch (e) {
             abortController.abort(e);
             throw e;
@@ -401,7 +403,7 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
 
             lp.reputation[amountData.token.toString()] = reputation;
 
-            return new ToBTCLNSwap<T>(this, {
+            const quote = new ToBTCLNSwap<T>(this, {
                 pricingInfo,
                 url: lp.url,
                 expiry: signatureExpiry,
@@ -416,6 +418,8 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
                 lnurl: payRequest.url,
                 successAction
             } as IToBTCSwapInit<T["Data"]>);
+            await quote._save();
+            return quote;
         } catch (e) {
             abortController.abort(e);
             throw e;
