@@ -134,7 +134,7 @@ export class FromBTCLNWrapper<
         if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) {
             const swapData = await event.swapData();
             if(swap.data!=null && !swap.data.equals(swapData)) return false;
-            swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
+            if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
             swap.data = swapData;
             return true;
         }
@@ -343,7 +343,8 @@ export class FromBTCLNWrapper<
                                 resp.securityDeposit, new BN(0)
                             ),
                             pr: resp.pr,
-                            secret: secret.toString("hex")
+                            secret: secret.toString("hex"),
+                            exactIn: amountData.exactIn ?? true
                         } as FromBTCLNSwapInit<T["Data"]>);
                         await quote._save();
                         return quote;

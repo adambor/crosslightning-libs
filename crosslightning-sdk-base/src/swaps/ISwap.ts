@@ -7,6 +7,7 @@ import {ChainType, SignatureData, SignatureVerificationError, SwapCommitStatus, 
 import {isPriceInfoType, PriceInfoType} from "../prices/abstract/ISwapPrice";
 import {getLogger, LoggerType, timeoutPromise, tryWithRetries} from "../utils/Utils";
 import {Token, TokenAmount} from "./Tokens";
+import {SwapDirection} from "./SwapDirection";
 
 export type ISwapInit<T extends SwapData> = {
     pricingInfo: PriceInfoType,
@@ -16,7 +17,8 @@ export type ISwapInit<T extends SwapData> = {
     swapFeeBtc?: BN,
     feeRate: any,
     signatureData?: SignatureData,
-    data?: T
+    data?: T,
+    exactIn: boolean
 };
 
 export function isISwapInit<T extends SwapData>(obj: any): obj is ISwapInit<T> {
@@ -34,7 +36,8 @@ export function isISwapInit<T extends SwapData>(obj: any): obj is ISwapInit<T> {
             typeof(obj.signatureData.timeout)==="string" &&
             typeof(obj.signatureData.signature)==="string"
         )) &&
-        (obj.data == null || typeof obj.data === 'object');
+        (obj.data == null || typeof obj.data === 'object') &&
+        (typeof obj.exactIn === 'boolean');
 }
 
 export type Fee<
@@ -52,6 +55,7 @@ export abstract class ISwap<
     S extends number = number
 > {
     readonly chainIdentifier: string;
+    readonly exactIn: boolean;
 
     protected readonly currentVersion: number = 1;
     protected version: number;
@@ -127,6 +131,7 @@ export abstract class ISwap<
 
             this.version = swapInitOrObj.version;
             this.initiated = swapInitOrObj.initiated;
+            this.exactIn = swapInitOrObj.exactIn;
         }
         this.logger = getLogger(this.constructor.name+"("+this.getPaymentHashString()+"): ");
         if(this.version!==this.currentVersion) {
@@ -306,6 +311,13 @@ export abstract class ISwap<
     }
 
     /**
+     * Returns the direction of the swap
+     */
+    getDirection(): SwapDirection {
+        return this.TYPE===SwapType.FROM_BTCLN || this.TYPE===SwapType.FROM_BTC ? SwapDirection.FROM_BTC : SwapDirection.TO_BTC;
+    }
+
+    /**
      * Returns the current state of the swap
      */
     getState(): S {
@@ -436,7 +448,8 @@ export abstract class ISwap<
             refundTxId: this.refundTxId,
             expiry: this.expiry,
             version: this.version,
-            initiated: this.initiated
+            initiated: this.initiated,
+            exactIn: this.exactIn
         }
     }
 

@@ -106,6 +106,10 @@ export class ToBTCSwap<T extends ChainType = ChainType> extends IToBTCSwap<T> {
         return this.txId;
     }
 
+    getRecipient(): string {
+        return this.address;
+    }
+
 
     //////////////////////////////
     //// Storage

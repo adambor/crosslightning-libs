@@ -262,7 +262,8 @@ export class ToBTCWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCSwa
                             address,
                             amount: resp.amount,
                             confirmationTarget: options.confirmationTarget,
-                            satsPerVByte: resp.satsPervByte.toNumber()
+                            satsPerVByte: resp.satsPervByte.toNumber(),
+                            exactIn: amountData.exactIn ?? false
                         } as ToBTCSwapInit<T["Data"]>);
                         await quote._save();
                         return quote;

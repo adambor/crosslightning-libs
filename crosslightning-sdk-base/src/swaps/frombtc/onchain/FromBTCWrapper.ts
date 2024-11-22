@@ -412,7 +412,8 @@ export class FromBTCWrapper<
                             signatureData: resp,
                             data,
                             address: resp.btcAddress,
-                            amount: resp.amount
+                            amount: resp.amount,
+                            exactIn: amountData.exactIn ?? true
                         } as FromBTCSwapInit<T["Data"]>);
                         await quote._save();
                         return quote;

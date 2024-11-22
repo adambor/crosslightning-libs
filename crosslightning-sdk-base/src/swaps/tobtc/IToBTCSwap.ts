@@ -159,6 +159,11 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
         return this.data.getOfferer();
     }
 
+    /**
+     * Returns the recipient address/lnurl/lightning invoice for the swap
+     */
+    abstract getRecipient(): string;
+
 
     //////////////////////////////
     //// Amounts & fees

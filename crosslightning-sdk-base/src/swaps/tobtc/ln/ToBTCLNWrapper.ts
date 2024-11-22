@@ -225,7 +225,8 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
                 networkFee: resp.maxFee,
                 networkFeeBtc: resp.routingFeeSats,
                 confidence: resp.confidence,
-                pr
+                pr,
+                exactIn: false
             } as IToBTCSwapInit<T["Data"]>);
             await quote._save();
             return quote;
@@ -416,7 +417,8 @@ export class ToBTCLNWrapper<T extends ChainType> extends IToBTCWrapper<T, ToBTCL
                 confidence: resp.confidence,
                 pr: invoice,
                 lnurl: payRequest.url,
-                successAction
+                successAction,
+                exactIn: true
             } as IToBTCSwapInit<T["Data"]>);
             await quote._save();
             return quote;

@@ -110,6 +110,9 @@ export class ToBTCLNSwap<T extends ChainType = ChainType> extends IToBTCSwap<T> 
         return Buffer.from(parsed.tagsObject.payment_hash, "hex");
     }
 
+    getRecipient(): string {
+        return this.lnurl ?? this.pr;
+    }
 
     //////////////////////////////
     //// LNURL-pay
