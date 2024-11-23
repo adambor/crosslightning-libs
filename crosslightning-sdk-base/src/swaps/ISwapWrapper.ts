@@ -60,7 +60,7 @@ export abstract class ISwapWrapper<
 
     swapData: Map<string, S>;
     isInitialized: boolean = false;
-    tickInterval: NodeJS.Timer = null;
+    tickInterval: NodeJS.Timeout = null;
 
     /**
      * @param chainIdentifier

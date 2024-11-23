@@ -255,7 +255,7 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
         if(!this.canCommit()) throw new Error("Must be in CREATED state!");
 
         this.initiated = true;
-        await this._save();
+        await this._saveAndEmit();
 
         return await this.wrapper.contract.txsInitPayIn(
             this.data, this.signatureData, skipChecks, this.feeRate

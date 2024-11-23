@@ -215,7 +215,7 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
         }
 
         this.initiated = true;
-        await this._save();
+        await this._saveAndEmit();
 
         let lnurlFailListener = () => abortController.abort(this.lnurlFailSignal.signal.reason);
         this.lnurlFailSignal.signal.addEventListener("abort", lnurlFailListener);

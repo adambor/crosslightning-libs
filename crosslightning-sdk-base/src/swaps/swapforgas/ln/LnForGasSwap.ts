@@ -256,7 +256,7 @@ export class LnForGasSwap<T extends ChainType = ChainType> extends ISwap<T, LnFo
         if(this.state!==LnForGasSwapState.PR_CREATED) throw new Error("Must be in PR_CREATED state!");
 
         this.initiated = true;
-        await this._save();
+        await this._saveAndEmit();
 
         while(!abortSignal.aborted && this.state===LnForGasSwapState.PR_CREATED) {
             await this.checkInvoicePaid(true);

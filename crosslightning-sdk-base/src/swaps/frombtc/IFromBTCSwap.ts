@@ -161,7 +161,7 @@ export abstract class IFromBTCSwap<
         if(!this.canCommit()) throw new Error("Must be in CREATED state!");
 
         this.initiated = true;
-        await this._save();
+        await this._saveAndEmit();
 
         return await this.wrapper.contract.txsInit(
             this.data, this.signatureData,
