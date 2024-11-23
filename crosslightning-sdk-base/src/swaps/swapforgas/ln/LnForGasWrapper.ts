@@ -1,5 +1,5 @@
 import * as BN from "bn.js";
-import {LnForGasSwap, LnForGasSwapState} from "./LnForGasSwap";
+import {LnForGasSwap, LnForGasSwapInit, LnForGasSwapState} from "./LnForGasSwap";
 import {ISwapWrapper} from "../../ISwapWrapper";
 import {TrustedIntermediaryAPI} from "../../../intermediaries/TrustedIntermediaryAPI";
 import {decode as bolt11Decode} from "bolt11";
@@ -42,8 +42,9 @@ export class LnForGasWrapper<T extends ChainType> extends ISwapWrapper<T, LnForG
             url,
             expiry: decodedPr.timeExpireDate*1000,
             swapFee: resp.swapFee,
-            feeRate: ""
-        });
+            feeRate: "",
+            exactIn: false
+        } as LnForGasSwapInit<T["Data"]>);
         await quote._save();
         return quote;
     }
