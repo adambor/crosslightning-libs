@@ -136,6 +136,8 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
 
     protected readonly logger = getLogger(this.constructor.name+": ");
 
+    protected readonly swapStateListener: (swap: ISwap) => void;
+
     readonly chains: MultiChainData<T>;
 
     readonly prices: ISwapPrice<T>;
@@ -186,6 +188,10 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
                 }
             }
         }
+
+        this.swapStateListener = (swap: ISwap) => {
+            this.emit("swapState", swap);
+        };
 
         this.chains = objectMap<CtorMultiChainData<T>, MultiChainData<T>>(chainsData, <InputKey extends keyof CtorMultiChainData<T>>(chainData: CtorMultiChainData<T>[InputKey], key: string) => {
             const {swapContract, chainEvents, btcRelay, defaultTrustedIntermediaryUrl} = chainData;
@@ -265,6 +271,12 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
                     postRequestTimeout: options.postRequestTimeout
                 }
             );
+
+            tobtcln.events.on("swapState", this.swapStateListener);
+            tobtc.events.on("swapState", this.swapStateListener);
+            frombtcln.events.on("swapState", this.swapStateListener);
+            frombtc.events.on("swapState", this.swapStateListener);
+            lnforgas.events.on("swapState", this.swapStateListener);
 
             return {
                 chainEvents,
@@ -467,6 +479,11 @@ export class Swapper<T extends MultiChain> extends EventEmitter implements Swapp
                 frombtc,
                 lnforgas
             } = this.chains[chainIdentifier];
+            tobtcln.events.off("swapState", this.swapStateListener);
+            tobtc.events.off("swapState", this.swapStateListener);
+            frombtcln.events.off("swapState", this.swapStateListener);
+            frombtc.events.off("swapState", this.swapStateListener);
+            lnforgas.events.off("swapState", this.swapStateListener);
             await tobtcln.stop();
             await tobtc.stop();
             await frombtcln.stop();
