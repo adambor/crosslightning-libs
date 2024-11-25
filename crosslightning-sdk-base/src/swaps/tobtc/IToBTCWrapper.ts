@@ -39,13 +39,13 @@ export abstract class IToBTCWrapper<
                     swap.state = ToBTCSwapState.QUOTE_EXPIRED;
                     return true;
                 case SwapCommitStatus.NOT_COMMITED:
-                    if(swap.state===ToBTCSwapState.COMMITED) {
+                    if(swap.state===ToBTCSwapState.COMMITED || swap.state===ToBTCSwapState.REFUNDABLE) {
                         swap.state = ToBTCSwapState.REFUNDED;
                         return true;
                     }
                     break;
                 case SwapCommitStatus.COMMITED:
-                    if(swap.state!==ToBTCSwapState.COMMITED) {
+                    if(swap.state!==ToBTCSwapState.COMMITED && swap.state!==ToBTCSwapState.REFUNDABLE) {
                         swap.state = ToBTCSwapState.COMMITED;
                         return true;
                     }
