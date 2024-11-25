@@ -134,7 +134,7 @@ export abstract class ISwap<
             this.version = swapInitOrObj.version;
             this.initiated = swapInitOrObj.initiated;
             this.exactIn = swapInitOrObj.exactIn;
-            this.createdAt = swapInitOrObj.createdAt;
+            this.createdAt = swapInitOrObj.createdAt ?? swapInitOrObj.expiry;
         }
         this.logger = getLogger(this.constructor.name+"("+this.getPaymentHashString()+"): ");
         if(this.version!==this.currentVersion) {
