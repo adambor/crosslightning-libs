@@ -56,6 +56,7 @@ export abstract class ISwap<
 > {
     readonly chainIdentifier: string;
     readonly exactIn: boolean;
+    readonly createdAt: number;
 
     protected readonly currentVersion: number = 1;
     protected version: number;
@@ -100,6 +101,7 @@ export abstract class ISwap<
         if(isISwapInit(swapInitOrObj)) {
             Object.assign(this, swapInitOrObj);
             this.version = this.currentVersion;
+            this.createdAt = Date.now();
         } else {
             this.expiry = swapInitOrObj.expiry;
             this.url = swapInitOrObj.url;
@@ -132,6 +134,7 @@ export abstract class ISwap<
             this.version = swapInitOrObj.version;
             this.initiated = swapInitOrObj.initiated;
             this.exactIn = swapInitOrObj.exactIn;
+            this.createdAt = swapInitOrObj.createdAt;
         }
         this.logger = getLogger(this.constructor.name+"("+this.getPaymentHashString()+"): ");
         if(this.version!==this.currentVersion) {
@@ -449,7 +452,8 @@ export abstract class ISwap<
             expiry: this.expiry,
             version: this.version,
             initiated: this.initiated,
-            exactIn: this.exactIn
+            exactIn: this.exactIn,
+            createdAt: this.createdAt
         }
     }
 
