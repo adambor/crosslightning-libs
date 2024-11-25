@@ -88,6 +88,10 @@ export abstract class IFromBTCSwap<
 
     abstract isClaimable(): boolean;
 
+    isActionable(): boolean {
+        return this.isClaimable();
+    }
+
     /**
      * Returns if the swap can be committed
      */

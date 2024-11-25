@@ -333,9 +333,15 @@ export abstract class ISwap<
     abstract isFinished(): boolean;
 
     /**
-     * Checks whether the swap's quote has expired and cannot be committed anymore, we can remove such swap
+     * Checks whether the swap's quote has definitely expired and cannot be committed anymore, we can remove such swap
      */
     abstract isQuoteExpired(): boolean;
+
+    /**
+     * Checks whether the swap's quote is soft expired (this means there is not enough time buffer for it to commit,
+     *  but it still can happen)
+     */
+    abstract isQuoteSoftExpired(): boolean;
 
     /**
      * Returns whether the swap finished successful
@@ -384,6 +390,10 @@ export abstract class ISwap<
         return this.initiated;
     }
 
+    /**
+     * Checks whether there is some action required from the user for this swap - can mean either refundable or claimable
+     */
+    abstract isActionable(): boolean;
 
     //////////////////////////////
     //// Amounts & fees

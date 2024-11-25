@@ -144,6 +144,10 @@ export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T
         return this.state===FromBTCSwapState.QUOTE_EXPIRED;
     }
 
+    isQuoteSoftExpired(): boolean {
+        return this.state===FromBTCSwapState.QUOTE_EXPIRED || this.state===FromBTCSwapState.QUOTE_SOFT_EXPIRED;
+    }
+
     canCommit(): boolean {
         if(this.state!==FromBTCSwapState.PR_CREATED) return false;
         const expiry = this.wrapper.getOnchainSendTimeout(this.data);

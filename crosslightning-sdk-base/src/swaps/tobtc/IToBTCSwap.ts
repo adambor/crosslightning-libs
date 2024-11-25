@@ -132,12 +132,20 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
         return this.state===ToBTCSwapState.CLAIMED || this.state===ToBTCSwapState.REFUNDED || this.state===ToBTCSwapState.QUOTE_EXPIRED;
     }
 
+    isActionable(): boolean {
+        return this.isRefundable();
+    }
+
     isRefundable(): boolean {
         return this.state===ToBTCSwapState.REFUNDABLE || (this.state===ToBTCSwapState.COMMITED && this.wrapper.contract.isExpired(this.getInitiator(), this.data));
     }
 
     isQuoteExpired(): boolean {
         return this.state===ToBTCSwapState.QUOTE_EXPIRED;
+    }
+
+    isQuoteSoftExpired(): boolean {
+        return this.state===ToBTCSwapState.QUOTE_EXPIRED || this.state===ToBTCSwapState.QUOTE_SOFT_EXPIRED;
     }
 
     isSuccessful(): boolean {

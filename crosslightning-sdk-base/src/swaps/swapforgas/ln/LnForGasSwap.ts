@@ -154,6 +154,10 @@ export class LnForGasSwap<T extends ChainType = ChainType> extends ISwap<T, LnFo
         return this.state===LnForGasSwapState.EXPIRED;
     }
 
+    isQuoteSoftExpired(): boolean {
+        return this.isQuoteExpired();
+    }
+
     isFailed(): boolean {
         return this.state===LnForGasSwapState.FAILED;
     }
@@ -166,6 +170,9 @@ export class LnForGasSwap<T extends ChainType = ChainType> extends ISwap<T, LnFo
         return Promise.resolve(this.getTimeoutTime()>Date.now());
     }
 
+    isActionable(): boolean {
+        return false;
+    }
 
     //////////////////////////////
     //// Amounts & fees

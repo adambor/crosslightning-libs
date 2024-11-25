@@ -161,8 +161,15 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
         return this.state===FromBTCLNSwapState.QUOTE_EXPIRED;
     }
 
+    isQuoteSoftExpired(): boolean {
+        return this.state===FromBTCLNSwapState.QUOTE_EXPIRED || this.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED;
+    }
+
     isQuoteValid(): Promise<boolean> {
-        if(this.state===FromBTCLNSwapState.PR_CREATED) {
+        if(
+            this.state===FromBTCLNSwapState.PR_CREATED ||
+            (this.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED && this.signatureData==null)
+        ) {
             return Promise.resolve(this.getTimeoutTime()>Date.now());
         }
         return super.isQuoteValid();
