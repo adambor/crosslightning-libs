@@ -213,7 +213,10 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
      * @param checkIntervalSeconds How often to poll the intermediary for answer
      */
     async waitForPayment(abortSignal?: AbortSignal, checkIntervalSeconds: number = 5): Promise<void> {
-        if(this.state!==FromBTCLNSwapState.PR_CREATED) throw new Error("Must be in PR_CREATED state!");
+        if(
+            this.state!==FromBTCLNSwapState.PR_CREATED &&
+            (this.state!==FromBTCLNSwapState.QUOTE_SOFT_EXPIRED || this.signatureData!=null)
+        ) throw new Error("Must be in PR_CREATED state!");
 
         const abortController = new AbortController();
         if(abortSignal!=null) abortSignal.addEventListener("abort", () => abortController.abort(abortSignal.reason));
