@@ -39,6 +39,7 @@ export * from "./swaps/ISwap";
 export * from "./swaps/ISwapWrapper";
 export * from "./swaps/Swapper";
 export * from "./swaps/SwapType";
+export * from "./swaps/SwapDirection";
 export * from "./swaps/tobtc/IToBTCSwap";
 export * from "./swaps/tobtc/IToBTCWrapper";
 export * from "./swaps/tobtc/ln/ToBTCLNSwap";

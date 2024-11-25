@@ -76,6 +76,11 @@ export abstract class IFromBTCSwap<
     //// Getters & utils
 
     /**
+     * Returns the bitcoin address or lightning invoice to be paid for the swap
+     */
+    abstract getAddress(): string;
+
+    /**
      * Returns a string that can be displayed as QR code representation of the address or lightning invoice
      *  (with bitcoin: or lightning: prefix)
      */

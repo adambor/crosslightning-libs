@@ -117,6 +117,10 @@ export class FromBTCLNSwap<T extends ChainType = ChainType> extends IFromBTCSwap
         return Buffer.from(decodedPR.tagsObject.payment_hash, "hex");
     }
 
+    getAddress(): string {
+        return this.pr;
+    }
+
     /**
      * Returns the lightning network BOLT11 invoice that needs to be paid as an input to the swap
      */
