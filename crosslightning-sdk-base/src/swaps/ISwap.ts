@@ -140,6 +140,7 @@ export abstract class ISwap<
         if(this.version!==this.currentVersion) {
             this.upgradeVersion();
         }
+        if(this.initiated==null) this.initiated = true;
     }
 
     protected abstract upgradeVersion(): void;
