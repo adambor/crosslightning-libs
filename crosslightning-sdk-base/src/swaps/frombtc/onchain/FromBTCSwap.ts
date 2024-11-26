@@ -129,7 +129,7 @@ export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T
     }
 
     isClaimable(): boolean {
-        return this.state===FromBTCSwapState.BTC_TX_CONFIRMED || (this.state===FromBTCSwapState.CLAIM_COMMITED && !this.wrapper.contract.isExpired(this.getInitiator(), this.data) && this.getTimeoutTime()>Date.now());
+        return this.state===FromBTCSwapState.BTC_TX_CONFIRMED;
     }
 
     isSuccessful(): boolean {

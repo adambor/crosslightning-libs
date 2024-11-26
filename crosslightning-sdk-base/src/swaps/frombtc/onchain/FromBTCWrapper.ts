@@ -143,6 +143,15 @@ export class FromBTCWrapper<
                 break;
             case FromBTCSwapState.CLAIM_COMMITED:
                 if(swap.getTimeoutTime()<Date.now()) swap._saveAndEmit(FromBTCSwapState.EXPIRED);
+            case FromBTCSwapState.EXPIRED:
+                //Check if bitcoin payment was received every 2 minutes
+                if(Math.floor(Date.now()/1000)%120===0) swap.getBitcoinPayment().then(res => {
+                    if(res!=null && res.confirmations>=swap.data.getConfirmations()) {
+                        swap.txId = res.txId;
+                        swap.vout = res.vout;
+                        return swap._saveAndEmit(FromBTCSwapState.BTC_TX_CONFIRMED);
+                    }
+                }).catch(e => this.logger.error("tickSwap("+swap.getPaymentHashString()+"): ", e));
                 break;
         }
     }

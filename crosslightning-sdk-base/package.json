@@ -1,6 +1,6 @@
 {
   "name": "crosslightning-sdk-base",
-  "version": "10.0.5-beta41",
+  "version": "10.0.5-beta43",
   "description": "CrossLightning SDK chain-agnostic base",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",
