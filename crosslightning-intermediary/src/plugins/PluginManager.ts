@@ -44,17 +44,17 @@ export type SwapResponse = FailSwapResponse | FeeSwapResponse | AmountAndFeeSwap
 
 const logger = getLogger("PluginManager: ");
 const pluginLogger = {
-    debug: (plugin: IPlugin<any>, msg, ...args) => logger.debug(plugin.name+": "+msg, ...args),
-    info: (plugin: IPlugin<any>, msg, ...args) => logger.info(plugin.name+": "+msg, ...args),
-    warn: (plugin: IPlugin<any>, msg, ...args) => logger.warn(plugin.name+": "+msg, ...args),
-    error: (plugin: IPlugin<any>, msg, ...args) => logger.error(plugin.name+": "+msg, ...args)
+    debug: (plugin: IPlugin, msg, ...args) => logger.debug(plugin.name+": "+msg, ...args),
+    info: (plugin: IPlugin, msg, ...args) => logger.info(plugin.name+": "+msg, ...args),
+    warn: (plugin: IPlugin, msg, ...args) => logger.warn(plugin.name+": "+msg, ...args),
+    error: (plugin: IPlugin, msg, ...args) => logger.error(plugin.name+": "+msg, ...args)
 };
 
 export class PluginManager {
 
-    static plugins: Map<string, IPlugin<any>> = new Map();
+    static plugins: Map<string, IPlugin> = new Map();
 
-    static registerPlugin(name: string, plugin: IPlugin<any>) {
+    static registerPlugin(name: string, plugin: IPlugin) {
         PluginManager.plugins.set(name, plugin);
     }
 

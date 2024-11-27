@@ -72,7 +72,7 @@ export function isToBtcPluginQuote(obj: any): obj is ToBtcPluginQuote {
         isPluginQuote(obj);
 }
 
-export interface IPlugin<T extends SwapData> {
+export interface IPlugin {
 
     name: string;
     author: string;
@@ -100,13 +100,13 @@ export interface IPlugin<T extends SwapData> {
     onDisable(): Promise<void>;
 
     //Called in the library
-    onServiceInitialize(service: SwapHandler<any, T>): Promise<void>;
+    onServiceInitialize(service: SwapHandler<any>): Promise<void>;
 
     onHttpServerStarted?(expressServer: any): Promise<void>;
 
-    onSwapStateChange?(swap: SwapHandlerSwap<T>): Promise<void>;
-    onSwapCreate?(swap: SwapHandlerSwap<T>): Promise<void>;
-    onSwapRemove?(swap: SwapHandlerSwap<T>): Promise<void>;
+    onSwapStateChange?(swap: SwapHandlerSwap): Promise<void>;
+    onSwapCreate?(swap: SwapHandlerSwap): Promise<void>;
+    onSwapRemove?(swap: SwapHandlerSwap): Promise<void>;
 
     onHandlePreFromBtcQuote?(
         request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
