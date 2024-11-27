@@ -56,6 +56,39 @@ export abstract class ISwapPrice<T extends MultiChain = MultiChain> {
     protected abstract getUsdPrice(abortSignal?: AbortSignal): Promise<number>;
 
     /**
+     * Recomputes pricing info without fetching the current price
+     *
+     * @param chainIdentifier
+     * @param amountSats
+     * @param satsBaseFee
+     * @param feePPM
+     * @param paidToken
+     * @param token
+     */
+    public recomputePriceInfoSend<C extends ChainIds<T>>(
+        chainIdentifier: C,
+        amountSats: BN,
+        satsBaseFee: BN,
+        feePPM: BN,
+        paidToken: BN,
+        token: string
+    ): PriceInfoType {
+        const totalSats = amountSats.mul(new BN(1000000).add(feePPM)).div(new BN(1000000))
+            .add(satsBaseFee);
+        const totalUSats = totalSats.mul(new BN(1000000));
+        const swapPriceUSatPerToken = totalUSats.mul(new BN(10).pow(new BN(this.getDecimals(chainIdentifier, token)))).div(paidToken);
+
+        return {
+            isValid: true,
+            differencePPM: new BN(0),
+            satsBaseFee,
+            feePPM,
+            realPriceUSatPerToken: this.shouldIgnore(chainIdentifier, token) ? null : swapPriceUSatPerToken,
+            swapPriceUSatPerToken
+        };
+    }
+
+    /**
      * Checks whether the swap amounts are valid given the current market rate for a given pair
      *
      * @param chainIdentifier
@@ -103,6 +136,39 @@ export abstract class ISwapPrice<T extends MultiChain = MultiChain> {
             satsBaseFee,
             feePPM,
             realPriceUSatPerToken,
+            swapPriceUSatPerToken
+        };
+    }
+
+    /**
+     * Recomputes pricing info without fetching the current price
+     *
+     * @param chainIdentifier
+     * @param amountSats
+     * @param satsBaseFee
+     * @param feePPM
+     * @param receiveToken
+     * @param token
+     */
+    public recomputePriceInfoReceive<C extends ChainIds<T>>(
+        chainIdentifier: C,
+        amountSats: BN,
+        satsBaseFee: BN,
+        feePPM: BN,
+        receiveToken: BN,
+        token: string,
+    ): PriceInfoType {
+        const totalSats = amountSats.mul(new BN(1000000).sub(feePPM)).div(new BN(1000000))
+            .sub(satsBaseFee);
+        const totalUSats = totalSats.mul(new BN(1000000));
+        const swapPriceUSatPerToken = totalUSats.mul(new BN(10).pow(new BN(this.getDecimals(chainIdentifier, token)))).div(receiveToken);
+
+        return {
+            isValid: true,
+            differencePPM: new BN(0),
+            satsBaseFee,
+            feePPM,
+            realPriceUSatPerToken: this.shouldIgnore(chainIdentifier, token) ? null : swapPriceUSatPerToken,
             swapPriceUSatPerToken
         };
     }

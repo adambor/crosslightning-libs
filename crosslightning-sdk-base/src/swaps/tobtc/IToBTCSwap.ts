@@ -85,6 +85,16 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
         if(this.networkFeeBtc==null) {
             this.networkFeeBtc = this.networkFee.mul(this.getOutput().rawAmount).div(this.getInputWithoutFee().rawAmount);
         }
+        if(this.pricingInfo.swapPriceUSatPerToken==null) {
+            this.pricingInfo = this.wrapper.prices.recomputePriceInfoSend(
+                this.chainIdentifier,
+                this.getOutput().rawAmount,
+                this.pricingInfo.satsBaseFee,
+                this.pricingInfo.feePPM,
+                this.data.getAmount(),
+                this.data.getToken()
+            );
+        }
     }
 
     /**

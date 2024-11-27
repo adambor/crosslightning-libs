@@ -33,6 +33,17 @@ export abstract class IFromBTCSwap<
         if(this.swapFeeBtc==null) {
             this.swapFeeBtc = this.swapFee.mul(this.getInput().rawAmount).div(this.getOutAmountWithoutFee());
         }
+
+        if(this.pricingInfo.swapPriceUSatPerToken==null) {
+            this.pricingInfo = this.wrapper.prices.recomputePriceInfoReceive(
+                this.chainIdentifier,
+                this.getInput().rawAmount,
+                this.pricingInfo.satsBaseFee,
+                this.pricingInfo.feePPM,
+                this.data.getAmount(),
+                this.data.getToken()
+            );
+        }
     }
 
     /**

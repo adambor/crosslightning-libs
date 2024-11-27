@@ -115,7 +115,7 @@ export abstract class ISwap<
                 feePPM: swapInitOrObj._feePPM==null ? null : new BN(swapInitOrObj._feePPM),
                 realPriceUSatPerToken: swapInitOrObj._realPriceUSatPerToken==null ? null : new BN(swapInitOrObj._realPriceUSatPerToken),
                 swapPriceUSatPerToken: swapInitOrObj._swapPriceUSatPerToken==null ? null : new BN(swapInitOrObj._swapPriceUSatPerToken),
-            }
+            };
 
             this.data = swapInitOrObj.data!=null ? new wrapper.swapDataDeserializer(swapInitOrObj.data) : null;
             this.swapFee = swapInitOrObj.swapFee==null ? null : new BN(swapInitOrObj.swapFee);
