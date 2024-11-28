@@ -2,7 +2,7 @@ import * as BN from "bn.js";
 import {Express, Request, Response} from "express";
 import * as lncli from "ln-service";
 import {createHash} from "crypto";
-import * as bolt11 from "bolt11";
+import * as bolt11 from "@atomiqlabs/bolt11";
 import {FromBtcLnSwapAbs, FromBtcLnSwapState} from "./FromBtcLnSwapAbs";
 import {MultichainData, SwapHandlerType} from "../SwapHandler";
 import {ISwapPrice} from "../ISwapPrice";

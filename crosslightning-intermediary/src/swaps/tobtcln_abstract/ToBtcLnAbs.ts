@@ -1,6 +1,6 @@
 import * as BN from "bn.js";
 import {Express, Request, Response} from "express";
-import * as bolt11 from "bolt11";
+import * as bolt11 from "@atomiqlabs/bolt11";
 import * as lncli from "ln-service";
 import {ToBtcLnSwapAbs, ToBtcLnSwapState} from "./ToBtcLnSwapAbs";
 import {MultichainData, SwapHandlerType} from "../SwapHandler";
@@ -23,6 +23,7 @@ import {IParamReader} from "../../utils/paramcoders/IParamReader";
 import {FieldTypeEnum, verifySchema} from "../../utils/paramcoders/SchemaVerifier";
 import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
 import {ToBtcBaseConfig, ToBtcBaseSwapHandler} from "../ToBtcBaseSwapHandler";
+import {BlindedPayInfo} from "@atomiqlabs/bolt11";
 
 export type ToBtcLnConfig = ToBtcBaseConfig & {
     routingFeeMultiplier: BN,
@@ -41,6 +42,18 @@ export type ToBtcLnConfig = ToBtcBaseConfig & {
 const SNOWFLAKE_LIST: Set<string> = new Set([
     "038f8f113c580048d847d6949371726653e02b928196bad310e3eda39ff61723f6"
 ]);
+
+type ProbeAndRouteResponse = {
+    confidence: number,
+    fee: number,
+    fee_mtokens: string,
+    mtokens: string,
+    payment: string,
+    safe_fee: number,
+    safe_tokens: number,
+    timeout: number,
+    tokens: number
+};
 
 type LNRoutes = {
     public_key: string,
@@ -645,6 +658,179 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
     }
 
     /**
+     * Computes the route paying to the specified bolt11 invoice, estimating the fee, uses bLIP-39 blinded paths
+     *
+     * @param amountSats
+     * @param maxFee
+     * @param parsedRequest
+     * @param maxTimeoutBlockheight
+     * @param metadata
+     * @param maxUsableCLTV
+     * @private
+     */
+    private async getRoutesInvoiceBLIP39(
+        amountSats: BN,
+        maxFee: BN,
+        parsedRequest: {destination: string, cltv_delta: number, payment: string, routes: LNRoutes, blindedPaths?: BlindedPayInfo[]},
+        maxTimeoutBlockheight: BN,
+        metadata: any,
+        maxUsableCLTV: BN
+    ): Promise<ProbeAndRouteResponse> {
+        metadata.routeReq = [];
+        const routeReqs = parsedRequest.blindedPaths.map(async (blindedPath) => {
+            if(new BN(blindedPath.cltv_expiry_delta+10).gt(maxUsableCLTV)) return null;
+
+            const originalMsatAmount = amountSats.mul(new BN(1000));
+            const blindedFeeTotalMsat = new BN(blindedPath.fee_base_msat)
+                .add(originalMsatAmount.mul(new BN(blindedPath.fee_proportional_millionths)).div(new BN(1000000)));
+
+            const routeReq = {
+                destination: blindedPath.introduction_node,
+                cltv_delta: Math.max(blindedPath.cltv_expiry_delta, parsedRequest.cltv_delta),
+                mtokens: originalMsatAmount.add(blindedFeeTotalMsat).toString(10),
+                max_fee_mtokens: maxFee.mul(new BN(1000)).sub(blindedFeeTotalMsat).toString(10),
+                max_timeout_height: maxTimeoutBlockheight.toString(10),
+                // total_mtokens: amountSats.mul(new BN(1000)).toString(10),
+                routes: parsedRequest.routes,
+                is_ignoring_past_failures: true,
+                lnd: null
+            };
+            metadata.routeReq.push({...routeReq});
+            routeReq.lnd = this.LND;
+
+            let resp;
+            try {
+                resp = await lncli.getRouteToDestination(routeReq);
+            } catch (e) {
+                handleLndError(e);
+            }
+
+            if(resp==null || resp.route==null) return null;
+
+            const adjustedFeeMsats = new BN(resp.route.fee_mtokens).add(blindedFeeTotalMsat);
+            resp.route.fee_mtokens = adjustedFeeMsats.toString(10);
+            resp.route.fee = adjustedFeeMsats.div(new BN(1000)).toNumber();
+            resp.route.safe_fee = adjustedFeeMsats.add(new BN(999)).div(new BN(1000)).toNumber();
+            const totalAdjustedMsats = new BN(routeReq.mtokens).add(blindedFeeTotalMsat);
+            resp.route.mtokens = totalAdjustedMsats.toString(10);
+            resp.route.tokens = totalAdjustedMsats.div(new BN(1000)).toNumber();
+            resp.route.safe_tokens = totalAdjustedMsats.add(new BN(999)).div(new BN(1000)).toNumber();
+
+            return resp.route as ProbeAndRouteResponse;
+        });
+
+        const responses = await Promise.all(routeReqs);
+
+        metadata.routeResponsesBLIP39 = responses.map(resp => {return {...resp}});
+
+        return responses.reduce((prev, current) => {
+            if(prev==null) return current;
+            if(current==null) return prev;
+            current.fee_mtokens = BN.max(new BN(prev.fee_mtokens), new BN(current.fee_mtokens)).toString(10);
+            current.fee = Math.max(prev.fee, current.fee);
+            current.safe_fee = Math.max(prev.safe_fee, current.safe_fee);
+            current.mtokens = BN.max(new BN(prev.mtokens), new BN(current.mtokens)).toString(10);
+            current.tokens = Math.max(prev.tokens, current.tokens);
+            current.safe_tokens = Math.max(prev.safe_tokens, current.safe_tokens);
+            current.timeout = Math.max(prev.timeout, current.timeout);
+            return current;
+        });
+    }
+
+    /**
+     * Computes the route paying to the specified bolt11 invoice, estimating the fee
+     *
+     * @param amountSats
+     * @param maxFee
+     * @param parsedRequest
+     * @param maxTimeoutBlockheight
+     * @param metadata
+     * @param maxUsableCLTV
+     * @private
+     */
+    private async getRoutesInvoice(
+        amountSats: BN,
+        maxFee: BN,
+        parsedRequest: {destination: string, cltv_delta: number, payment: string, routes: LNRoutes, blindedPaths?: BlindedPayInfo[]},
+        maxTimeoutBlockheight: BN,
+        metadata: any,
+        maxUsableCLTV: BN
+    ): Promise<ProbeAndRouteResponse> {
+        if(parsedRequest.blindedPaths!=null && parsedRequest.blindedPaths.length>0)
+            return await this.getRoutesInvoiceBLIP39(amountSats, maxFee, parsedRequest, maxTimeoutBlockheight, metadata, maxUsableCLTV);
+
+        const routesReq: any = {
+            destination: parsedRequest.destination,
+            cltv_delta: parsedRequest.cltv_delta,
+            mtokens: amountSats.mul(new BN(1000)).toString(10),
+            max_fee_mtokens: maxFee.mul(new BN(1000)).toString(10),
+            payment: parsedRequest.payment,
+            max_timeout_height: maxTimeoutBlockheight.toString(10),
+            total_mtokens: amountSats.mul(new BN(1000)).toString(10),
+            routes: parsedRequest.routes,
+            is_ignoring_past_failures: true
+        };
+        metadata.routeReq = {...routesReq};
+        routesReq.lnd = this.LND;
+
+        let obj;
+        try {
+            obj = await lncli.getRouteToDestination(routesReq);
+        } catch (e) {
+            handleLndError(e);
+        }
+        return obj?.route==null ? null : obj.route;
+    }
+
+    /**
+     * Sends a probe payment to the specified bolt11 invoice to check if it is reachable
+     *
+     * @param amountSats
+     * @param maxFee
+     * @param parsedRequest
+     * @param maxTimeoutBlockheight
+     * @param metadata
+     * @private
+     */
+    private async probeInvoice(
+        amountSats: BN,
+        maxFee: BN,
+        parsedRequest: {destination: string, cltv_delta: number, payment: string, routes: LNRoutes},
+        maxTimeoutBlockheight: BN,
+        metadata: any
+    ): Promise<ProbeAndRouteResponse> {
+        const probeReq: any = {
+            destination: parsedRequest.destination,
+            cltv_delta: parsedRequest.cltv_delta,
+            mtokens: amountSats.mul(new BN(1000)).toString(10),
+            max_fee_mtokens: maxFee.mul(new BN(1000)).toString(10),
+            max_timeout_height: maxTimeoutBlockheight.toString(10),
+            payment: parsedRequest.payment,
+            total_mtokens: amountSats.mul(new BN(1000)).toString(10),
+            routes: parsedRequest.routes
+        };
+        metadata.probeRequest = {...probeReq};
+        probeReq.lnd = this.LND;
+
+        let is_snowflake: boolean = false;
+        if(parsedRequest.routes!=null) {
+            for(let route of parsedRequest.routes) {
+                if(SNOWFLAKE_LIST.has(route[0].public_key) || SNOWFLAKE_LIST.has(route[1].public_key)) {
+                    is_snowflake = true;
+                }
+            }
+        }
+
+        let obj;
+        if(!is_snowflake) try {
+            obj = await lncli.probeForRoute(probeReq);
+        } catch (e) {
+            handleLndError(e);
+        }
+        return obj?.route==null ? null : obj.route;
+    }
+
+    /**
      * Estimates the routing fee & confidence by either probing or routing (if probing fails), the fee is also adjusted
      *  according to routing fee multiplier, and subject to minimums set in config
      *
@@ -666,97 +852,61 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
 
         const { current_block_height } = await lncli.getHeight({lnd: this.LND});
         abortSignal.throwIfAborted();
-
         metadata.times.blockheightFetched = Date.now();
 
-        //Probe for a route
-        const parsedRequest = await lncli.parsePaymentRequest({
-            request: pr
-        });
-        metadata.times.prParsed = Date.now();
-
-        const probeReq: any = {
-            destination: parsedRequest.destination,
-            cltv_delta: parsedRequest.cltv_delta,
-            mtokens: amountBD.mul(new BN(1000)).toString(10),
-            max_fee_mtokens: maxFee.mul(new BN(1000)).toString(10),
-            max_timeout_height: new BN(current_block_height).add(maxUsableCLTV).toString(10),
-            payment: parsedRequest.payment,
-            total_mtokens: amountBD.mul(new BN(1000)).toString(10),
-            routes: parsedRequest.routes
-        };
-        metadata.probeRequest = {...probeReq};
-        probeReq.lnd = this.LND;
-
-        let is_snowflake: boolean = false;
-        if(parsedRequest.routes!=null) {
-            for(let route of parsedRequest.routes) {
-                if(SNOWFLAKE_LIST.has(route[0].public_key) || SNOWFLAKE_LIST.has(route[1].public_key)) {
-                    is_snowflake = true;
-                }
-            }
+        const maxTimeoutBlockheight = new BN(current_block_height).add(maxUsableCLTV);
+        const parsedRequest = lncli.parsePaymentRequest({request: pr});
+        const bolt11Parsed = bolt11.decode(pr);
+        if(bolt11Parsed.tagsObject.blinded_payinfo!=null && bolt11Parsed.tagsObject.blinded_payinfo.length>0) {
+            parsedRequest.blindedPaths = bolt11Parsed.tagsObject.blinded_payinfo;
         }
 
-        let obj;
-        if(!is_snowflake) try {
-            obj = await lncli.probeForRoute(probeReq);
-        } catch (e) {
-            handleLndError(e);
+        let probeOrRouteResp: ProbeAndRouteResponse;
+
+        if(parsedRequest.blindedPaths==null) {
+            probeOrRouteResp = await this.probeInvoice(amountBD, maxFee, parsedRequest, maxTimeoutBlockheight, metadata);
+            metadata.times.probeResult = Date.now();
+            metadata.probeResponse = {...probeOrRouteResp};
+            abortSignal.throwIfAborted();
         }
-        abortSignal.throwIfAborted();
 
-        metadata.times.probeResult = Date.now();
-        metadata.probeResponse = {...obj};
+        if(probeOrRouteResp==null) {
+            if(!this.config.allowProbeFailedSwaps) throw {
+                code: 20002,
+                msg: "Cannot route the payment!"
+            };
 
-        if(obj!=null) this.logger.info("checkAndGetNetworkFee(): route probed,"+
-            " destination: "+parsedRequest.destination+
-            " confidence: "+obj.route.confidence+
-            " safe fee: "+obj.route.safe_fee);
-
-        if(obj==null || obj.route==null) {
-            if(!this.config.allowProbeFailedSwaps) {
-                throw {
-                    code: 20002,
-                    msg: "Cannot route the payment!"
-                };
-            }
-
-            probeReq.is_ignoring_past_failures = true;
-
-            let routingObj;
-            try {
-                routingObj = await lncli.getRouteToDestination(probeReq);
-            } catch (e) {
-                handleLndError(e);
-            }
+            const routeResp = await this.getRoutesInvoice(amountBD, maxFee, parsedRequest, maxTimeoutBlockheight, metadata, maxUsableCLTV);
+            metadata.times.routingResult = Date.now();
+            metadata.routeResponse = {...routeResp};
             abortSignal.throwIfAborted();
 
-            if(routingObj==null || routingObj.route==null) {
-                throw {
-                    code: 20002,
-                    msg: "Cannot route the payment!"
-                };
-            }
-
-            metadata.times.routingResult = Date.now();
-            metadata.routeResponse = {...routingObj};
+            if(routeResp==null) throw {
+                code: 20002,
+                msg: "Cannot route the payment!"
+            };
 
             this.logger.info("checkAndGetNetworkFee(): routing result,"+
                 " destination: "+parsedRequest.destination+
-                " confidence: "+routingObj.route.confidence+
-                " safe fee: "+routingObj.route.safe_fee);
+                " confidence: "+routeResp.confidence+
+                " safe fee: "+routeResp.safe_fee);
 
-            obj = routingObj;
-            obj.route.confidence = 0;
+            probeOrRouteResp = routeResp;
+            if(parsedRequest.blindedPaths==null) probeOrRouteResp.confidence = 0;
+        } else {
+            this.logger.info("checkAndGetNetworkFee(): route probed,"+
+                " destination: "+parsedRequest.destination+
+                " confidence: "+probeOrRouteResp.confidence+
+                " safe fee: "+probeOrRouteResp.safe_fee);
         }
 
-        let actualRoutingFee: BN = new BN(obj.route.safe_fee).mul(this.config.routingFeeMultiplier);
+        let actualRoutingFee: BN = new BN(probeOrRouteResp.safe_fee).mul(this.config.routingFeeMultiplier);
 
         const minRoutingFee: BN = amountBD.mul(this.config.minLnRoutingFeePPM).div(new BN(1000000)).add(this.config.minLnBaseFee);
         if(actualRoutingFee.lt(minRoutingFee)) {
             actualRoutingFee = minRoutingFee;
             if(actualRoutingFee.gt(maxFee)) {
-                obj.route.confidence = 0;
+                probeOrRouteResp.confidence = 0;
             }
         }
 
@@ -766,7 +916,7 @@ export class ToBtcLnAbs extends ToBtcBaseSwapHandler<ToBtcLnSwapAbs, ToBtcLnSwap
 
         return {
             networkFee: actualRoutingFee,
-            confidence: obj.route.confidence,
+            confidence: probeOrRouteResp.confidence,
             routes: parsedRequest.routes
         };
     }

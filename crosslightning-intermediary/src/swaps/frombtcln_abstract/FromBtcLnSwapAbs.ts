@@ -1,7 +1,7 @@
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
 import {SwapHandlerType} from "../..";
-import * as bolt11 from "bolt11";
+import * as bolt11 from "@atomiqlabs/bolt11";
 import {FromBtcBaseSwap} from "../FromBtcBaseSwap";
 
 export enum FromBtcLnSwapState {
