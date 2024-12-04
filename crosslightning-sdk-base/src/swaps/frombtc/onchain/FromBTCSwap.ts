@@ -246,16 +246,15 @@ export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T
      * Commits the swap on-chain, locking the tokens from the intermediary in a PTLC
      *
      * @param signer Signer to sign the transactions with, must be the same as used in the initialization
-     * @param noWaitForConfirmation Do not wait for transaction confirmation
      * @param abortSignal Abort signal to stop waiting for the transaction confirmation and abort
      * @param skipChecks Skip checks like making sure init signature is still valid and swap wasn't commited yet
      *  (this is handled when swap is created (quoted), if you commit right after quoting, you can use skipChecks=true)
      * @throws {Error} If invalid signer is provided that doesn't match the swap data
      */
-    async commit(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
+    async commit(signer: T["Signer"], abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
         this.checkSigner(signer);
         const result = await this.wrapper.contract.sendAndConfirm(
-            signer, await this.txsCommit(skipChecks), !noWaitForConfirmation, abortSignal
+            signer, await this.txsCommit(skipChecks), true, abortSignal
         );
 
         this.commitTxId = result[0];
@@ -318,14 +317,13 @@ export class FromBTCSwap<T extends ChainType = ChainType> extends IFromBTCSwap<T
      * Claims and finishes the swap
      *
      * @param signer Signer to sign the transactions with, can also be different to the initializer
-     * @param noWaitForConfirmation Do not wait for transaction confirmation
      * @param abortSignal Abort signal to stop waiting for transaction confirmation
      */
-    async claim(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+    async claim(signer: T["Signer"], abortSignal?: AbortSignal): Promise<string> {
         let txIds: string[];
         try {
             txIds = await this.wrapper.contract.sendAndConfirm(
-                signer, await this.txsClaim(signer), !noWaitForConfirmation, abortSignal
+                signer, await this.txsClaim(signer), true, abortSignal
             );
         } catch (e) {
             this.logger.info("claim(): Failed to claim ourselves, checking swap claim state...");

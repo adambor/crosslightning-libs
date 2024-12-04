@@ -161,13 +161,12 @@ export abstract class IFromBTCSwap<
      * Commits the swap on-chain, locking the tokens from the intermediary in an HTLC or PTLC
      *
      * @param signer Signer to sign the transactions with, must be the same as used in the initialization
-     * @param noWaitForConfirmation Do not wait for transaction confirmation
      * @param abortSignal Abort signal to stop waiting for the transaction confirmation and abort
      * @param skipChecks Skip checks like making sure init signature is still valid and swap wasn't commited yet
      *  (this is handled when swap is created (quoted), if you commit right after quoting, you can use skipChecks=true)
      * @throws {Error} If invalid signer is provided that doesn't match the swap data
      */
-    abstract commit(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string>;
+    abstract commit(signer: T["Signer"], abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string>;
 
     /**
      * Returns the transactions required for committing the swap on-chain, locking the tokens from the intermediary
@@ -199,10 +198,9 @@ export abstract class IFromBTCSwap<
      * Claims and finishes the swap
      *
      * @param signer Signer to sign the transactions with, can also be different to the initializer
-     * @param noWaitForConfirmation Do not wait for transaction confirmation
      * @param abortSignal Abort signal to stop waiting for transaction confirmation
      */
-    abstract claim(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string>;
+    abstract claim(signer: T["Signer"], abortSignal?: AbortSignal): Promise<string>;
 
     abstract txsClaim(signer?: T["Signer"]): Promise<T["TX"][]>;
 

@@ -240,16 +240,15 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
      * Commits the swap on-chain, initiating the swap
      *
      * @param signer Signer to sign the transactions with, must be the same as used in the initialization
-     * @param noWaitForConfirmation Do not wait for transaction confirmation
      * @param abortSignal Abort signal
      * @param skipChecks Skip checks like making sure init signature is still valid and swap wasn't commited yet
      *  (this is handled on swap creation, if you commit right after quoting, you can skipChecks)`
      * @throws {Error} If invalid signer is provided that doesn't match the swap data
      */
-    async commit(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
+    async commit(signer: T["Signer"], abortSignal?: AbortSignal, skipChecks?: boolean): Promise<string> {
         this.checkSigner(signer);
         const result = await this.wrapper.contract.sendAndConfirm(
-            signer, await this.txsCommit(skipChecks), !noWaitForConfirmation, abortSignal
+            signer, await this.txsCommit(skipChecks), true, abortSignal
         );
 
         this.commitTxId = result[0];
@@ -437,13 +436,12 @@ export abstract class IToBTCSwap<T extends ChainType = ChainType> extends ISwap<
      * Refunds the swap if the swap is in refundable state, you can check so with isRefundable()
      *
      * @param signer Signer to sign the transactions with, must be the same as used in the initialization
-     * @param noWaitForConfirmation     Do not wait for transaction confirmation
      * @param abortSignal               Abort signal
      * @throws {Error} If invalid signer is provided that doesn't match the swap data
      */
-    async refund(signer: T["Signer"], noWaitForConfirmation?: boolean, abortSignal?: AbortSignal): Promise<string> {
+    async refund(signer: T["Signer"], abortSignal?: AbortSignal): Promise<string> {
         this.checkSigner(signer);
-        const result = await this.wrapper.contract.sendAndConfirm(signer, await this.txsRefund(), !noWaitForConfirmation, abortSignal)
+        const result = await this.wrapper.contract.sendAndConfirm(signer, await this.txsRefund(), true, abortSignal)
 
         this.refundTxId = result[0];
         await this._saveAndEmit(ToBTCSwapState.REFUNDED);

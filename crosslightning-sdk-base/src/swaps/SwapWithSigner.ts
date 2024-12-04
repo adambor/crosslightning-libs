@@ -6,9 +6,9 @@ import {FromBTCLNSwap} from "./frombtc/ln/FromBTCLNSwap";
 
 export type SwapWithSigner<T extends ISwap> = {
     [K in keyof T]:
-        K extends "commit" ? (noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean) => Promise<string> :
-        K extends "refund" ? (noWaitForConfirmation?: boolean, abortSignal?: AbortSignal) => Promise<string> :
-        K extends "claim" ? (noWaitForConfirmation?: boolean, abortSignal?: AbortSignal) => Promise<string> :
+        K extends "commit" ? (abortSignal?: AbortSignal, skipChecks?: boolean) => Promise<string> :
+        K extends "refund" ? (abortSignal?: AbortSignal) => Promise<string> :
+        K extends "claim" ? (abortSignal?: AbortSignal) => Promise<string> :
         K extends "commitAndClaim" ? (abortSignal?: AbortSignal, skipChecks?: boolean) => Promise<string> :
             T[K];
 };
@@ -19,20 +19,20 @@ export function wrapSwapWithSigner<C extends ChainType, T extends ISwap<C>>(swap
             // Override the "sayGoodbye" method
             if (prop === "commit") {
                 if(swap instanceof IToBTCSwap || swap instanceof IFromBTCSwap) {
-                    return (noWaitForConfirmation?: boolean, abortSignal?: AbortSignal, skipChecks?: boolean) =>
-                        swap.commit(signer, noWaitForConfirmation, abortSignal, skipChecks);
+                    return (abortSignal?: AbortSignal, skipChecks?: boolean) =>
+                        swap.commit(signer, abortSignal, skipChecks);
                 }
             }
             if (prop === "refund") {
                 if(swap instanceof IToBTCSwap) {
-                    return (noWaitForConfirmation?: boolean, abortSignal?: AbortSignal) =>
-                        swap.refund(signer, noWaitForConfirmation, abortSignal);
+                    return (abortSignal?: AbortSignal) =>
+                        swap.refund(signer, abortSignal);
                 }
             }
             if (prop === "claim") {
                 if(swap instanceof IFromBTCSwap) {
-                    return (noWaitForConfirmation?: boolean, abortSignal?: AbortSignal) =>
-                        swap.claim(signer, noWaitForConfirmation, abortSignal);
+                    return (abortSignal?: AbortSignal) =>
+                        swap.claim(signer, abortSignal);
                 }
             }
             if (prop === "commitAndClaim") {
