@@ -1,6 +1,6 @@
 {
   "name": "crosslightning-intermediary",
-  "version": "10.2.2",
+  "version": "10.3.11",
   "description": "Main functionality implementation for intermediary node, easily extensible to any chain",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",
@@ -26,7 +26,7 @@
     "@bitcoinerlab/secp256k1": "1.0.5",
     "bitcoinjs-lib": "6.1.5",
     "bn.js": "5.2.1",
-    "crosslightning-base": "7.1.0",
+    "crosslightning-base": "7.2.0",
     "crosslightning-server-base": "1.0.3",
     "express": "4.18.2",
     "lightning": "10.2.1",

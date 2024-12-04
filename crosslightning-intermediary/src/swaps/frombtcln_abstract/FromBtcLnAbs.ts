@@ -22,6 +22,7 @@ import {serverParamDecoder} from "../../utils/paramcoders/server/ServerParamDeco
 import {ServerParamEncoder} from "../../utils/paramcoders/server/ServerParamEncoder";
 import {IParamReader} from "../../utils/paramcoders/IParamReader";
 import {FromBtcBaseConfig, FromBtcBaseSwapHandler} from "../FromBtcBaseSwapHandler";
+import {FromBtcLnBaseSwapHandler} from "../FromBtcLnBaseSwapHandler";
 
 export type FromBtcLnConfig = FromBtcBaseConfig & {
     invoiceTimeoutSeconds?: number,
@@ -41,7 +42,7 @@ export type FromBtcLnRequestType = {
 /**
  * Swap handler handling from BTCLN swaps using submarine swaps
  */
-export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromBtcLnSwapState> {
+export class FromBtcLnAbs extends FromBtcLnBaseSwapHandler<FromBtcLnSwapAbs, FromBtcLnSwapState> {
 
     readonly type = SwapHandlerType.FROM_BTCLN;
 
@@ -419,44 +420,6 @@ export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromB
     }
 
     /**
-     * Checks if we have enough inbound liquidity to be able to receive an LN payment (without MPP)
-     *
-     * @param amountBD
-     * @param channelsPrefetch
-     * @param signal
-     * @throws {DefinedRuntimeError} will throw an error if there isn't enough inbound liquidity to receive the LN payment
-     */
-    private async checkInboundLiquidity(amountBD: BN, channelsPrefetch: Promise<{channels: any[]}>, signal: AbortSignal) {
-        const channelsResponse = await channelsPrefetch;
-
-        signal.throwIfAborted();
-
-        let hasEnoughInboundLiquidity = false;
-        channelsResponse.channels.forEach(channel => {
-            if(new BN(channel.remote_balance).gte(amountBD)) hasEnoughInboundLiquidity = true;
-        });
-        if(!hasEnoughInboundLiquidity) {
-            throw {
-                code: 20050,
-                msg: "Not enough LN inbound liquidity"
-            };
-        }
-    }
-
-    /**
-     * Starts LN channels pre-fetch
-     *
-     * @param abortController
-     */
-    private getChannelsPrefetch(abortController: AbortController): Promise<{channels: any[]}> {
-        return lncli.getChannels({is_active: true, lnd: this.LND}).catch(e => {
-            this.logger.error("getChannelsPrefetch(): error", e);
-            abortController.abort(e);
-            return null;
-        });
-    }
-
-    /**
      * Starts LN channels pre-fetch
      *
      * @param abortController
@@ -664,12 +627,10 @@ export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromB
                 descriptionHash: FieldTypeEnum.StringOptional,
                 exactOut: FieldTypeEnum.BooleanOptional
             });
-            if(parsedBody==null) {
-                throw {
-                    code: 20100,
-                    msg: "Invalid request body"
-                };
-            }
+            if(parsedBody==null) throw {
+                code: 20100,
+                msg: "Invalid request body"
+            };
             metadata.request = parsedBody;
 
             const requestedAmount = {input: !parsedBody.exactOut, amount: parsedBody.amount};
@@ -821,9 +782,9 @@ export class FromBtcLnAbs extends FromBtcBaseSwapHandler<FromBtcLnSwapAbs, FromB
              */
             const parsedBody = verifySchema({...req.body, ...req.query}, {
                 paymentHash: (val: string) => val!=null &&
-                typeof(val)==="string" &&
-                val.length===64 &&
-                HEX_REGEX.test(val) ? val: null,
+                    typeof(val)==="string" &&
+                    val.length===64 &&
+                    HEX_REGEX.test(val) ? val: null,
             });
 
             const invoice: any =  await this.checkInvoiceStatus(parsedBody.paymentHash);

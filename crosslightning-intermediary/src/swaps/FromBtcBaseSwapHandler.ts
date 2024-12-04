@@ -107,9 +107,9 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData,
      * @param signal
      * @throws {DefinedRuntimeError} will throw an error if there are not enough funds in the vault
      */
-    protected async checkBalance(totalInToken: BN, balancePrefetch: Promise<BN>, signal: AbortSignal): Promise<void> {
+    protected async checkBalance(totalInToken: BN, balancePrefetch: Promise<BN>, signal: AbortSignal | null): Promise<void> {
         const balance = await balancePrefetch;
-        signal.throwIfAborted();
+        if(signal!=null) signal.throwIfAborted();
 
         if(balance==null || balance.lt(totalInToken)) {
             throw {
