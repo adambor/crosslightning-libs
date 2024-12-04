@@ -267,4 +267,12 @@ export class MempoolBitcoinRpc implements BitcoinRpcWithTxoListener<MempoolBitco
         }
     }
 
+    sendRawTransaction(rawTx: string): Promise<string> {
+        return this.api.sendTransaction(rawTx);
+    }
+
+    sendRawPackage(rawTx: string[]): Promise<string[]> {
+        throw new Error("Unsupported");
+    }
+
 }
