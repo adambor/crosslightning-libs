@@ -11,6 +11,7 @@ import {SwapHandlerSwap} from "../swaps/SwapHandlerSwap";
 import {AuthenticatedLnd} from "lightning";
 import * as BN from "bn.js";
 import {Command} from "crosslightning-server-base";
+import {FromBtcLnTrustedRequestType} from "../swaps/frombtcln_trusted/FromBtcLnTrusted";
 
 export type QuoteThrow = {
     type: "throw",
@@ -109,7 +110,7 @@ export interface IPlugin {
     onSwapRemove?(swap: SwapHandlerSwap): Promise<void>;
 
     onHandlePreFromBtcQuote?(
-        request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
+        request: RequestData<FromBtcLnRequestType | FromBtcRequestType | FromBtcLnTrustedRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         chainIdentifier: string,
         token: string,
@@ -117,7 +118,7 @@ export interface IPlugin {
         fees: {baseFeeInBtc: BN, feePPM: BN}
     ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh>;
     onHandlePostFromBtcQuote?(
-        request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
+        request: RequestData<FromBtcLnRequestType | FromBtcRequestType | FromBtcLnTrustedRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         chainIdentifier: string,
         token: string,

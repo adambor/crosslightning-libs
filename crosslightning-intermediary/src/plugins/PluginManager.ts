@@ -20,6 +20,7 @@ import {AuthenticatedLnd} from "lightning";
 import * as BN from "bn.js";
 import * as fs from "fs";
 import {getLogger} from "../utils/Utils";
+import {FromBtcLnTrustedRequestType} from "../swaps/frombtcln_trusted/FromBtcLnTrusted";
 
 export type FailSwapResponse = {
     type: "fail",
@@ -163,7 +164,7 @@ export class PluginManager {
     }
 
     static async onHandlePostFromBtcQuote(
-        request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
+        request: RequestData<FromBtcLnRequestType | FromBtcRequestType | FromBtcLnTrustedRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         chainIdentifier: string,
         token: string,
@@ -194,7 +195,7 @@ export class PluginManager {
     }
 
     static async onHandlePreFromBtcQuote(
-        request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
+        request: RequestData<FromBtcLnRequestType | FromBtcRequestType | FromBtcLnTrustedRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         chainIdentifier: string,
         token: string,

@@ -21,6 +21,11 @@ export * from "./swaps/tobtc_abstract/ToBtcSwapAbs";
 export * from "./swaps/tobtcln_abstract/ToBtcLnAbs";
 export * from "./swaps/tobtcln_abstract/ToBtcLnSwapAbs";
 
+export * from "./swaps/frombtc_trusted/FromBtcTrusted";
+export * from "./swaps/frombtc_trusted/FromBtcTrustedSwap";
+export * from "./swaps/frombtcln_trusted/FromBtcLnTrusted";
+export * from "./swaps/frombtcln_trusted/FromBtcLnTrustedSwap";
+
 export * from "./swaps/ISwapPrice";
 export * from "./swaps/SwapHandler";
 export * from "./swaps/SwapHandlerSwap";

@@ -27,6 +27,8 @@ export enum SwapHandlerType {
     FROM_BTC = "FROM_BTC",
     TO_BTCLN = "TO_BTCLN",
     FROM_BTCLN = "FROM_BTCLN",
+    FROM_BTCLN_TRUSTED = "FROM_BTCLN_TRUSTED",
+    FROM_BTC_TRUSTED = "FROM_BTC_TRUSTED",
 }
 
 export type SwapHandlerInfoType = {
@@ -119,7 +121,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S> = SwapH
         this.swapPricing = swapPricing;
         this.allowedTokens = {};
         for(let chainId in chainsData.chains) {
-            this.allowedTokens[chainId] = new Set<string>(chainsData.chains[chainId].allowedTokens.map(e => e.toString()));
+            this.allowedTokens[chainId] = new Set<string>(chainsData.chains[chainId].allowedTokens);
         }
     }
 
