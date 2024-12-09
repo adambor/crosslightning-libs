@@ -3,22 +3,12 @@ import {ToBTCLNWrapper} from "./ToBTCLNWrapper";
 import {isIToBTCSwapInit, IToBTCSwap, IToBTCSwapInit} from "../IToBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
-import {SwapData} from "crosslightning-base";
+import {ChainType, SwapData} from "crosslightning-base";
 import {Buffer} from "buffer";
 import * as createHash from "create-hash";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
-import {LNURL, LNURLDecodedSuccessAction, LNURLPaySuccessAction} from "../../../utils/LNURL";
-
-function isLNURLPaySuccessAction(obj: any): obj is LNURLPaySuccessAction {
-    return obj != null &&
-        typeof obj === 'object' &&
-        typeof obj.tag === 'string' &&
-        (obj.description == null || typeof obj.description === 'string') &&
-        (obj.url == null || typeof obj.url === 'string') &&
-        (obj.message == null || typeof obj.message === 'string') &&
-        (obj.ciphertext == null || typeof obj.ciphertext === 'string') &&
-        (obj.iv == null || typeof obj.iv === 'string');
-}
+import {LNURL, LNURLDecodedSuccessAction, LNURLPaySuccessAction, isLNURLPaySuccessAction} from "../../../utils/LNURL";
+import {BtcToken, TokenAmount, Token, BitcoinTokens, toTokenAmount} from "../../Tokens";
 
 export type ToBTCLNSwapInit<T extends SwapData> = IToBTCSwapInit<T> & {
     confidence: number;
@@ -28,14 +18,15 @@ export type ToBTCLNSwapInit<T extends SwapData> = IToBTCSwapInit<T> & {
 };
 
 export function isToBTCLNSwapInit<T extends SwapData>(obj: any): obj is ToBTCLNSwapInit<T> {
-    return typeof(obj.confidence)==="number" &&
-        typeof(obj.pr)==="string" &&
-        (obj.lnurl==null || typeof(obj.lnurl)==="string") &&
-        (obj.successAction==null || isLNURLPaySuccessAction(obj.successAction)) &&
+    return typeof (obj.confidence) === "number" &&
+        typeof (obj.pr) === "string" &&
+        (obj.lnurl == null || typeof (obj.lnurl) === "string") &&
+        (obj.successAction == null || isLNURLPaySuccessAction(obj.successAction)) &&
         isIToBTCSwapInit<T>(obj);
 }
 
-export class ToBTCLNSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T, TXType> {
+export class ToBTCLNSwap<T extends ChainType = ChainType> extends IToBTCSwap<T> {
+    protected outputToken: BtcToken<true> = BitcoinTokens.BTCLN;
     protected readonly TYPE = SwapType.TO_BTCLN;
 
     private readonly confidence: number;
@@ -46,10 +37,10 @@ export class ToBTCLNSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T,
 
     private secret?: string;
 
-    constructor(wrapper: ToBTCLNWrapper<T, TXType>, init: ToBTCLNSwapInit<T>);
-    constructor(wrapper: ToBTCLNWrapper<T, TXType>, obj: any);
+    constructor(wrapper: ToBTCLNWrapper<T>, init: ToBTCLNSwapInit<T["Data"]>);
+    constructor(wrapper: ToBTCLNWrapper<T>, obj: any);
 
-    constructor(wrapper: ToBTCLNWrapper<T, TXType>, initOrObj: ToBTCLNSwapInit<T> | any) {
+    constructor(wrapper: ToBTCLNWrapper<T>, initOrObj: ToBTCLNSwapInit<T["Data"]> | any) {
         if(isToBTCLNSwapInit(initOrObj)) initOrObj.url += "/tobtcln";
         super(wrapper, initOrObj);
         if(!isToBTCLNSwapInit(initOrObj)) {
@@ -81,16 +72,10 @@ export class ToBTCLNSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T,
     //////////////////////////////
     //// Amounts & fees
 
-    getOutAmount(): BN {
+    getOutput(): TokenAmount<T["ChainId"], BtcToken<true>> {
         const parsedPR = bolt11Decode(this.pr);
-        return new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
-    }
-
-    getOutToken(): {chain: "BTC", lightning: true} {
-        return {
-            chain: "BTC",
-            lightning: true
-        };
+        const amount = new BN(parsedPR.millisatoshis).add(new BN(999)).div(new BN(1000));
+        return toTokenAmount(amount, this.outputToken, this.wrapper.prices);
     }
 
 
@@ -125,6 +110,9 @@ export class ToBTCLNSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T,
         return Buffer.from(parsed.tagsObject.payment_hash, "hex");
     }
 
+    getRecipient(): string {
+        return this.lnurl ?? this.pr;
+    }
 
     //////////////////////////////
     //// LNURL-pay
@@ -166,7 +154,9 @@ export class ToBTCLNSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T,
             ...super.serialize(),
             pr: this.pr,
             confidence: this.confidence,
-            secret: this.secret
+            secret: this.secret,
+            lnurl: this.lnurl,
+            successAction: this.successAction
         };
     }
 

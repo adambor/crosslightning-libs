@@ -1,12 +1,12 @@
 import {Intermediary, ServicesType} from "./Intermediary";
 import {SwapType} from "../swaps/SwapType";
 import * as BN from "bn.js";
-import {SwapData, TokenAddress} from "crosslightning-base";
 import {SwapContract} from "crosslightning-base/dist";
 import {EventEmitter} from "events";
 import {Buffer} from "buffer";
 import {getLogger, httpGet, tryWithRetries} from "../utils/Utils";
 import {IntermediaryAPI} from "./IntermediaryAPI";
+import {ChainType} from "crosslightning-base";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -20,8 +20,9 @@ export type SwapHandlerInfoType = {
     swapBaseFee: number,
     min: number,
     max: number,
+    tokens: string[],
+    chainTokens?: {[chainId: string]: string[]};
     data?: any,
-    tokens: string[]
 };
 
 type InfoHandlerResponseEnvelope = {
@@ -38,8 +39,16 @@ export type TokenBounds = {
     }
 }
 
+export type MultichainTokenBounds = {
+    [chainId: string]: TokenBounds
+}
+
 export type SwapBounds = {
     [key in SwapType]?: TokenBounds
+}
+
+export type MultichainSwapBounds = {
+    [key in SwapType]?: MultichainTokenBounds
 }
 
 /**
@@ -68,7 +77,7 @@ function swapHandlerTypeToSwapType(swapHandlerType: SwapHandlerType): SwapType {
  * @param tokenAddress
  * @param swapAmount
  */
-function getIntermediaryComparator(swapType: SwapType, tokenAddress: TokenAddress, swapAmount?: BN) {
+function getIntermediaryComparator(swapType: SwapType, tokenAddress: string, swapAmount?: BN) {
 
     if(swapType===SwapType.TO_BTC) {
         //TODO: Also take reputation into account
@@ -91,20 +100,28 @@ const logger = getLogger("IntermediaryDiscovery: ");
 
 const REGISTRY_URL = "https://api.github.com/repos/adambor/SolLightning-registry/contents/registry.json?ref=main";
 
-export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
+//To allow for legacy responses from not-yet updated LPs
+const DEFAULT_CHAIN = "SOLANA";
+
+export class IntermediaryDiscovery extends EventEmitter {
 
     intermediaries: Intermediary[];
 
-    swapContract: SwapContract<T, any, any, any>;
+    swapContracts: {[key: string]: SwapContract};
     registryUrl: string;
 
     httpRequestTimeout?: number;
 
     private overrideNodeUrls?: string[];
 
-    constructor(swapContract: SwapContract<T, any, any, any>, registryUrl: string = REGISTRY_URL, nodeUrls?: string[], httpRequestTimeout?: number) {
+    constructor(
+        swapContracts: {[key: string]: SwapContract},
+        registryUrl: string = REGISTRY_URL,
+        nodeUrls?: string[],
+        httpRequestTimeout?: number
+    ) {
         super();
-        this.swapContract = swapContract;
+        this.swapContracts = swapContracts;
         this.registryUrl = registryUrl;
         this.overrideNodeUrls = nodeUrls;
         this.httpRequestTimeout = httpRequestTimeout;
@@ -133,15 +150,36 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
      * @param url
      * @param abortSignal
      */
-    private async getNodeInfo(url: string, abortSignal?: AbortSignal) : Promise<{address: string, info: InfoHandlerResponseEnvelope}> {
+    private async getNodeInfo(url: string, abortSignal?: AbortSignal) : Promise<{addresses: {[key: string]: string}, info: InfoHandlerResponseEnvelope}> {
         const response = await IntermediaryAPI.getIntermediaryInfo(url);
 
-        await this.swapContract.isValidDataSignature(Buffer.from(response.envelope), response.signature, response.address);
+        //Handle legacy responses
+        if(response.chains==null) response.chains = {
+            [DEFAULT_CHAIN]: {address: response.address, signature: response.signature}
+        };
+
+        const addresses: {[key: string]: string} = {};
+        for(let chain in response.chains) {
+            if(this.swapContracts[chain]!=null) {
+                const {signature, address} = response.chains[chain];
+                await this.swapContracts[chain].isValidDataSignature(Buffer.from(response.envelope), signature, address);
+                addresses[chain] = address;
+            }
+        }
         if(abortSignal!=null) abortSignal.throwIfAborted();
 
+        //Handle legacy responses
+        const info: InfoHandlerResponseEnvelope = JSON.parse(response.envelope);
+        for(let swapType in info.services) {
+            const serviceData: SwapHandlerInfoType = info.services[swapType];
+            if(serviceData.chainTokens==null) serviceData.chainTokens = {
+                [DEFAULT_CHAIN]: serviceData.tokens
+            };
+        }
+
         return {
-            address: response.address,
-            info: JSON.parse(response.envelope)
+            addresses,
+            info
         };
     }
 
@@ -162,7 +200,7 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
             for(let key in node.info.services) {
                 services[swapHandlerTypeToSwapType(key as SwapHandlerType)] = node.info.services[key];
             }
-            return new Intermediary(url, node.address, services);
+            return new Intermediary(url, node.addresses, services);
         }).catch(e => {
             logger.error("fetchIntermediaries(): Error contacting intermediary "+url+": ", e);
             return null;
@@ -196,10 +234,42 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
         return this.reloadIntermediaries(abortSignal);
     }
 
+    getMultichainSwapBounds(): MultichainSwapBounds {
+        const bounds: MultichainSwapBounds = {};
+
+        this.intermediaries.forEach(intermediary => {
+            for(let swapType in intermediary.services) {
+
+                const swapService: SwapHandlerInfoType = intermediary.services[swapType];
+                bounds[swapType] ??= {};
+                const multichainBounds: MultichainTokenBounds = bounds[swapType];
+                for(let chainId in swapService.chainTokens) {
+                    multichainBounds[chainId] ??= {};
+                    const tokenBounds: TokenBounds = multichainBounds[chainId];
+
+                    for(let token of swapService.chainTokens[chainId]) {
+                        const tokenMinMax = tokenBounds[token];
+                        if(tokenMinMax==null) {
+                            tokenBounds[token] = {
+                                min: new BN(swapService.min),
+                                max: new BN(swapService.max)
+                            }
+                        } else {
+                            tokenMinMax.min = BN.min(tokenMinMax.min, new BN(swapService.min));
+                            tokenMinMax.max = BN.min(tokenMinMax.max, new BN(swapService.max));
+                        }
+                    }
+                }
+            }
+        });
+
+        return bounds;
+    }
+
     /**
      * Returns aggregate swap bounds (in sats - BTC) as indicated by the intermediaries
      */
-    getSwapBounds(): SwapBounds {
+    getSwapBounds(chainIdentifier: string): SwapBounds {
         const bounds: SwapBounds = {};
 
         this.intermediaries.forEach(intermediary => {
@@ -209,16 +279,18 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
                 if(bounds[swapType]==null) bounds[swapType] = {};
                 const tokenBounds: TokenBounds = bounds[swapType];
 
-                for(let token of swapService.tokens) {
-                    const tokenMinMax = tokenBounds[token];
-                    if(tokenMinMax==null) {
-                        tokenBounds[token] = {
-                            min: new BN(swapService.min),
-                            max: new BN(swapService.max)
+                if(swapService.chainTokens!=null && swapService.chainTokens[chainIdentifier]!=null) {
+                    for(let token of swapService.chainTokens[chainIdentifier]) {
+                        const tokenMinMax = tokenBounds[token];
+                        if(tokenMinMax==null) {
+                            tokenBounds[token] = {
+                                min: new BN(swapService.min),
+                                max: new BN(swapService.max)
+                            }
+                        } else {
+                            tokenMinMax.min = BN.min(tokenMinMax.min, new BN(swapService.min));
+                            tokenMinMax.max = BN.min(tokenMinMax.max, new BN(swapService.max));
                         }
-                    } else {
-                        tokenMinMax.min = BN.min(tokenMinMax.min, new BN(swapService.min));
-                        tokenMinMax.max = BN.min(tokenMinMax.max, new BN(swapService.max));
                     }
                 }
             }
@@ -231,15 +303,20 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
      * Returns the aggregate swap minimum (in sats - BTC) for a specific swap type & token
      *  as indicated by the intermediaries
      *
+     * @param chainIdentifier
      * @param swapType
      * @param token
      */
-    getSwapMinimum(swapType: SwapType, token: TokenAddress): number {
+    getSwapMinimum(chainIdentifier: string, swapType: SwapType, token: any): number {
         const tokenStr = token.toString();
         return this.intermediaries.reduce<number>((prevMin, intermediary) => {
             const swapService = intermediary.services[swapType];
-            if(swapService!=null && swapService.tokens.includes(tokenStr))
-                return prevMin==null ? swapService.min : Math.min(prevMin, swapService.min);
+            if(
+                swapService!=null &&
+                swapService.chainTokens!=null &&
+                swapService.chainTokens[chainIdentifier]!=null &&
+                swapService.chainTokens[chainIdentifier].includes(tokenStr)
+            ) return prevMin==null ? swapService.min : Math.min(prevMin, swapService.min);
             return prevMin;
         }, null);
     }
@@ -248,15 +325,20 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
      * Returns the aggregate swap maximum (in sats - BTC) for a specific swap type & token
      *  as indicated by the intermediaries
      *
+     * @param chainIdentifier
      * @param swapType
      * @param token
      */
-    getSwapMaximum(swapType: SwapType, token: TokenAddress): number {
+    getSwapMaximum(chainIdentifier: string, swapType: SwapType, token: any): number {
         const tokenStr = token.toString();
         return this.intermediaries.reduce<number>((prevMax, intermediary) => {
             const swapService = intermediary.services[swapType];
-            if(swapService!=null && swapService.tokens.includes(tokenStr))
-                return prevMax==null ? swapService.max : Math.max(prevMax, swapService.max);
+            if(
+                swapService!=null &&
+                swapService.chainTokens!=null &&
+                swapService.chainTokens[chainIdentifier]!=null &&
+                swapService.chainTokens[chainIdentifier].includes(tokenStr)
+            ) return prevMax==null ? swapService.max : Math.max(prevMax, swapService.max);
             return prevMax;
         }, null);
     }
@@ -264,19 +346,21 @@ export class IntermediaryDiscovery<T extends SwapData> extends EventEmitter {
     /**
      * Returns swap candidates for a specific swap type & token address
      *
+     * @param chainIdentifier
      * @param swapType
      * @param tokenAddress
      * @param amount Amount to be swapped in sats - BTC
      * @param count How many intermediaries to return at most
      */
-    getSwapCandidates(swapType: SwapType, tokenAddress: TokenAddress, amount?: BN, count?: number): Intermediary[] {
+    getSwapCandidates(chainIdentifier: string, swapType: SwapType, tokenAddress: any, amount?: BN, count?: number): Intermediary[] {
         const candidates = this.intermediaries.filter(e => {
             const swapService = e.services[swapType];
             if(swapService==null) return false;
             if(amount!=null && amount.lt(new BN(swapService.min))) return false;
             if(amount!=null && amount.gt(new BN(swapService.max))) return false;
-            if(swapService.tokens==null) return false;
-            if(!swapService.tokens.includes(tokenAddress.toString())) return false;
+            if(swapService.chainTokens==null) return false;
+            if(swapService.chainTokens[chainIdentifier]==null) return false;
+            if(!swapService.chainTokens[chainIdentifier].includes(tokenAddress.toString())) return false;
             return true;
         });
 

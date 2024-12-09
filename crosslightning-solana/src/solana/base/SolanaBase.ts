@@ -1,4 +1,4 @@
-import {Signer} from "@solana/web3.js";
+import {Connection, Signer} from "@solana/web3.js";
 import {AnchorProvider} from "@coral-xyz/anchor";
 import {SolanaFees} from "./modules/SolanaFees";
 import {SolanaBlocks} from "./modules/SolanaBlocks";
@@ -22,7 +22,7 @@ export class SolanaBase {
     public readonly SLOT_TIME = 400;
     public readonly TX_SLOT_VALIDITY = 151;
 
-    readonly provider: AnchorProvider & {signer?: Signer};
+    readonly connection: Connection;
     readonly retryPolicy: SolanaRetryPolicy;
 
     public readonly Blocks: SolanaBlocks;
@@ -37,11 +37,11 @@ export class SolanaBase {
     protected readonly logger = getLogger(this.constructor.name+": ");
 
     constructor(
-        provider: AnchorProvider & {signer?: Signer},
+        connection: Connection,
         retryPolicy?: SolanaRetryPolicy,
-        solanaFeeEstimator: SolanaFees = new SolanaFees(provider.connection)
+        solanaFeeEstimator: SolanaFees = new SolanaFees(connection)
     ) {
-        this.provider = provider;
+        this.connection = connection;
         this.retryPolicy = retryPolicy;
 
         this.Blocks = new SolanaBlocks(this);

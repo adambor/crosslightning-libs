@@ -1,6 +1,6 @@
-import {SwapBaseConfig, SwapHandler} from "./SwapHandler";
+import {RequestData, SwapBaseConfig, SwapHandler} from "./SwapHandler";
 import {SwapHandlerSwap} from "./SwapHandlerSwap";
-import {SwapData, TokenAddress} from "crosslightning-base";
+import {SwapData} from "crosslightning-base";
 import * as BN from "bn.js";
 import {ServerParamEncoder} from "../utils/paramcoders/server/ServerParamEncoder";
 import {IParamReader} from "../utils/paramcoders/IParamReader";
@@ -12,26 +12,31 @@ import {
 } from "../plugins/IPlugin";
 import {ToBtcLnRequestType} from "./tobtcln_abstract/ToBtcLnAbs";
 import {ToBtcRequestType} from "./tobtc_abstract/ToBtcAbs";
+import {Request} from "express";
 
 export type ToBtcBaseConfig = SwapBaseConfig & {
     gracePeriod: BN
 };
 
-export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T extends SwapData, S> extends SwapHandler<V, T, S> {
+export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S>, S> extends SwapHandler<V, S> {
 
     readonly pdaExistsForToken: {
-        [token: string]: boolean
+        [chainIdentifier: string]: {
+            [token: string]: boolean
+        }
     } = {};
 
     abstract config: ToBtcBaseConfig;
 
-    protected async checkVaultInitialized(token: string): Promise<void> {
-        if(!this.pdaExistsForToken[token]) {
-            this.logger.debug("checkVaultInitialized(): checking vault exists for token: "+token);
-            const reputation = await this.swapContract.getIntermediaryReputation(this.swapContract.getAddress(), this.swapContract.toTokenAddress(token));
-            this.logger.debug("checkVaultInitialized(): vault state, token: "+token+" exists: "+(reputation!=null));
+    protected async checkVaultInitialized(chainIdentifier: string, token: string): Promise<void> {
+        if(!this.pdaExistsForToken[chainIdentifier] || !this.pdaExistsForToken[chainIdentifier][token]) {
+            this.logger.debug("checkVaultInitialized(): checking vault exists for chain: "+chainIdentifier+" token: "+token);
+            const {swapContract, signer} = this.getChain(chainIdentifier);
+            const reputation = await swapContract.getIntermediaryReputation(signer.getAddress(), token);
+            this.logger.debug("checkVaultInitialized(): vault state, chain: "+chainIdentifier+" token: "+token+" exists: "+(reputation!=null));
             if(reputation!=null) {
-                this.pdaExistsForToken[token] = true;
+                if(this.pdaExistsForToken[chainIdentifier]==null) this.pdaExistsForToken[chainIdentifier] = {};
+                this.pdaExistsForToken[chainIdentifier][token] = true;
             } else {
                 throw {
                     code: 20201,
@@ -50,17 +55,14 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
      * @throws {DefinedRuntimeError} will throw an error if the amount is outside minimum/maximum bounds
      */
     protected async preCheckAmounts(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: ToBtcLnRequestType | ToBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        useToken: TokenAddress
+        useToken: string
     ): Promise<{baseFee: BN, feePPM: BN}> {
         const res = await PluginManager.onHandlePreToBtcQuote(
             request,
             requestedAmount,
+            request.chainIdentifier,
             useToken,
             {minInBtc: this.config.min, maxInBtc: this.config.max},
             {baseFeeInBtc: this.config.baseFee, feePPM: this.config.feePPM},
@@ -97,14 +99,10 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
      *  or if we don't have enough funds (getNetworkFee callback throws)
      */
     protected async checkToBtcAmount<T extends {networkFee: BN}>(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: ToBtcLnRequestType | ToBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         fees: {baseFee: BN, feePPM: BN},
-        useToken: TokenAddress,
+        useToken: string,
         getNetworkFee: (amount: BN) => Promise<T>,
         signal: AbortSignal,
         pricePrefetchPromise?: Promise<BN>
@@ -117,9 +115,12 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
         networkFeeInToken: BN,
         totalInToken: BN
     }> {
+        const chainIdentifier = request.chainIdentifier;
+
         const res = await PluginManager.onHandlePostToBtcQuote<T>(
             request,
             requestedAmount,
+            request.chainIdentifier,
             useToken,
             {minInBtc: this.config.min, maxInBtc: this.config.max},
             {baseFeeInBtc: fees.baseFee, feePPM: fees.feePPM, networkFeeGetter: getNetworkFee},
@@ -160,7 +161,7 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
         let amountBD: BN;
         let tooLow = false;
         if(requestedAmount.input) {
-            amountBD = await this.swapPricing.getToBtcSwapAmount(requestedAmount.amount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+            amountBD = await this.swapPricing.getToBtcSwapAmount(requestedAmount.amount, useToken, chainIdentifier, null, pricePrefetchPromise);
             signal.throwIfAborted();
 
             //Decrease by base fee
@@ -195,8 +196,12 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
                 let adjustedMax = this.config.max.mul(fees.feePPM.add(new BN(1000000))).div(new BN(1000000));
                 adjustedMin = adjustedMin.add(fees.baseFee).add(resp.networkFee);
                 adjustedMax = adjustedMax.add(fees.baseFee).add(resp.networkFee);
-                const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+                const minIn = await this.swapPricing.getFromBtcSwapAmount(
+                    adjustedMin, useToken, chainIdentifier, null, pricePrefetchPromise
+                );
+                const maxIn = await this.swapPricing.getFromBtcSwapAmount(
+                    adjustedMax, useToken, chainIdentifier, null, pricePrefetchPromise
+                );
                 throw {
                     code: tooLow ? 20003 : 2004,
                     msg: tooLow ? "Amount too low!" : "Amount too high!",
@@ -210,15 +215,21 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
 
         const swapFee = fees.baseFee.add(amountBD.mul(fees.feePPM).div(new BN(1000000)));
 
-        const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(resp.networkFee, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-        const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+        const networkFeeInToken = await this.swapPricing.getFromBtcSwapAmount(
+            resp.networkFee, useToken, chainIdentifier, true, pricePrefetchPromise
+        );
+        const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(
+            swapFee, useToken, chainIdentifier, true, pricePrefetchPromise
+        );
         signal.throwIfAborted();
 
         let total: BN;
         if(requestedAmount.input) {
             total = requestedAmount.amount;
         } else {
-            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(requestedAmount.amount, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(
+                requestedAmount.amount, useToken, chainIdentifier, true, pricePrefetchPromise
+            );
             signal.throwIfAborted();
             total = amountInToken.add(swapFeeInToken).add(networkFeeInToken);
         }
@@ -229,36 +240,44 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
     /**
      * Starts pre-fetches for swap pricing & signature data
      *
+     * @param chainIdentifier
      * @param token
      * @param responseStream
      * @param abortController
      */
-    protected getToBtcPrefetches(token: TokenAddress, responseStream: ServerParamEncoder, abortController: AbortController): {
+    protected getToBtcPrefetches(chainIdentifier: string, token: string, responseStream: ServerParamEncoder, abortController: AbortController): {
         pricePrefetchPromise?: Promise<BN>,
         signDataPrefetchPromise?: Promise<any>
     } {
         //Fetch pricing & signature data in parallel
-        const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(token).catch(e => {
+        const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice(token, chainIdentifier).catch(e => {
             this.logger.error("getToBtcPrefetches(): pricePrefetch error", e);
             abortController.abort(e);
             return null;
-        }) : null;
+        });
 
         return {
             pricePrefetchPromise,
-            signDataPrefetchPromise: this.getSignDataPrefetch(abortController, responseStream)
+            signDataPrefetchPromise: this.getSignDataPrefetch(chainIdentifier, abortController, responseStream)
         }
     }
 
     /**
      * Signs the created swap
      *
+     * @param chainIdentifier
      * @param swapObject
      * @param req
      * @param abortSignal
      * @param signDataPrefetchPromise
      */
-    protected async getToBtcSignatureData(swapObject: T, req: Request & {paramReader: IParamReader}, abortSignal: AbortSignal, signDataPrefetchPromise?: Promise<any>): Promise<{
+    protected async getToBtcSignatureData(
+        chainIdentifier: string,
+        swapObject: SwapData,
+        req: Request & {paramReader: IParamReader},
+        abortSignal: AbortSignal,
+        signDataPrefetchPromise?: Promise<any>
+    ): Promise<{
         prefix: string,
         timeout: string,
         signature: string
@@ -274,7 +293,9 @@ export abstract class ToBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T ex
 
         const feeRate = feeRateObj?.feeRate!=null && typeof(feeRateObj.feeRate)==="string" ? feeRateObj.feeRate : null;
         this.logger.debug("getToBtcSignatureData(): using fee rate from client: ", feeRate);
-        const sigData = await this.swapContract.getClaimInitSignature(
+        const {swapContract, signer} = this.getChain(chainIdentifier);
+        const sigData = await swapContract.getInitSignature(
+            signer,
             swapObject,
             this.config.authorizationTimeout,
             prefetchedSignData,

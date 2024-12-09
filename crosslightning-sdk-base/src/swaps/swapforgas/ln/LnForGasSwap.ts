@@ -1,17 +1,18 @@
 import {decode as bolt11Decode} from "bolt11";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
-import {SwapData, TokenAddress} from "crosslightning-base";
+import {ChainType, SwapData} from "crosslightning-base";
 import {LnForGasWrapper} from "./LnForGasWrapper";
 import {Buffer} from "buffer";
 import {PaymentAuthError} from "../../../errors/PaymentAuthError";
 import {getLogger, timeoutPromise} from "../../../utils/Utils";
-import {Fee, isISwapInit, ISwap, ISwapInit, Token} from "../../ISwap";
+import {Fee, isISwapInit, ISwap, ISwapInit} from "../../ISwap";
 import {PriceInfoType} from "../../../prices/abstract/ISwapPrice";
 import {
     InvoiceStatusResponseCodes,
     TrustedIntermediaryAPI
 } from "../../../intermediaries/TrustedIntermediaryAPI";
+import {BitcoinTokens, BtcToken, SCToken, TokenAmount, toTokenAmount} from "../../Tokens";
 
 export enum LnForGasSwapState {
     EXPIRED = -2,
@@ -33,7 +34,7 @@ export function isLnForGasSwapInit<T extends SwapData>(obj: any): obj is LnForGa
         isISwapInit<T>(obj);
 }
 
-export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState> {
+export class LnForGasSwap<T extends ChainType = ChainType> extends ISwap<T, LnForGasSwapState> {
     protected readonly TYPE: SwapType = SwapType.FROM_BTCLN;
 
     //State: PR_CREATED
@@ -44,11 +45,11 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
     //State: FINISHED
     scTxId: string;
 
-    constructor(wrapper: LnForGasWrapper<T>, init: LnForGasSwapInit<T>);
+    constructor(wrapper: LnForGasWrapper<T>, init: LnForGasSwapInit<T["Data"]>);
     constructor(wrapper: LnForGasWrapper<T>, obj: any);
     constructor(
         wrapper: LnForGasWrapper<T>,
-        initOrObj: LnForGasSwapInit<T> | any
+        initOrObj: LnForGasSwapInit<T["Data"]> | any
     ) {
         if(isLnForGasSwapInit(initOrObj)) initOrObj.url += "/lnforgas";
         super(wrapper, initOrObj);
@@ -62,6 +63,24 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
         }
         this.tryCalculateSwapFee();
         this.logger = getLogger(this.constructor.name+"("+this.getPaymentHashString()+"): ");
+
+        if(this.pricingInfo.swapPriceUSatPerToken==null) {
+            this.pricingInfo = this.wrapper.prices.recomputePriceInfoReceive(
+                this.chainIdentifier,
+                this.getInput().rawAmount,
+                this.pricingInfo.satsBaseFee,
+                this.pricingInfo.feePPM,
+                this.data.getAmount(),
+                this.data.getToken()
+            );
+        }
+    }
+
+    protected upgradeVersion() {
+        if(this.version == null) {
+            //Noop
+            this.version = 1;
+        }
     }
 
     /**
@@ -70,7 +89,7 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
      */
     protected tryCalculateSwapFee() {
         if(this.swapFeeBtc==null) {
-            this.swapFeeBtc = this.swapFee.mul(this.getInAmount()).div(this.getOutAmountWithoutFee());
+            this.swapFeeBtc = this.swapFee.mul(this.getInput().rawAmount).div(this.getOutAmountWithoutFee());
         }
     }
 
@@ -80,7 +99,14 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
 
     async refreshPriceData(): Promise<PriceInfoType> {
         if(this.pricingInfo==null) return null;
-        const priceData = await this.wrapper.prices.isValidAmountReceive(this.getInAmount(), this.pricingInfo.satsBaseFee, this.pricingInfo.feePPM, this.data.getAmount(), this.data.getToken());
+        const priceData = await this.wrapper.prices.isValidAmountReceive(
+            this.chainIdentifier,
+            this.getInput().rawAmount,
+            this.pricingInfo.satsBaseFee,
+            this.pricingInfo.feePPM,
+            this.data.getAmount(),
+            this.data.getToken()
+        );
         this.pricingInfo = priceData;
         return priceData;
     }
@@ -131,26 +157,16 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
         return (decoded.timeExpireDate*1000);
     }
 
-    getInToken(): { chain: "BTC", lightning: true } {
-        return {
-            chain: "BTC",
-            lightning: true
-        }
-    }
-
-    getOutToken(): {chain: "SC", address: TokenAddress} {
-        return {
-            chain: "SC",
-            address: this.wrapper.contract.getNativeCurrencyAddress()
-        };
-    }
-
     isFinished(): boolean {
         return this.state===LnForGasSwapState.FINISHED || this.state===LnForGasSwapState.FAILED || this.state===LnForGasSwapState.EXPIRED;
     }
 
     isQuoteExpired(): boolean {
         return this.state===LnForGasSwapState.EXPIRED;
+    }
+
+    isQuoteSoftExpired(): boolean {
+        return this.isQuoteExpired();
     }
 
     isFailed(): boolean {
@@ -165,37 +181,45 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
         return Promise.resolve(this.getTimeoutTime()>Date.now());
     }
 
+    isActionable(): boolean {
+        return false;
+    }
 
     //////////////////////////////
     //// Amounts & fees
 
     protected getOutAmountWithoutFee(): BN {
-        return this.getOutAmount().add(this.swapFee);
+        return this.outputAmount.add(this.swapFee);
     }
 
-    getOutAmount(): BN {
-        return this.outputAmount;
+    getOutput(): TokenAmount<T["ChainId"], SCToken<T["ChainId"]>> {
+        return toTokenAmount(this.outputAmount, this.wrapper.tokens[this.wrapper.contract.getNativeCurrencyAddress()], this.wrapper.prices);
     }
 
-    getInAmountWithoutFee(): BN {
-        return this.getInAmount().sub(this.swapFeeBtc);
-    }
-
-    getInAmount(): BN {
+    getInputWithoutFee(): TokenAmount<T["ChainId"], BtcToken<true>> {
         const parsed = bolt11Decode(this.pr);
-        return new BN(parsed.millisatoshis).add(new BN(999)).div(new BN(1000));
+        const amount = new BN(parsed.millisatoshis).add(new BN(999)).div(new BN(1000));
+        return toTokenAmount(amount.sub(this.swapFeeBtc), BitcoinTokens.BTCLN, this.wrapper.prices);
+    }
+
+    getInput(): TokenAmount<T["ChainId"], BtcToken<true>> {
+        const parsed = bolt11Decode(this.pr);
+        const amount = new BN(parsed.millisatoshis).add(new BN(999)).div(new BN(1000));
+        return toTokenAmount(amount, BitcoinTokens.BTCLN, this.wrapper.prices);
     }
 
     getSwapFee(): Fee {
         return {
-            amountInSrcToken: this.swapFeeBtc,
-            amountInDstToken: this.swapFee
+            amountInSrcToken: toTokenAmount(this.swapFeeBtc, BitcoinTokens.BTCLN, this.wrapper.prices),
+            amountInDstToken: toTokenAmount(this.swapFee, this.wrapper.tokens[this.wrapper.contract.getNativeCurrencyAddress()], this.wrapper.prices),
+            usdValue: (abortSignal?: AbortSignal, preFetchedUsdPrice?: number) =>
+                this.wrapper.prices.getBtcUsdValue(this.swapFeeBtc, abortSignal, preFetchedUsdPrice)
         };
     }
 
     getRealSwapFeePercentagePPM(): BN {
         const feeWithoutBaseFee = this.swapFeeBtc.sub(this.pricingInfo.satsBaseFee);
-        return feeWithoutBaseFee.mul(new BN(1000000)).div(this.getInAmountWithoutFee());
+        return feeWithoutBaseFee.mul(new BN(1000000)).div(this.getInputWithoutFee().rawAmount);
     }
 
 
@@ -249,7 +273,8 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
     async waitForPayment(abortSignal?: AbortSignal, checkIntervalSeconds: number = 5): Promise<void> {
         if(this.state!==LnForGasSwapState.PR_CREATED) throw new Error("Must be in PR_CREATED state!");
 
-        await this._save();
+        this.initiated = true;
+        await this._saveAndEmit();
 
         while(!abortSignal.aborted && this.state===LnForGasSwapState.PR_CREATED) {
             await this.checkInvoicePaid(true);
@@ -272,6 +297,10 @@ export class LnForGasSwap<T extends SwapData> extends ISwap<T, LnForGasSwapState
             recipient: this.recipient,
             scTxId: this.scTxId
         };
+    }
+
+    getInitiator(): string {
+        return this.recipient;
     }
 
 }

@@ -1,6 +1,5 @@
-import {SwapContract, SwapData} from "crosslightning-base";
 import {Express} from "express";
-import {SwapHandler, SwapHandlerInfoType, SwapHandlerType} from "../swaps/SwapHandler";
+import {MultichainData, SwapHandler, SwapHandlerInfoType, SwapHandlerType} from "../swaps/SwapHandler";
 import * as express from "express";
 
 const HEX_REGEX = /[0-9a-f]+/i;
@@ -13,23 +12,29 @@ type InfoHandlerResponseEnvelope = {
 };
 
 type InfoHandlerResponse = {
-    address: string,
     envelope: string,
-    signature: string
+    address: string,
+    signature: string,
+    chains: {
+        [chainIdentifier: string]: {
+            address: string,
+            signature: string
+        }
+    }
 }
 
 /**
  * Handles info requests to POST /info returning information about fees, swap params, etc.
  */
-export class InfoHandler<T extends SwapData> {
+export class InfoHandler {
 
-    readonly swapContract: SwapContract<T, any, any, any>;
+    readonly chainData: MultichainData;
     readonly path: string;
 
-    readonly swapHandlers: SwapHandler<any, any>[];
+    readonly swapHandlers: SwapHandler[];
 
-    constructor(swapContract: SwapContract<T, any, any, any>, path: string, swapHandlers: SwapHandler<any, any>[]) {
-        this.swapContract = swapContract;
+    constructor(chainData: MultichainData, path: string, swapHandlers: SwapHandler[]) {
+        this.chainData = chainData;
         this.path = path;
         this.swapHandlers = swapHandlers;
     }
@@ -67,13 +72,29 @@ export class InfoHandler<T extends SwapData> {
             }
 
             const envelope = JSON.stringify(env);
+            const envelopeBuffer = Buffer.from(envelope);
 
-            const signature = await this.swapContract.getDataSignature(Buffer.from(envelope));
+            const chains: {
+                [chainIdentifier: string]: {
+                    address: string,
+                    signature: string
+                }
+            } = {};
+            for(let chainIdentifier in this.chainData.chains) {
+                const singleChain = this.chainData.chains[chainIdentifier];
+                chains[chainIdentifier] = {
+                    address: singleChain.signer.getAddress(),
+                    signature: await singleChain.swapContract.getDataSignature(singleChain.signer, envelopeBuffer)
+                };
+            }
+
+            const defaults = chains[this.chainData.default];
 
             const response: InfoHandlerResponse = {
-                address: this.swapContract.getAddress(),
                 envelope,
-                signature
+                address: defaults.address,
+                signature: defaults.signature,
+                chains
             };
 
             res.status(200).json(response);

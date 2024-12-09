@@ -1,21 +1,39 @@
 import BN = require("bn.js");
 import {IPriceProvider} from "./abstract/IPriceProvider";
-import {TokenAddress} from "crosslightning-base";
 import {BinancePriceProvider} from "./providers/BinancePriceProvider";
 import {OKXPriceProvider} from "./providers/OKXPriceProvider";
 import {CoinGeckoPriceProvider} from "./providers/CoinGeckoPriceProvider";
 import {CoinPaprikaPriceProvider} from "./providers/CoinPaprikaPriceProvider";
-import {promiseAny, objectMap, tryWithRetries, getLogger} from "../utils/Utils";
+import {promiseAny, tryWithRetries, getLogger} from "../utils/Utils";
 import {ICachedSwapPrice} from "./abstract/ICachedSwapPrice";
 import {RequestError} from "../errors/RequestError";
+import {ChainIds, MultiChain} from "../swaps/Swapper";
 
-export type RedundantSwapPriceAssets = {
-    [ticker: string]: {
-        binancePair: string,
-        okxPair: string,
-        coinGeckoCoinId: string,
-        coinPaprikaCoinId: string,
-        decimals: number
+export type RedundantSwapPriceAssets<T extends MultiChain> = {
+    binancePair: string,
+    okxPair: string,
+    coinGeckoCoinId: string,
+    coinPaprikaCoinId: string,
+    chains: {
+        [chainIdentifier in keyof T]?: {
+            address: string,
+            decimals: number
+        }
+    }
+}[];
+
+export type CtorCoinDecimals<T extends MultiChain> = {
+    chains: {
+        [chainIdentifier in keyof T]?: {
+            address: string,
+            decimals: number
+        }
+    }
+}[];
+
+type CoinDecimals<T extends MultiChain> = {
+    [chainIdentifier in keyof T]?: {
+        [tokenAddress: string]: number
     }
 };
 
@@ -25,48 +43,54 @@ const logger = getLogger("RedundantSwapPrice: ");
  * Swap price API using multiple price sources, handles errors on the APIs and automatically switches between them, such
  *  that there always is a functional API
  */
-export class RedundantSwapPrice extends ICachedSwapPrice {
+export class RedundantSwapPrice<T extends MultiChain> extends ICachedSwapPrice<T> {
 
-    static createFromTokenMap(maxAllowedFeeDiffPPM: BN, assets: RedundantSwapPriceAssets, cacheTimeout?: number): RedundantSwapPrice {
+    static createFromTokenMap<T extends MultiChain>(maxAllowedFeeDiffPPM: BN, assets: RedundantSwapPriceAssets<T>, cacheTimeout?: number): RedundantSwapPrice<T> {
         const priceApis = [
-            new BinancePriceProvider(objectMap(assets, (input, key) => {
-                return input.binancePair==null ? null : {
-                    coinId: input.binancePair,
-                    decimals: input.decimals
-                }
+            new BinancePriceProvider(assets.map(coinData => {
+                return {
+                    coinId: coinData.binancePair,
+                    chains: coinData.chains
+                };
             })),
-            new OKXPriceProvider(objectMap(assets, (input, key) => {
-                return input.okxPair==null ? null : {
-                    coinId: input.okxPair,
-                    decimals: input.decimals
-                }
+            new OKXPriceProvider(assets.map(coinData => {
+                return {
+                    coinId: coinData.okxPair,
+                    chains: coinData.chains
+                };
             })),
-            new CoinGeckoPriceProvider(objectMap(assets, (input, key) => {
-                return input.coinGeckoCoinId==null ? null : {
-                    coinId: input.coinGeckoCoinId,
-                    decimals: input.decimals
-                }
+            new CoinGeckoPriceProvider(assets.map(coinData => {
+                return {
+                    coinId: coinData.coinGeckoCoinId,
+                    chains: coinData.chains
+                };
             })),
-            new CoinPaprikaPriceProvider(objectMap(assets, (input, key) => {
-                return input.coinPaprikaCoinId==null ? null : {
-                    coinId: input.coinPaprikaCoinId,
-                    decimals: input.decimals
-                }
+            new CoinPaprikaPriceProvider(assets.map(coinData => {
+                return {
+                    coinId: coinData.coinPaprikaCoinId,
+                    chains: coinData.chains
+                };
             }))
         ];
 
-        return new RedundantSwapPrice(maxAllowedFeeDiffPPM, objectMap(assets, (input, key) => input.decimals), priceApis, cacheTimeout);
+        return new RedundantSwapPrice(maxAllowedFeeDiffPPM, assets, priceApis, cacheTimeout);
     }
 
-    coinsDecimals: {[key: string]: number} = {};
+    coinsDecimals: CoinDecimals<T> = {};
     priceApis: {
-        priceApi: IPriceProvider,
+        priceApi: IPriceProvider<T>,
         operational: boolean
     }[];
 
-    constructor(maxAllowedFeeDiffPPM: BN, coinsDecimals: {[key: string]: number}, priceApis: IPriceProvider[], cacheTimeout?: number) {
+    constructor(maxAllowedFeeDiffPPM: BN, coinsDecimals: CtorCoinDecimals<T>, priceApis: IPriceProvider<T>[], cacheTimeout?: number) {
         super(maxAllowedFeeDiffPPM, cacheTimeout);
-        this.coinsDecimals = coinsDecimals;
+        for(let coinData of coinsDecimals) {
+            for(let chainId in coinData.chains) {
+                const {address, decimals} = coinData.chains[chainId];
+                this.coinsDecimals[chainId] ??= {};
+                (this.coinsDecimals[chainId] as any)[address.toString()] = decimals;
+            }
+        }
         this.priceApis = priceApis.map(api => {
             return {
                 priceApi: api,
@@ -80,7 +104,7 @@ export class RedundantSwapPrice extends ICachedSwapPrice {
      *
      * @private
      */
-    private getOperationalPriceApi(): {priceApi: IPriceProvider, operational: boolean} {
+    private getOperationalPriceApi(): {priceApi: IPriceProvider<T>, operational: boolean} {
         return this.priceApis.find(e => e.operational===true);
     }
 
@@ -90,7 +114,7 @@ export class RedundantSwapPrice extends ICachedSwapPrice {
      *
      * @private
      */
-    private getMaybeOperationalPriceApis(): {priceApi: IPriceProvider, operational: boolean}[] {
+    private getMaybeOperationalPriceApis(): {priceApi: IPriceProvider<T>, operational: boolean}[] {
         let operational = this.priceApis.filter(e => e.operational===true || e.operational===null);
         if(operational.length===0) {
             this.priceApis.forEach(e => e.operational=null);
@@ -102,22 +126,26 @@ export class RedundantSwapPrice extends ICachedSwapPrice {
     /**
      * Fetches price in parallel from multiple maybe operational price APIs
      *
+     * @param chainIdentifier
      * @param token
      * @param abortSignal
      * @private
      */
-    private async fetchPriceFromMaybeOperationalPriceApis(token: TokenAddress, abortSignal?: AbortSignal) {
+    private async fetchPriceFromMaybeOperationalPriceApis<C extends ChainIds<T>>(chainIdentifier: C, token: string, abortSignal?: AbortSignal) {
         try {
             return await promiseAny<BN>(this.getMaybeOperationalPriceApis().map(
-                obj => obj.priceApi.getPrice(token, abortSignal).then(price => {
-                    logger.debug("fetchPrice(): Price from "+obj.priceApi.constructor.name+": ", price.toString(10));
-                    obj.operational = true;
-                    return price;
-                }).catch(e => {
-                    if(abortSignal!=null) abortSignal.throwIfAborted();
-                    obj.operational = false;
-                    throw e;
-                })
+                obj => (async () => {
+                    try {
+                        const price = await obj.priceApi.getPrice(chainIdentifier, token, abortSignal);
+                        logger.debug("fetchPrice(): Price from "+obj.priceApi.constructor.name+": ", price.toString(10));
+                        obj.operational = true;
+                        return price;
+                    } catch (e) {
+                        if(abortSignal!=null) abortSignal.throwIfAborted();
+                        obj.operational = false;
+                        throw e;
+                    }
+                })()
             ))
         } catch (e) {
             if(abortSignal!=null) abortSignal.throwIfAborted();
@@ -129,26 +157,71 @@ export class RedundantSwapPrice extends ICachedSwapPrice {
      * Fetches the prices, first tries to use the operational price API (if any) and if that fails it falls back
      *  to using maybe operational price APIs
      *
+     * @param chainIdentifier
      * @param token
      * @param abortSignal
      * @private
      */
-    protected fetchPrice(token: TokenAddress, abortSignal?: AbortSignal): Promise<BN> {
+    protected fetchPrice<C extends ChainIds<T>>(chainIdentifier: C, token: string, abortSignal?: AbortSignal): Promise<BN> {
         return tryWithRetries(() => {
             const operationalPriceApi = this.getOperationalPriceApi();
             if(operationalPriceApi!=null) {
-                return operationalPriceApi.priceApi.getPrice(token, abortSignal).catch(err => {
+                return operationalPriceApi.priceApi.getPrice(chainIdentifier, token, abortSignal).catch(err => {
                     if(abortSignal!=null) abortSignal.throwIfAborted();
                     operationalPriceApi.operational = false;
-                    return this.fetchPriceFromMaybeOperationalPriceApis(token, abortSignal);
+                    return this.fetchPriceFromMaybeOperationalPriceApis(chainIdentifier, token, abortSignal);
                 });
             }
-            return this.fetchPriceFromMaybeOperationalPriceApis(token, abortSignal);
+            return this.fetchPriceFromMaybeOperationalPriceApis(chainIdentifier, token, abortSignal);
         }, null, RequestError, abortSignal);
     }
 
-    protected getDecimals(token: TokenAddress): number | null {
-        return this.coinsDecimals[token.toString()];
+    protected getDecimals<C extends ChainIds<T>>(chainIdentifier: C, token: string): number | null {
+        if(this.coinsDecimals[chainIdentifier]==null) return null;
+        return this.coinsDecimals[chainIdentifier][token.toString()];
+    }
+
+
+    /**
+     * Fetches BTC price in USD in parallel from multiple maybe operational price APIs
+     *
+     * @param abortSignal
+     * @private
+     */
+    private async fetchUsdPriceFromMaybeOperationalPriceApis(abortSignal?: AbortSignal): Promise<number> {
+        try {
+            return await promiseAny<number>(this.getMaybeOperationalPriceApis().map(
+                obj => (async () => {
+                    try {
+                        const price = await obj.priceApi.getUsdPrice(abortSignal);
+                        logger.debug("fetchPrice(): USD price from "+obj.priceApi.constructor.name+": ", price.toString(10));
+                        obj.operational = true;
+                        return price;
+                    } catch (e) {
+                        if(abortSignal!=null) abortSignal.throwIfAborted();
+                        obj.operational = false;
+                        throw e;
+                    }
+                })()
+            ))
+        } catch (e) {
+            if(abortSignal!=null) abortSignal.throwIfAborted();
+            throw e.find(err => !(err instanceof RequestError)) || e[0];
+        }
+    }
+
+    protected fetchUsdPrice(abortSignal?: AbortSignal): Promise<number> {
+        return tryWithRetries(() => {
+            const operationalPriceApi = this.getOperationalPriceApi();
+            if(operationalPriceApi!=null) {
+                return operationalPriceApi.priceApi.getUsdPrice(abortSignal).catch(err => {
+                    if(abortSignal!=null) abortSignal.throwIfAborted();
+                    operationalPriceApi.operational = false;
+                    return this.fetchUsdPriceFromMaybeOperationalPriceApis(abortSignal);
+                });
+            }
+            return this.fetchUsdPriceFromMaybeOperationalPriceApis(abortSignal);
+        }, null, RequestError, abortSignal);
     }
 
 }

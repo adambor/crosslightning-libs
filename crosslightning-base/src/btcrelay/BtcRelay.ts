@@ -1,8 +1,14 @@
 import {BtcStoredHeader} from "./types/BtcStoredHeader";
 import {BtcBlock} from "./types/BtcBlock";
 import * as BN from "bn.js";
+import {AbstractSigner} from "../swaps/SwapContract";
 
-export interface BtcRelay<V extends BtcStoredHeader<any>, T, B extends BtcBlock> {
+export interface BtcRelay<
+    V extends BtcStoredHeader<any>,
+    T,
+    B extends BtcBlock,
+    Signer extends AbstractSigner = AbstractSigner
+> {
 
     maxHeadersPerTx: number;
     maxForkHeadersPerTx: number;
@@ -26,39 +32,39 @@ export interface BtcRelay<V extends BtcStoredHeader<any>, T, B extends BtcBlock>
     }>;
     //retrieveOnchainTip(): Promise<B>;
 
-    saveInitialHeader(header: B, epochStart: number, pastBlocksTimestamps: number[], feeRate?: string): Promise<T>;
-    saveMainHeaders(mainHeaders: B[], storedHeader: V, feeRate?: string): Promise<{
+    saveInitialHeader(signer: string, header: B, epochStart: number, pastBlocksTimestamps: number[], feeRate?: string): Promise<T>;
+    saveMainHeaders(signer: string, mainHeaders: B[], storedHeader: V, feeRate?: string): Promise<{
         forkId: number,
         lastStoredHeader: V,
         tx: T,
         computedCommitedHeaders: V[]
     }>;
-    saveNewForkHeaders(forkHeaders: B[], storedHeader: V, tipWork: Buffer, feeRate?: string): Promise<{
+    saveNewForkHeaders(signer: string, forkHeaders: B[], storedHeader: V, tipWork: Buffer, feeRate?: string): Promise<{
         forkId: number,
         lastStoredHeader: V,
         tx: T,
         computedCommitedHeaders: V[]
     }>;
-    saveForkHeaders(forkHeaders: B[], storedHeader: V, forkId: number, tipWork: Buffer, feeRate?: string): Promise<{
+    saveForkHeaders(signer: string, forkHeaders: B[], storedHeader: V, forkId: number, tipWork: Buffer, feeRate?: string): Promise<{
         forkId: number,
         lastStoredHeader: V,
         tx: T,
         computedCommitedHeaders: V[]
     }>;
-    saveShortForkHeaders?(forkHeaders: B[], storedHeader: V, tipWork: Buffer, feeRate?: string): Promise<{
+    saveShortForkHeaders?(signer: string, forkHeaders: B[], storedHeader: V, tipWork: Buffer, feeRate?: string): Promise<{
         forkId: number,
         lastStoredHeader: V,
         tx: T,
         computedCommitedHeaders: V[]
     }>;
 
-    getMainFeeRate?(): Promise<string>;
-    getForkFeeRate?(forkId: number): Promise<string>;
+    getMainFeeRate?(signer: string): Promise<string>;
+    getForkFeeRate?(signer: string, forkId: number): Promise<string>;
 
     estimateSynchronizeFee(requiredBlockheight: number, feeRate?: string): Promise<BN>;
 
     getFeePerBlock(feeRate?: any): Promise<BN>;
 
-    sweepForkData?(lastSweepTimestamp?: number): Promise<number | null>;
+    sweepForkData?(signer: Signer, lastSweepTimestamp?: number): Promise<number | null>;
 
 }

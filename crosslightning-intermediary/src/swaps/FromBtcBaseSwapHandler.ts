@@ -1,6 +1,6 @@
 import {SwapHandlerSwap} from "./SwapHandlerSwap";
-import {SwapData, TokenAddress} from "crosslightning-base";
-import {SwapBaseConfig, SwapHandler} from "./SwapHandler";
+import {SwapData} from "crosslightning-base";
+import {RequestData, SwapBaseConfig, SwapHandler} from "./SwapHandler";
 import * as BN from "bn.js";
 import {IParamReader} from "../utils/paramcoders/IParamReader";
 import {FieldTypeEnum} from "../utils/paramcoders/SchemaVerifier";
@@ -11,6 +11,7 @@ import {
     isPluginQuote,
     isQuoteSetFees
 } from "../plugins/IPlugin";
+import {Request} from "express";
 
 const secondsInYear = new BN(365*24*60*60);
 
@@ -18,32 +19,34 @@ export type FromBtcBaseConfig = SwapBaseConfig & {
     securityDepositAPY: number
 };
 
-export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T extends SwapData, S> extends SwapHandler<V, T, S> {
+export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<SwapData, S>, S> extends SwapHandler<V, S> {
 
     abstract config: FromBtcBaseConfig;
 
     /**
      * Starts a pre-fetch for swap price & security deposit price
      *
+     * @param chainIdentifier
      * @param useToken
      * @param abortController
      */
-    protected getFromBtcPricePrefetches(useToken: TokenAddress, abortController: AbortController): {
+    protected getFromBtcPricePrefetches(chainIdentifier: string, useToken: string, abortController: AbortController): {
         pricePrefetchPromise: Promise<BN>,
         securityDepositPricePrefetchPromise: Promise<BN>
     } {
-        const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(useToken).catch(e => {
+        const pricePrefetchPromise: Promise<BN> = this.swapPricing.preFetchPrice(useToken, chainIdentifier).catch(e => {
             this.logger.error("getFromBtcPricePrefetches(): pricePrefetch error: ", e);
             abortController.abort(e);
             return null;
-        }) : null;
-        const securityDepositPricePrefetchPromise: Promise<BN> = useToken.toString()===this.swapContract.getNativeCurrencyAddress().toString() ?
+        });
+        const {swapContract} = this.getChain(chainIdentifier);
+        const securityDepositPricePrefetchPromise: Promise<BN> = useToken.toString()===swapContract.getNativeCurrencyAddress().toString() ?
             pricePrefetchPromise :
-            (this.swapPricing.preFetchPrice!=null ? this.swapPricing.preFetchPrice(this.swapContract.getNativeCurrencyAddress()).catch(e => {
+            this.swapPricing.preFetchPrice(swapContract.getNativeCurrencyAddress(), chainIdentifier).catch(e => {
                 this.logger.error("getFromBtcPricePrefetches(): securityDepositPricePrefetch error: ", e);
                 abortController.abort(e);
                 return null;
-            }) : null);
+            });
 
         return {pricePrefetchPromise, securityDepositPricePrefetchPromise};
     }
@@ -51,14 +54,16 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
     /**
      * Starts a pre-fetch for base security deposit (transaction fee for refunding transaction on our side)
      *
+     * @param chainIdentifier
      * @param dummySwapData
      * @param abortController
      */
-    protected async getBaseSecurityDepositPrefetch(dummySwapData: T, abortController: AbortController): Promise<BN> {
+    protected async getBaseSecurityDepositPrefetch(chainIdentifier: string, dummySwapData: SwapData, abortController: AbortController): Promise<BN> {
         //Solana workaround
-        if ((this.swapContract as any).getRawRefundFee != null) {
+        const {swapContract} = this.getChain(chainIdentifier);
+        if (swapContract.getRawRefundFee != null) {
             try {
-                return await (this.swapContract as any).getRawRefundFee(dummySwapData);
+                return await swapContract.getRawRefundFee(dummySwapData);
             } catch (e) {
                 this.logger.error("getBaseSecurityDepositPrefetch(): pre-fetch error: ", e);
                 abortController.abort(e);
@@ -66,7 +71,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
             }
         } else {
             try {
-                const result = await this.swapContract.getRefundFee(dummySwapData);
+                const result = await swapContract.getRefundFee(dummySwapData);
                 return result.mul(new BN(2));
             } catch (e1) {
                 this.logger.error("getBaseSecurityDepositPrefetch(): pre-fetch error: ", e1);
@@ -79,12 +84,14 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
     /**
      * Starts a pre-fetch for vault balance
      *
+     * @param chainIdentifier
      * @param useToken
      * @param abortController
      */
-    protected async getBalancePrefetch(useToken: TokenAddress, abortController: AbortController): Promise<BN> {
+    protected async getBalancePrefetch(chainIdentifier: string, useToken: string, abortController: AbortController): Promise<BN> {
+        const {swapContract, signer} = this.getChain(chainIdentifier);
         try {
-            return await this.swapContract.getBalance(useToken, true);
+            return await swapContract.getBalance(signer.getAddress(), useToken, true);
         } catch (e) {
             this.logger.error("getBalancePrefetch(): balancePrefetch error: ", e);
             abortController.abort(e);
@@ -100,9 +107,9 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
      * @param signal
      * @throws {DefinedRuntimeError} will throw an error if there are not enough funds in the vault
      */
-    protected async checkBalance(totalInToken: BN, balancePrefetch: Promise<BN>, signal: AbortSignal): Promise<void> {
+    protected async checkBalance(totalInToken: BN, balancePrefetch: Promise<BN>, signal: AbortSignal | null): Promise<void> {
         const balance = await balancePrefetch;
-        signal.throwIfAborted();
+        if(signal!=null) signal.throwIfAborted();
 
         if(balance==null || balance.lt(totalInToken)) {
             throw {
@@ -122,17 +129,14 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
      * @throws {DefinedRuntimeError} will throw an error if the amount is outside minimum/maximum bounds
      */
     protected async preCheckAmounts(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: FromBtcLnRequestType | FromBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        useToken: TokenAddress
+        useToken: string
     ): Promise<{baseFee: BN, feePPM: BN}> {
         const res = await PluginManager.onHandlePreFromBtcQuote(
             request,
             requestedAmount,
+            request.chainIdentifier,
             useToken,
             {minInBtc: this.config.min, maxInBtc: this.config.max},
             {baseFeeInBtc: this.config.baseFee, feePPM: this.config.feePPM},
@@ -165,25 +169,24 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
      * @throws {DefinedRuntimeError} will throw an error if the amount is outside minimum/maximum bounds
      */
     protected async checkFromBtcAmount(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: FromBtcLnRequestType | FromBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
         fees: {baseFee: BN, feePPM: BN},
-        useToken: TokenAddress,
+        useToken: string,
         signal: AbortSignal,
-        pricePrefetchPromise?: Promise<BN>
+        pricePrefetchPromise: Promise<BN> = Promise.resolve(null)
     ): Promise<{
         amountBD: BN,
         swapFee: BN, //Swap fee in BTC
         swapFeeInToken: BN, //Swap fee in token on top of what should be paid out to the user
         totalInToken: BN //Total to be paid out to the user
     }> {
+        const chainIdentifier = request.chainIdentifier;
+
         const res = await PluginManager.onHandlePostFromBtcQuote(
             request,
             requestedAmount,
+            chainIdentifier,
             useToken,
             {minInBtc: this.config.min, maxInBtc: this.config.max},
             {baseFeeInBtc: fees.baseFee, feePPM: fees.feePPM},
@@ -217,7 +220,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
 
         let amountBD: BN;
         if(!requestedAmount.input) {
-            amountBD = await this.swapPricing.getToBtcSwapAmount(requestedAmount.amount, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+            amountBD = await this.swapPricing.getToBtcSwapAmount(requestedAmount.amount, useToken, chainIdentifier, true, pricePrefetchPromise);
             signal.throwIfAborted();
 
             // amt = (amt+base_fee)/(1-fee)
@@ -228,8 +231,12 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
             if(tooLow || tooHigh) {
                 const adjustedMin = this.config.min.mul(new BN(1000000).sub(fees.feePPM)).div(new BN(1000000)).sub(fees.baseFee);
                 const adjustedMax = this.config.max.mul(new BN(1000000).sub(fees.feePPM)).div(new BN(1000000)).sub(fees.baseFee);
-                const minIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMin, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
-                const maxIn = await this.swapPricing.getFromBtcSwapAmount(adjustedMax, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+                const minIn = await this.swapPricing.getFromBtcSwapAmount(
+                    adjustedMin, useToken, chainIdentifier, null, pricePrefetchPromise
+                );
+                const maxIn = await this.swapPricing.getFromBtcSwapAmount(
+                    adjustedMax, useToken, chainIdentifier, null, pricePrefetchPromise
+                );
                 throw {
                     code: tooLow ? 20003 : 20004,
                     msg: tooLow ? "Amount too low!" : "Amount too high!",
@@ -245,14 +252,14 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
         }
 
         const swapFee = fees.baseFee.add(amountBD.mul(fees.feePPM).div(new BN(1000000)));
-        const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, true, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+        const swapFeeInToken = await this.swapPricing.getFromBtcSwapAmount(swapFee, useToken, chainIdentifier, true, pricePrefetchPromise);
         signal.throwIfAborted();
 
         let totalInToken: BN;
         if(!requestedAmount.input) {
             totalInToken = requestedAmount.amount;
         } else {
-            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(requestedAmount.amount, useToken, null, pricePrefetchPromise==null ? null : await pricePrefetchPromise);
+            const amountInToken = await this.swapPricing.getFromBtcSwapAmount(requestedAmount.amount, useToken, chainIdentifier, null, pricePrefetchPromise);
             totalInToken = amountInToken.sub(swapFeeInToken);
             signal.throwIfAborted();
         }
@@ -268,6 +275,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
     /**
      * Calculates the required security deposit
      *
+     * @param chainIdentifier
      * @param amountBD
      * @param swapFee
      * @param expiryTimeout
@@ -277,6 +285,7 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
      * @param metadata
      */
     protected async getSecurityDeposit(
+        chainIdentifier: string,
         amountBD: BN,
         swapFee: BN,
         expiryTimeout: BN,
@@ -291,11 +300,14 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
 
         metadata.times.refundFeeFetched = Date.now();
 
+        const {swapContract} = this.getChain(chainIdentifier);
+
         const swapValueInNativeCurrency = await this.swapPricing.getFromBtcSwapAmount(
             amountBD.sub(swapFee),
-            this.swapContract.getNativeCurrencyAddress(),
+            swapContract.getNativeCurrencyAddress(),
+            chainIdentifier,
             true,
-            securityDepositPricePrefetchPromise==null ? null : await securityDepositPricePrefetchPromise
+            securityDepositPricePrefetchPromise
         );
 
         signal.throwIfAborted();
@@ -317,16 +329,25 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
     /**
      * Signs the created swap
      *
+     * @param chainIdentifier
      * @param swapObject
      * @param req
      * @param abortSignal
      * @param signDataPrefetchPromise
      */
-    protected async getFromBtcSignatureData(swapObject: T, req: Request & {paramReader: IParamReader}, abortSignal: AbortSignal, signDataPrefetchPromise?: Promise<any>): Promise<{
+    protected async getFromBtcSignatureData(
+        chainIdentifier: string,
+        swapObject: SwapData,
+        req: Request & {paramReader: IParamReader},
+        abortSignal: AbortSignal,
+        signDataPrefetchPromise?: Promise<any>
+    ): Promise<{
         prefix: string,
         timeout: string,
         signature: string
     }> {
+        const {swapContract, signer} = this.getChain(chainIdentifier);
+
         const prefetchedSignData = signDataPrefetchPromise!=null ? await signDataPrefetchPromise : null;
         if(prefetchedSignData!=null) this.logger.debug("getFromBtcSignatureData(): pre-fetched signature data: ", prefetchedSignData);
         abortSignal.throwIfAborted();
@@ -338,7 +359,8 @@ export abstract class FromBtcBaseSwapHandler<V extends SwapHandlerSwap<T, S>, T 
 
         const feeRate = feeRateObj?.feeRate!=null && typeof(feeRateObj.feeRate)==="string" ? feeRateObj.feeRate : null;
         this.logger.debug("getFromBtcSignatureData(): using fee rate from client: ", feeRate);
-        const sigData = await this.swapContract.getInitSignature(
+        const sigData = await swapContract.getInitSignature(
+            signer,
             swapObject,
             this.config.authorizationTimeout,
             prefetchedSignData,

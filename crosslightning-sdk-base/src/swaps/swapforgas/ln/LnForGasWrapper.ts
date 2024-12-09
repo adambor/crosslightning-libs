@@ -1,29 +1,26 @@
 import * as BN from "bn.js";
-import {
-    SwapData
-} from "crosslightning-base";
-import {LnForGasSwap, LnForGasSwapState} from "./LnForGasSwap";
+import {LnForGasSwap, LnForGasSwapInit, LnForGasSwapState} from "./LnForGasSwap";
 import {ISwapWrapper} from "../../ISwapWrapper";
 import {TrustedIntermediaryAPI} from "../../../intermediaries/TrustedIntermediaryAPI";
 import {decode as bolt11Decode} from "bolt11";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
+import {ChainType} from "crosslightning-base";
 
-export class LnForGasWrapper<T extends SwapData> extends ISwapWrapper<T, LnForGasSwap<T>> {
+export class LnForGasWrapper<T extends ChainType> extends ISwapWrapper<T, LnForGasSwap<T>> {
     protected readonly swapDeserializer = LnForGasSwap;
 
     /**
      * Returns a newly created swap, receiving 'amount' on lightning network
      *
+     * @param signer
      * @param amount            Amount you wish to receive in base units (satoshis)
      * @param url               Intermediary/Counterparty swap service url
      */
-    async create(amount: BN, url: string): Promise<LnForGasSwap<T>> {
+    async create(signer: string, amount: BN, url: string): Promise<LnForGasSwap<T>> {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
 
-        const address = this.contract.getAddress();
-
         const resp = await TrustedIntermediaryAPI.initTrustedFromBTCLN(url, {
-            address,
+            address: signer,
             amount
         }, this.options.getRequestTimeout);
 
@@ -37,16 +34,19 @@ export class LnForGasWrapper<T extends SwapData> extends ISwapWrapper<T, LnForGa
             amount, this.contract.getNativeCurrencyAddress(), resp
         );
 
-        return new LnForGasSwap(this, {
+        const quote = new LnForGasSwap(this, {
             pr: resp.pr,
             outputAmount: resp.total,
-            recipient: address,
+            recipient: signer,
             pricingInfo,
             url,
             expiry: decodedPr.timeExpireDate*1000,
             swapFee: resp.swapFee,
-            feeRate: ""
-        });
+            feeRate: "",
+            exactIn: false
+        } as LnForGasSwapInit<T["Data"]>);
+        await quote._save();
+        return quote;
     }
 
     protected async checkPastSwap(swap: LnForGasSwap<T>): Promise<boolean> {
@@ -63,8 +63,10 @@ export class LnForGasWrapper<T extends SwapData> extends ISwapWrapper<T, LnForGa
         return false;
     }
 
-    protected isOurSwap(swap: LnForGasSwap<T>): boolean {
-        return this.contract.getAddress()===swap.getRecipient();
+    protected isOurSwap(signer: string, swap: LnForGasSwap<T>): boolean {
+        return signer===swap.getRecipient();
     }
+
+    protected tickSwap(swap: LnForGasSwap<T>): void {}
 
 }

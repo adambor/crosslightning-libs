@@ -3,14 +3,13 @@ import {IFromBTCWrapper} from "../IFromBTCWrapper";
 import * as BN from "bn.js";
 import {decode as bolt11Decode, PaymentRequestObject, TagsObject} from "bolt11";
 import {
-    ChainEvents,
     ChainSwapType,
+    ChainType,
     ClaimEvent,
     InitializeEvent,
     IStorageManager,
     RefundEvent,
-    SwapCommitStatus, SwapContract,
-    SwapData
+    SwapCommitStatus
 } from "crosslightning-base";
 import {Intermediary} from "../../../intermediaries/Intermediary";
 import {Buffer} from "buffer";
@@ -25,7 +24,7 @@ import {RequestError} from "../../../errors/RequestError";
 import {LightningNetworkApi, LNNodeLiquidity} from "../../../btc/LightningNetworkApi";
 import {ISwapPrice} from "../../../prices/abstract/ISwapPrice";
 import {EventEmitter} from "events";
-import {AmountData, ISwapWrapperOptions} from "../../ISwapWrapper";
+import {AmountData, ISwapWrapperOptions, WrapperCtorTokens} from "../../ISwapWrapper";
 import {LNURL, LNURLWithdrawParamsWithUrl} from "../../../utils/LNURL";
 
 export type FromBTCLNOptions = {
@@ -33,66 +32,67 @@ export type FromBTCLNOptions = {
 };
 
 export class FromBTCLNWrapper<
-    T extends SwapData,
-    TXType = any
-> extends IFromBTCWrapper<T, FromBTCLNSwap<T, TXType>> {
+    T extends ChainType
+> extends IFromBTCWrapper<T, FromBTCLNSwap<T>> {
     protected readonly swapDeserializer = FromBTCLNSwap;
 
     protected readonly lnApi: LightningNetworkApi;
 
     /**
+     * @param chainIdentifier
      * @param storage Storage interface for the current environment
      * @param contract Underlying contract handling the swaps
      * @param prices Swap pricing handler
      * @param chainEvents On-chain event listener
+     * @param tokens
      * @param swapDataDeserializer Deserializer for SwapData
      * @param lnApi
      * @param options
      * @param events Instance to use for emitting events
      */
     constructor(
-        storage: IStorageManager<FromBTCLNSwap<T, TXType>>,
-        contract: SwapContract<T, any, any, any>,
-        chainEvents: ChainEvents<T>,
+        chainIdentifier: string,
+        storage: IStorageManager<FromBTCLNSwap<T>>,
+        contract: T["Contract"],
+        chainEvents: T["Events"],
         prices: ISwapPrice,
-        swapDataDeserializer: new (data: any) => T,
+        tokens: WrapperCtorTokens,
+        swapDataDeserializer: new (data: any) => T["Data"],
         lnApi: LightningNetworkApi,
         options: ISwapWrapperOptions,
         events?: EventEmitter
     ) {
-        super(storage, contract, chainEvents, prices, swapDataDeserializer, options, events);
+        super(chainIdentifier, storage, contract, chainEvents, prices, tokens, swapDataDeserializer, options, events);
         this.lnApi = lnApi;
     }
 
-    protected async checkPastSwap(swap: FromBTCLNSwap<T, TXType>): Promise<boolean> {
-        if(swap.state===FromBTCLNSwapState.PR_CREATED) {
+    protected async checkPastSwap(swap: FromBTCLNSwap<T>): Promise<boolean> {
+        if(swap.state===FromBTCLNSwapState.PR_CREATED || (swap.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED && swap.signatureData==null)) {
             if(swap.getTimeoutTime()<Date.now()) {
-                swap.state = FromBTCLNSwapState.QUOTE_EXPIRED;
-                return true;
+                swap.state = FromBTCLNSwapState.QUOTE_SOFT_EXPIRED;
             }
 
             const result = await swap.checkIntermediaryPaymentReceived(false);
             if(result!==null) return true;
         }
 
-        if(swap.state===FromBTCLNSwapState.PR_PAID) {
+        if(swap.state===FromBTCLNSwapState.PR_PAID || (swap.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED && swap.signatureData!=null)) {
             //Check if it's already committed
-            const status = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
+            const status = await tryWithRetries(() => this.contract.getCommitStatus(swap.getInitiator(), swap.data));
             switch(status) {
-                case SwapCommitStatus.PAID:
-                    swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
-                    return true;
-                case SwapCommitStatus.EXPIRED:
-                case SwapCommitStatus.REFUNDABLE:
-                    swap.state = FromBTCLNSwapState.FAILED;
-                    return true;
                 case SwapCommitStatus.COMMITED:
                     swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
+                    return true;
+                case SwapCommitStatus.EXPIRED:
+                    swap.state = FromBTCLNSwapState.QUOTE_EXPIRED;
+                    return true;
+                case SwapCommitStatus.PAID:
+                    swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
                     return true;
             }
 
             if(!await swap.isQuoteValid()) {
-                swap.state = FromBTCLNSwapState.FAILED;
+                swap.state = FromBTCLNSwapState.QUOTE_EXPIRED;
                 return true;
             }
 
@@ -101,13 +101,13 @@ export class FromBTCLNWrapper<
 
         if(swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
             //Check if it's already successfully paid
-            const commitStatus = await tryWithRetries(() => this.contract.getCommitStatus(swap.data));
+            const commitStatus = await tryWithRetries(() => this.contract.getCommitStatus(swap.getInitiator(), swap.data));
             if(commitStatus===SwapCommitStatus.PAID) {
                 swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
                 return true;
             }
 
-            if(commitStatus===SwapCommitStatus.NOT_COMMITED || commitStatus===SwapCommitStatus.EXPIRED || commitStatus===SwapCommitStatus.REFUNDABLE) {
+            if(commitStatus===SwapCommitStatus.NOT_COMMITED || commitStatus===SwapCommitStatus.EXPIRED) {
                 swap.state = FromBTCLNSwapState.FAILED;
                 return true;
             }
@@ -116,26 +116,40 @@ export class FromBTCLNWrapper<
         }
     }
 
-    protected async processEventInitialize(swap: FromBTCLNSwap<T, TXType>, event: InitializeEvent<T>): Promise<boolean> {
-        if(swap.state===FromBTCLNSwapState.PR_PAID) {
+    protected tickSwap(swap: FromBTCLNSwap<T>): void {
+        switch(swap.state) {
+            case FromBTCLNSwapState.PR_CREATED:
+                if(swap.getTimeoutTime()<Date.now()) swap._saveAndEmit(FromBTCLNSwapState.QUOTE_SOFT_EXPIRED);
+                break;
+            case FromBTCLNSwapState.PR_PAID:
+                if(swap.expiry<Date.now()) swap._saveAndEmit(FromBTCLNSwapState.QUOTE_SOFT_EXPIRED);
+                break;
+            case FromBTCLNSwapState.CLAIM_COMMITED:
+                if(this.contract.isExpired(swap.getInitiator(), swap.data)) swap._saveAndEmit(FromBTCLNSwapState.EXPIRED);
+                break;
+        }
+    }
+
+    protected async processEventInitialize(swap: FromBTCLNSwap<T>, event: InitializeEvent<T["Data"]>): Promise<boolean> {
+        if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) {
             const swapData = await event.swapData();
             if(swap.data!=null && !swap.data.equals(swapData)) return false;
-            swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
+            if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.QUOTE_SOFT_EXPIRED) swap.state = FromBTCLNSwapState.CLAIM_COMMITED;
             swap.data = swapData;
             return true;
         }
     }
 
-    protected processEventClaim(swap: FromBTCLNSwap<T, TXType>, event: ClaimEvent<T>): Promise<boolean> {
-        if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
+    protected processEventClaim(swap: FromBTCLNSwap<T>, event: ClaimEvent<T["Data"]>): Promise<boolean> {
+        if(swap.state!==FromBTCLNSwapState.FAILED) {
             swap.state = FromBTCLNSwapState.CLAIM_CLAIMED;
             return Promise.resolve(true);
         }
         return Promise.resolve(false);
     }
 
-    protected processEventRefund(swap: FromBTCLNSwap<T, TXType>, event: RefundEvent<T>): Promise<boolean> {
-        if(swap.state===FromBTCLNSwapState.PR_PAID || swap.state===FromBTCLNSwapState.CLAIM_COMMITED) {
+    protected processEventRefund(swap: FromBTCLNSwap<T>, event: RefundEvent<T["Data"]>): Promise<boolean> {
+        if(swap.state!==FromBTCLNSwapState.CLAIM_CLAIMED) {
             swap.state = FromBTCLNSwapState.FAILED;
             return Promise.resolve(true);
         }
@@ -192,7 +206,7 @@ export class FromBTCLNWrapper<
         decodedPr: PaymentRequestObject & {tagsObject: TagsObject},
         amountIn: BN
     ): void {
-        if(lp.address!==resp.intermediaryKey) throw new IntermediaryError("Invalid intermediary address/pubkey");
+        if(lp.getAddress(this.chainIdentifier)!==resp.intermediaryKey) throw new IntermediaryError("Invalid intermediary address/pubkey");
 
         if(options.descriptionHash!=null && decodedPr.tagsObject.purpose_commit_hash!==options.descriptionHash.toString("hex"))
             throw new IntermediaryError("Invalid pr returned - description hash");
@@ -242,6 +256,7 @@ export class FromBTCLNWrapper<
     /**
      * Returns a newly created swap, receiving 'amount' on lightning network
      *
+     * @param signer                Smart chain signer's address intiating the swap
      * @param amountData            Amount of token & amount to swap
      * @param lps                   LPs (liquidity providers) to get the quotes from
      * @param options               Quote options
@@ -250,6 +265,7 @@ export class FromBTCLNWrapper<
      * @param preFetches
      */
     create(
+        signer: string,
         amountData: AmountData,
         lps: Intermediary[],
         options: FromBTCLNOptions,
@@ -260,7 +276,7 @@ export class FromBTCLNWrapper<
             feeRatePromise?: Promise<any>
         }
     ): {
-        quote: Promise<FromBTCLNSwap<T, TXType>>,
+        quote: Promise<FromBTCLNSwap<T>>,
         intermediary: Intermediary
     }[] {
         if(options==null) options = {};
@@ -273,7 +289,7 @@ export class FromBTCLNWrapper<
 
         const _abortController = extendAbortController(abortSignal);
         preFetches.pricePrefetchPromise ??= this.preFetchPrice(amountData, _abortController.signal);
-        preFetches.feeRatePromise ??= this.preFetchFeeRate(amountData, paymentHash.toString("hex"), _abortController);
+        preFetches.feeRatePromise ??= this.preFetchFeeRate(signer, amountData, paymentHash.toString("hex"), _abortController);
 
         return lps.map(lp => {
             return {
@@ -284,10 +300,10 @@ export class FromBTCLNWrapper<
                     const liquidityPromise: Promise<BN> = this.preFetchIntermediaryLiquidity(amountData, lp, abortController);
 
                     const {lnCapacityPromise, resp} = await tryWithRetries(async(retryCount: number) => {
-                        const {lnPublicKey, response} = IntermediaryAPI.initFromBTCLN(lp.url, {
+                        const {lnPublicKey, response} = IntermediaryAPI.initFromBTCLN(this.chainIdentifier, lp.url, {
                             paymentHash,
                             amount: amountData.amount,
-                            claimer: this.contract.getAddress(),
+                            claimer: signer,
                             token: amountData.token.toString(),
                             descriptionHash: options.descriptionHash,
                             exactOut: !amountData.exactIn,
@@ -311,24 +327,27 @@ export class FromBTCLNWrapper<
                                 lp.services[SwapType.FROM_BTCLN], false, amountIn, resp.total,
                                 amountData.token, resp, preFetches.pricePrefetchPromise, abortController.signal
                             ),
-                            this.verifyIntermediaryLiquidity(lp, resp.total, amountData.token, liquidityPromise),
+                            this.verifyIntermediaryLiquidity(resp.total, liquidityPromise),
                             this.verifyLnNodeCapacity(lp, decodedPr, amountIn, lnCapacityPromise, abortController.signal)
                         ]);
 
-                        return new FromBTCLNSwap<T, TXType>(this, {
+                        const quote = new FromBTCLNSwap<T>(this, {
                             pricingInfo,
                             url: lp.url,
                             expiry: decodedPr.timeExpireDate*1000,
                             swapFee: resp.swapFee,
                             feeRate: await preFetches.feeRatePromise,
                             data: await this.contract.createSwapData(
-                                ChainSwapType.HTLC, lp.address, this.contract.getAddress(), amountData.token,
+                                ChainSwapType.HTLC, lp.getAddress(this.chainIdentifier), signer, amountData.token,
                                 resp.total, paymentHash.toString("hex"), null, null, null, null, false, true,
                                 resp.securityDeposit, new BN(0)
                             ),
                             pr: resp.pr,
-                            secret: secret.toString("hex")
-                        } as FromBTCLNSwapInit<T>);
+                            secret: secret.toString("hex"),
+                            exactIn: amountData.exactIn ?? true
+                        } as FromBTCLNSwapInit<T["Data"]>);
+                        await quote._save();
+                        return quote;
                     } catch (e) {
                         abortController.abort(e);
                         throw e;
@@ -358,6 +377,7 @@ export class FromBTCLNWrapper<
     /**
      * Returns a newly created swap, receiving 'amount' from the lnurl-withdraw
      *
+     * @param signer                Smart chains signer's address intiating the swap
      * @param lnurl                 LNURL-withdraw to withdraw funds from
      * @param amountData            Amount of token & amount to swap
      * @param lps                   LPs (liquidity providers) to get the quotes from
@@ -365,13 +385,14 @@ export class FromBTCLNWrapper<
      * @param abortSignal           Abort signal for aborting the process
      */
     async createViaLNURL(
+        signer: string,
         lnurl: string | LNURLWithdrawParamsWithUrl,
         amountData: AmountData,
         lps: Intermediary[],
         additionalParams?: Record<string, any>,
         abortSignal?: AbortSignal
     ): Promise<{
-        quote: Promise<FromBTCLNSwap<T, TXType>>,
+        quote: Promise<FromBTCLNSwap<T>>,
         intermediary: Intermediary
     }[]> {
         if(!this.isInitialized) throw new Error("Not initialized, call init() first!");
@@ -379,12 +400,12 @@ export class FromBTCLNWrapper<
         const abortController = extendAbortController(abortSignal);
         const preFetches = {
             pricePrefetchPromise: this.preFetchPrice(amountData, abortController.signal),
-            feeRatePromise: this.preFetchFeeRate(amountData, null, abortController)
+            feeRatePromise: this.preFetchFeeRate(signer, amountData, null, abortController)
         };
 
         try {
             const exactOutAmountPromise: Promise<BN> = !amountData.exactIn ? preFetches.pricePrefetchPromise.then(price =>
-                this.prices.getToBtcSwapAmount(amountData.amount, amountData.token, abortController.signal, price)
+                this.prices.getToBtcSwapAmount(this.chainIdentifier, amountData.amount, amountData.token, abortController.signal, price)
             ).catch(e => {
                 abortController.abort(e);
                 return null;
@@ -406,14 +427,14 @@ export class FromBTCLNWrapper<
                 if(amount.muln(105).divn(100).gt(max)) throw new UserError("Amount more than LNURL-withdraw maximum");
             }
 
-            return this.create(amountData, lps, null, additionalParams, abortSignal, preFetches).map(data => {
+            return this.create(signer, amountData, lps, null, additionalParams, abortSignal, preFetches).map(data => {
                 return {
                     quote: data.quote.then(quote => {
                         quote.lnurl = withdrawRequest.url;
                         quote.lnurlK1 = withdrawRequest.k1;
                         quote.lnurlCallback = withdrawRequest.callback;
 
-                        const amountIn = quote.getInAmount();
+                        const amountIn = quote.getInput().rawAmount;
                         if(amountIn.lt(min)) throw new UserError("Amount less than LNURL-withdraw minimum");
                         if(amountIn.gt(max)) throw new UserError("Amount more than LNURL-withdraw maximum");
 

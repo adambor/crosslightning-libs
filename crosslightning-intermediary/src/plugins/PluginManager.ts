@@ -1,4 +1,4 @@
-import {BitcoinRpc, BtcRelay, ChainEvents, SwapContract, SwapData, SwapEvent, TokenAddress} from "crosslightning-base";
+import {BitcoinRpc, SwapData} from "crosslightning-base";
 import {
     IPlugin, isPluginQuote, isQuoteAmountTooHigh, isQuoteAmountTooLow, isQuoteSetFees,
     isQuoteThrow, isToBtcPluginQuote, PluginQuote,
@@ -10,14 +10,13 @@ import {
 import {
     FromBtcLnRequestType,
     FromBtcRequestType,
-    ISwapPrice,
+    ISwapPrice, MultichainData, RequestData,
     SwapHandler,
     ToBtcLnRequestType,
     ToBtcRequestType
 } from "..";
 import {SwapHandlerSwap} from "../swaps/SwapHandlerSwap";
 import {AuthenticatedLnd} from "lightning";
-import {IParamReader} from "../utils/paramcoders/IParamReader";
 import * as BN from "bn.js";
 import * as fs from "fs";
 import {getLogger} from "../utils/Utils";
@@ -45,17 +44,17 @@ export type SwapResponse = FailSwapResponse | FeeSwapResponse | AmountAndFeeSwap
 
 const logger = getLogger("PluginManager: ");
 const pluginLogger = {
-    debug: (plugin: IPlugin<any>, msg, ...args) => logger.debug(plugin.name+": "+msg, ...args),
-    info: (plugin: IPlugin<any>, msg, ...args) => logger.info(plugin.name+": "+msg, ...args),
-    warn: (plugin: IPlugin<any>, msg, ...args) => logger.warn(plugin.name+": "+msg, ...args),
-    error: (plugin: IPlugin<any>, msg, ...args) => logger.error(plugin.name+": "+msg, ...args)
+    debug: (plugin: IPlugin, msg, ...args) => logger.debug(plugin.name+": "+msg, ...args),
+    info: (plugin: IPlugin, msg, ...args) => logger.info(plugin.name+": "+msg, ...args),
+    warn: (plugin: IPlugin, msg, ...args) => logger.warn(plugin.name+": "+msg, ...args),
+    error: (plugin: IPlugin, msg, ...args) => logger.error(plugin.name+": "+msg, ...args)
 };
 
 export class PluginManager {
 
-    static plugins: Map<string, IPlugin<any>> = new Map();
+    static plugins: Map<string, IPlugin> = new Map();
 
-    static registerPlugin(name: string, plugin: IPlugin<any>) {
+    static registerPlugin(name: string, plugin: IPlugin) {
         PluginManager.plugins.set(name, plugin);
     }
 
@@ -64,16 +63,19 @@ export class PluginManager {
     }
 
     static async enable<T extends SwapData>(
-        swapContract: SwapContract<T, any, any, any>,
-        btcRelay: BtcRelay<any, any, any>,
-        chainEvents: ChainEvents<T>,
+        chainsData: MultichainData,
 
         bitcoinRpc: BitcoinRpc<any>,
         lnd: AuthenticatedLnd,
 
         swapPricing: ISwapPrice,
         tokens: {
-            [ticker: string]: {address: TokenAddress, decimals: number}
+            [ticker: string]: {
+                [chainId: string]: {
+                    address: string,
+                    decimals: number
+                }
+            }
         },
 
         directory: string
@@ -87,9 +89,7 @@ export class PluginManager {
                     fs.mkdirSync(directory+"/"+name);
                 } catch (e) {}
                 await plugin.onEnable(
-                    swapContract,
-                    btcRelay,
-                    chainEvents,
+                    chainsData,
                     bitcoinRpc,
                     lnd,
                     swapPricing,
@@ -112,7 +112,7 @@ export class PluginManager {
         }
     }
 
-    static async serviceInitialize<T extends SwapData>(handler: SwapHandler<any, T>) {
+    static async serviceInitialize(handler: SwapHandler<any>) {
         for(let plugin of PluginManager.plugins.values()) {
             try {
                 await plugin.onServiceInitialize(handler);
@@ -163,13 +163,10 @@ export class PluginManager {
     }
 
     static async onHandlePostFromBtcQuote(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: FromBtcLnRequestType | FromBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        token: TokenAddress,
+        chainIdentifier: string,
+        token: string,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN},
         pricePrefetchPromise?: Promise<BN> | null
@@ -177,7 +174,7 @@ export class PluginManager {
         for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.onHandlePostFromBtcQuote!=null) {
-                    const result = await plugin.onHandlePostFromBtcQuote(request, requestedAmount, token, constraints, fees, pricePrefetchPromise);
+                    const result = await plugin.onHandlePostFromBtcQuote(request, requestedAmount, chainIdentifier, token, constraints, fees, pricePrefetchPromise);
                     if(result!=null) {
                         if(isQuoteSetFees(result)) return result;
                         if(isQuoteThrow(result)) return result;
@@ -197,20 +194,17 @@ export class PluginManager {
     }
 
     static async onHandlePreFromBtcQuote(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: FromBtcLnRequestType | FromBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<FromBtcLnRequestType | FromBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        token: TokenAddress,
+        chainIdentifier: string,
+        token: string,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN}
     ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh> {
         for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.onHandlePreFromBtcQuote!=null) {
-                    const result = await plugin.onHandlePreFromBtcQuote(request, requestedAmount, token, constraints, fees);
+                    const result = await plugin.onHandlePreFromBtcQuote(request, requestedAmount, chainIdentifier, token, constraints, fees);
                     if(result!=null) {
                         if(isQuoteSetFees(result)) return result;
                         if(isQuoteThrow(result)) return result;
@@ -226,13 +220,10 @@ export class PluginManager {
     }
 
     static async onHandlePostToBtcQuote<T extends {networkFee: BN}>(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: ToBtcLnRequestType | ToBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        token: TokenAddress,
+        chainIdentifier: string,
+        token: string,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN, networkFeeGetter: (amount: BN) => Promise<T>},
         pricePrefetchPromise?: Promise<BN> | null
@@ -241,7 +232,7 @@ export class PluginManager {
             try {
                 if(plugin.onHandlePostToBtcQuote!=null) {
                     let networkFeeData: T;
-                    const result = await plugin.onHandlePostToBtcQuote(request, requestedAmount, token, constraints, {
+                    const result = await plugin.onHandlePostToBtcQuote(request, requestedAmount, chainIdentifier, token, constraints, {
                         baseFeeInBtc: fees.baseFeeInBtc,
                         feePPM: fees.feePPM,
                         networkFeeGetter: async (amount: BN) => {
@@ -271,20 +262,17 @@ export class PluginManager {
     }
 
     static async onHandlePreToBtcQuote(
-        request: {
-            raw: Request & {paramReader: IParamReader},
-            parsed: ToBtcLnRequestType | ToBtcRequestType,
-            metadata: any
-        },
+        request: RequestData<ToBtcLnRequestType | ToBtcRequestType>,
         requestedAmount: {input: boolean, amount: BN},
-        token: TokenAddress,
+        chainIdentifier: string,
+        token: string,
         constraints: {minInBtc: BN, maxInBtc: BN},
         fees: {baseFeeInBtc: BN, feePPM: BN}
     ): Promise<QuoteThrow | QuoteSetFees | QuoteAmountTooLow | QuoteAmountTooHigh> {
         for(let plugin of PluginManager.plugins.values()) {
             try {
                 if(plugin.onHandlePreToBtcQuote!=null) {
-                    const result = await plugin.onHandlePreToBtcQuote(request, requestedAmount, token, constraints, fees);
+                    const result = await plugin.onHandlePreToBtcQuote(request, requestedAmount, chainIdentifier, token, constraints, fees);
                     if(result!=null) {
                         if(isQuoteSetFees(result)) return result;
                         if(isQuoteThrow(result)) return result;
@@ -298,90 +286,6 @@ export class PluginManager {
         }
         return null;
     }
-
-    // static async onSwapRequestToBtcLn?(req: Request & {paramReader: IParamReader}, requestData: ToBtcLnRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}> {
-    //     let fees: {baseFee: BN, feePPM: BN} = {baseFee: null, feePPM: null};
-    //     for(let plugin of PluginManager.plugins.values()) {
-    //         try {
-    //             if(plugin.onSwapRequestToBtcLn!=null) {
-    //                 const result = await plugin.onSwapRequestToBtcLn(req, requestData, swapMetadata);
-    //                 if(result!=null) {
-    //                     if(result.throw) {
-    //                         return {throw: result.throw}
-    //                     }
-    //                     if(result.baseFee!=null) fees.baseFee = result.baseFee;
-    //                     if(result.feePPM!=null) fees.feePPM = result.feePPM;
-    //                 }
-    //             }
-    //         } catch (e) {
-    //             pluginLogger.error(plugin, "onSwapRequestToBtcLn(): plugin error", e);
-    //         }
-    //     }
-    //     return fees;
-    // }
-    //
-    // static async onSwapRequestToBtc?(req: Request & {paramReader: IParamReader}, requestData: ToBtcRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}> {
-    //     let fees: {baseFee: BN, feePPM: BN} = {baseFee: null, feePPM: null};
-    //     for(let plugin of PluginManager.plugins.values()) {
-    //         try {
-    //             if(plugin.onSwapRequestToBtc!=null) {
-    //                 const result = await plugin.onSwapRequestToBtc(req, requestData, swapMetadata);
-    //                 if(result!=null) {
-    //                     if(result.throw) {
-    //                         return {throw: result.throw}
-    //                     }
-    //                     if(result.baseFee!=null) fees.baseFee = result.baseFee;
-    //                     if(result.feePPM!=null) fees.feePPM = result.feePPM;
-    //                 }
-    //             }
-    //         } catch (e) {
-    //             pluginLogger.error(plugin, "onSwapRequestToBtc(): plugin error", e);
-    //         }
-    //     }
-    //     return fees;
-    // }
-    //
-    // static async onSwapRequestFromBtcLn?(req: Request & {paramReader: IParamReader}, requestData: FromBtcLnRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}> {
-    //     let fees: {baseFee: BN, feePPM: BN} = {baseFee: null, feePPM: null};
-    //     for(let plugin of PluginManager.plugins.values()) {
-    //         try {
-    //             if(plugin.onSwapRequestFromBtcLn!=null) {
-    //                 const result = await plugin.onSwapRequestFromBtcLn(req, requestData, swapMetadata);
-    //                 if(result!=null) {
-    //                     if(result.throw) {
-    //                         return {throw: result.throw}
-    //                     }
-    //                     if(result.baseFee!=null) fees.baseFee = result.baseFee;
-    //                     if(result.feePPM!=null) fees.feePPM = result.feePPM;
-    //                 }
-    //             }
-    //         } catch (e) {
-    //             pluginLogger.error(plugin, "onSwapRequestFromBtcLn(): plugin error", e);
-    //         }
-    //     }
-    //     return fees;
-    // }
-    //
-    // static async onSwapRequestFromBtc?(req: Request & {paramReader: IParamReader}, requestData: FromBtcRequestType, swapMetadata: any): Promise<{throw?: string, baseFee?: BN, feePPM?: BN}> {
-    //     let fees: {baseFee: BN, feePPM: BN} = {baseFee: null, feePPM: null};
-    //     for(let plugin of PluginManager.plugins.values()) {
-    //         try {
-    //             if(plugin.onSwapRequestFromBtc!=null) {
-    //                 const result = await plugin.onSwapRequestFromBtc(req, requestData, swapMetadata);
-    //                 if(result!=null) {
-    //                     if(result.throw) {
-    //                         return {throw: result.throw}
-    //                     }
-    //                     if(result.baseFee!=null) fees.baseFee = result.baseFee;
-    //                     if(result.feePPM!=null) fees.feePPM = result.feePPM;
-    //                 }
-    //             }
-    //         } catch (e) {
-    //             pluginLogger.error(plugin, "onSwapRequestFromBtc(): plugin error", e);
-    //         }
-    //     }
-    //     return fees;
-    // }
 
     static getWhitelistedTxIds(): Set<string> {
         const whitelist: Set<string> = new Set<string>();

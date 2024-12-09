@@ -1,6 +1,8 @@
-import {CoinTypes} from "../abstract/IPriceProvider";
+import {CtorCoinTypes} from "../abstract/IPriceProvider";
 import {ExchangePriceProvider} from "./abstract/ExchangePriceProvider";
 import {httpGet} from "../../utils/Utils";
+import {MultiChain} from "../../swaps/Swapper";
+import {BinanceResponse} from "./BinancePriceProvider";
 
 export type OKXResponse = {
     code: string;
@@ -19,9 +21,9 @@ export type OKXResponse = {
     ]
 };
 
-export class OKXPriceProvider extends ExchangePriceProvider {
+export class OKXPriceProvider<T extends MultiChain> extends ExchangePriceProvider<T> {
 
-    constructor(coinsMap: CoinTypes, url: string = "https://www.okx.com/api/v5", httpRequestTimeout?: number) {
+    constructor(coinsMap: CtorCoinTypes<T>, url: string = "https://www.okx.com/api/v5", httpRequestTimeout?: number) {
         super(coinsMap, url, httpRequestTimeout);
     }
 
@@ -33,6 +35,16 @@ export class OKXPriceProvider extends ExchangePriceProvider {
         );
 
         return parseFloat(response.data[0].idxPx);
+    }
+
+    protected async fetchUsdPrice(abortSignal?: AbortSignal): Promise<number> {
+        const response = await httpGet<OKXResponse>(
+            this.url+"/market/index-tickers?instId=BTC-USD",
+            this.httpRequestTimeout,
+            abortSignal
+        );
+
+        return parseFloat(response.data[0].idxPx)/100000000;
     }
 
 }

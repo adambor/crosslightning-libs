@@ -237,7 +237,10 @@ export class MempoolBitcoinRpc implements BitcoinRpcWithTxoListener<MempoolBitco
             await timeoutPromise((intervalSeconds || 5)*1000, abortSignal);
 
             const result = await this.checkAddressTxos(address, txoHash);
-            if(result==null) continue;
+            if(result==null) {
+                stateUpdateCbk(null, null, null, null);
+                continue;
+            }
 
             const confirmationDelay = await this.getConfirmationDelay(result.tx, requiredConfirmations);
             if(confirmationDelay==null) continue;
@@ -262,6 +265,14 @@ export class MempoolBitcoinRpc implements BitcoinRpcWithTxoListener<MempoolBitco
             capacity: new BN(nodeInfo.capacity),
             numChannels: nodeInfo.active_channel_count
         }
+    }
+
+    sendRawTransaction(rawTx: string): Promise<string> {
+        return this.api.sendTransaction(rawTx);
+    }
+
+    sendRawPackage(rawTx: string[]): Promise<string[]> {
+        throw new Error("Unsupported");
     }
 
 }

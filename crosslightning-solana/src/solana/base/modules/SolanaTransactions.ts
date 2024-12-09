@@ -8,6 +8,7 @@ import {SolanaModule} from "../SolanaModule";
 import * as bs58 from "bs58";
 import {tryWithRetries} from "../../../utils/Utils";
 import {Buffer} from "buffer";
+import {SolanaSigner} from "../../wallet/SolanaSigner";
 
 export type SolanaTx = {tx: Transaction, signers: Signer[]};
 
@@ -36,7 +37,7 @@ export class SolanaTransactions extends SolanaModule {
         options.maxRetries = 0;
         if(this.cbkSendTransaction!=null) result = await this.cbkSendTransaction(data, options);
         if(result==null) result = await this.root.Fees.submitTx(data, options);
-        if(result==null) result = await this.provider.connection.sendRawTransaction(data, options);
+        if(result==null) result = await this.connection.sendRawTransaction(data, options);
         // this.logger.debug("sendRawTransaction(): tx sent, signature: "+result);
         return result;
     }
@@ -103,7 +104,7 @@ export class SolanaTransactions extends SolanaModule {
 
         let result: RpcResponseAndContext<SignatureResult>;
         try {
-            result = await this.provider.connection.confirmTransaction({
+            result = await this.connection.confirmTransaction({
                 signature: signature,
                 blockhash: solanaTx.tx.recentBlockhash,
                 lastValidBlockHeight: solanaTx.tx.lastValidBlockHeight,
@@ -164,17 +165,18 @@ export class SolanaTransactions extends SolanaModule {
      * Prepares solana transactions, assigns recentBlockhash if needed, applies Phantom hotfix,
      *  sets feePayer to ourselves, calls beforeTxSigned callback & signs transaction with provided signers array
      *
+     * @param signer
      * @param txs
      * @private
      */
-    private async prepareTransactions(txs: SolanaTx[]): Promise<void> {
+    private async prepareTransactions(signer: SolanaSigner, txs: SolanaTx[]): Promise<void> {
         let latestBlockData: {blockhash: string, lastValidBlockHeight: number} = null;
 
         for(let tx of txs) {
             if(tx.tx.recentBlockhash==null) {
                 if(latestBlockData==null) {
                     latestBlockData = await tryWithRetries(
-                        () => this.provider.connection.getLatestBlockhash("confirmed"),
+                        () => this.connection.getLatestBlockhash("confirmed"),
                         this.retryPolicy
                     );
                     this.logger.debug("prepareTransactions(): fetched latest block data for transactions," +
@@ -186,12 +188,12 @@ export class SolanaTransactions extends SolanaModule {
 
             //This is a hotfix for Phantom adding compute unit price instruction on the first position & breaking
             // required instructions order (e.g. btc relay verify needs to be 0th instruction in a tx)
-            if(this.provider.signer==null && tx.tx.signatures.length===0) {
+            if(signer.keypair==null && tx.tx.signatures.length===0) {
                 const foundIx = tx.tx.instructions.find(ix => ix.programId.equals(ComputeBudgetProgram.programId) && ComputeBudgetInstruction.decodeInstructionType(ix)==="SetComputeUnitPrice")
                 if(foundIx==null) tx.tx.instructions.splice(tx.tx.instructions.length-1, 0, ComputeBudgetProgram.setComputeUnitPrice({microLamports: 1}));
             }
 
-            tx.tx.feePayer = this.provider.publicKey;
+            tx.tx.feePayer = signer.getPublicKey();
             if(this.cbkBeforeTxSigned!=null) await this.cbkBeforeTxSigned(tx);
             if(tx.signers!=null && tx.signers.length>0) for(let signer of tx.signers) tx.tx.sign(signer);
         }
@@ -220,6 +222,7 @@ export class SolanaTransactions extends SolanaModule {
      *  signs (all together using signAllTransactions() calls), sends (in parallel or sequentially) &
      *  optionally waits for confirmation of a batch of solana transactions
      *
+     * @param signer
      * @param txs transactions to send
      * @param waitForConfirmation whether to wait for transaction confirmations (this also makes sure the transactions
      *  are re-sent at regular intervals)
@@ -228,9 +231,9 @@ export class SolanaTransactions extends SolanaModule {
      *  are executed in order)
      * @param onBeforePublish a callback called before every transaction is published
      */
-    public async sendAndConfirm(txs: SolanaTx[], waitForConfirmation?: boolean, abortSignal?: AbortSignal, parallel?: boolean, onBeforePublish?: (txId: string, rawTx: string) => Promise<void>): Promise<string[]> {
-        await this.prepareTransactions(txs)
-        const signedTxs = await this.provider.wallet.signAllTransactions(txs.map(e => e.tx));
+    public async sendAndConfirm(signer: SolanaSigner, txs: SolanaTx[], waitForConfirmation?: boolean, abortSignal?: AbortSignal, parallel?: boolean, onBeforePublish?: (txId: string, rawTx: string) => Promise<void>): Promise<string[]> {
+        await this.prepareTransactions(signer, txs)
+        const signedTxs = await signer.wallet.signAllTransactions(txs.map(e => e.tx));
         signedTxs.forEach((tx, index) => {
             const solTx = txs[index];
             tx.lastValidBlockHeight = solTx.tx.lastValidBlockHeight;
@@ -313,12 +316,12 @@ export class SolanaTransactions extends SolanaModule {
      */
     public async getTxStatus(tx: string): Promise<"pending" | "success" | "not_found" | "reverted"> {
         const parsedTx: SolanaTx = await this.deserializeTx(tx);
-        const txReceipt = await this.provider.connection.getTransaction(bs58.encode(parsedTx.tx.signature), {
+        const txReceipt = await this.connection.getTransaction(bs58.encode(parsedTx.tx.signature), {
             commitment: "confirmed",
             maxSupportedTransactionVersion: 0
         });
         if(txReceipt==null) {
-            const currentBlockheight = await this.provider.connection.getBlockHeight("processed");
+            const currentBlockheight = await this.connection.getBlockHeight("processed");
             if(currentBlockheight>parsedTx.tx.lastValidBlockHeight) return "not_found";
             return "pending";
         }
@@ -334,7 +337,7 @@ export class SolanaTransactions extends SolanaModule {
      * @param finality
      */
     public async getTxIdStatus(txId: string, finality?: Finality): Promise<"success" | "not_found" | "reverted"> {
-        const txReceipt = await this.provider.connection.getTransaction(txId, {
+        const txReceipt = await this.connection.getTransaction(txId, {
             commitment: finality || "confirmed",
             maxSupportedTransactionVersion: 0
         });

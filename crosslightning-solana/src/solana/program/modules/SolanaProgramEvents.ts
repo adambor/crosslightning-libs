@@ -46,7 +46,7 @@ export class SolanaProgramEvents<IDL extends Idl> extends SolanaEvents {
      * @private
      */
     private async getEvents(signature: string): Promise<ProgramEvent<IDL>[]> {
-        const tx = await this.provider.connection.getTransaction(signature, {
+        const tx = await this.connection.getTransaction(signature, {
             commitment: "confirmed",
             maxSupportedTransactionVersion: 0
         });

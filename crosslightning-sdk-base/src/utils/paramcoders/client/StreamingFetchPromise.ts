@@ -139,12 +139,12 @@ export async function streamingFetchPromise<T extends RequestSchema>(
         if(init.signal!=null && e.name==="AbortError") {
             throw init.signal.reason;
         } else {
-            if(e.message!=null) e.message += streamRequest ? " (streaming)" : " (non streaming)"
+            if(e.message!=null) e.message += streamRequest ? " (streaming req)" : " (non streaming req)"
             throw e;
         }
     });
 
-    logger.debug(url+": Response status ("+(Date.now()-startTime)+"ms) "+(streamRequest ? "(streaming)" : "(non streaming)")+": ", resp.status);
+    logger.debug(url+": Response status ("+(Date.now()-startTime)+"ms) "+(streamRequest ? "(streaming req)" : "(non streaming req)")+": ", resp.status);
 
     if(resp.status!==200) {
         let respTxt: string;
@@ -159,9 +159,9 @@ export async function streamingFetchPromise<T extends RequestSchema>(
     if(resp.headers.get("content-type")!=="application/x-multiple-json") {
         const respBody = await resp.json();
 
-        logger.debug(url+": Response read ("+(Date.now()-startTime)+"ms) (non streaming): ", respBody);
+        logger.debug(url+": Response read ("+(Date.now()-startTime)+"ms) (non streaming resp): ", respBody);
 
-        return objectMap<any, Promise<any>>(schema, (schemaValue, key) => {
+        return objectMap(schema, (schemaValue, key) => {
             const value = respBody[key];
 
             const result = verifyField(schemaValue, value);
@@ -178,7 +178,7 @@ export async function streamingFetchPromise<T extends RequestSchema>(
             if(isOptionalField(schemaValue)) return undefined;
             throw e;
         }).then(value => {
-            logger.debug(url+": Response frame read ("+(Date.now()-startTime)+"ms) (streaming): ", {[key]: value});
+            logger.debug(url+": Response frame read ("+(Date.now()-startTime)+"ms) (streaming resp): ", {[key]: value});
             const result = verifyField(schemaValue, value);
             if(result===undefined) {
                 return Promise.reject(new Error("Invalid field value"));

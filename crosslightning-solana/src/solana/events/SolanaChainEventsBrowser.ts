@@ -6,7 +6,7 @@ import {
     getLogger,
     onceAsync, tryWithRetries
 } from "../../utils/Utils";
-import {ParsedTransactionWithMeta, PublicKey} from "@solana/web3.js";
+import {Connection, ParsedTransactionWithMeta, PublicKey} from "@solana/web3.js";
 import * as BN from "bn.js";
 import {SwapTypeEnum} from "../swaps/SwapTypeEnum";
 import {
@@ -34,13 +34,13 @@ export type InitInstruction = SingleInstructionWithAccounts<SwapProgram["instruc
 export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
 
     protected readonly listeners: EventListener<SolanaSwapData>[] = [];
-    protected readonly provider: AnchorProvider;
+    protected readonly connection: Connection;
     protected readonly solanaSwapProgram: SolanaSwapProgram;
     protected eventListeners: number[] = [];
     protected readonly logger = getLogger("SolanaChainEventsBrowser: ");
 
-    constructor(provider: AnchorProvider, solanaSwapContract: SolanaSwapProgram) {
-        this.provider = provider;
+    constructor(connection: Connection, solanaSwapContract: SolanaSwapProgram) {
+        this.connection = connection;
         this.solanaSwapProgram = solanaSwapContract;
     }
 
@@ -52,7 +52,7 @@ export class SolanaChainEventsBrowser implements ChainEvents<SolanaSwapData> {
      */
     private async getTransactionInstructions(signature: string): Promise<InstructionWithAccounts<SwapProgram>[]> {
         const transaction = await tryWithRetries<ParsedTransactionWithMeta>(async () => {
-            const res = await this.provider.connection.getParsedTransaction(signature, {
+            const res = await this.connection.getParsedTransaction(signature, {
                 commitment: "confirmed",
                 maxSupportedTransactionVersion: 0
             });

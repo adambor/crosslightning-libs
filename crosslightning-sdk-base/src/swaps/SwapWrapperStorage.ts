@@ -35,8 +35,8 @@ export class SwapWrapperStorage<T extends ISwap<any>> {
      * @param arr Array of swaps to remove
      */
     async removeSwapDataArr(arr: T[]): Promise<void> {
-        if((this.storage as any).removeDataArr!=null) {
-            await (this.storage as any).removeDataArr(arr.map(swap => swap.getPaymentHash().toString("hex")));
+        if(this.storage.removeDataArr!=null) {
+            await this.storage.removeDataArr(arr.map(swap => swap.getPaymentHash().toString("hex")));
             return;
         }
 
@@ -62,8 +62,8 @@ export class SwapWrapperStorage<T extends ISwap<any>> {
      * @param arr Array of swaps to save
      */
     async saveSwapDataArr(arr: T[]): Promise<void> {
-        if((this.storage as any).saveDataArr!=null) {
-            await (this.storage as any).saveDataArr(arr.map(swap => {
+        if(this.storage.saveDataArr!=null) {
+            await this.storage.saveDataArr(arr.map(swap => {
                 return {id: swap.getPaymentHash().toString("hex"), object: swap}
             }));
             return;

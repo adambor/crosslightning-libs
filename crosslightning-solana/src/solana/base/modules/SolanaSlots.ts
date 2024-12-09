@@ -21,7 +21,7 @@ export class SolanaSlots extends SolanaModule {
      * @private
      */
     private fetchAndSaveSlot(commitment: Commitment): {slot: Promise<number>, timestamp: number} {
-        const slotPromise = this.provider.connection.getSlot(commitment);
+        const slotPromise = this.connection.getSlot(commitment);
         const timestamp = Date.now();
         this.slotCache[commitment] = {
             slot: slotPromise,

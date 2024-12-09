@@ -13,7 +13,7 @@ export class SolanaBlocks extends SolanaModule {
      * @private
      */
     private fetchAndSaveParsedBlock(slot: number): Promise<ParsedAccountsModeBlockResponse> {
-        const blockCacheData = this.provider.connection.getParsedBlock(slot, {
+        const blockCacheData = this.connection.getParsedBlock(slot, {
             transactionDetails: "none",
             commitment: "confirmed",
             rewards: false

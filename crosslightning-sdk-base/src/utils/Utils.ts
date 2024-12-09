@@ -77,15 +77,21 @@ export function promiseAny<T>(promises: Promise<T>[]): Promise<T> {
  * @param obj
  * @param translator
  */
-export function objectMap<InputType, OutputType>(
-    obj: {[key: string]: InputType},
-    translator: (value: InputType, key: string) => OutputType
-): {[key in keyof typeof obj]: OutputType} {
-    const resp: {[key in keyof typeof obj]: OutputType} = {};
+export function objectMap<
+    InputObject extends {[key in string]: any},
+    OutputObject extends {[key in keyof InputObject]: any}
+>(
+    obj: InputObject,
+    translator: <InputKey extends Extract<keyof InputObject, string>>(
+        value: InputObject[InputKey],
+        key: InputKey
+    ) => OutputObject[InputKey]
+): {[key in keyof InputObject]: OutputObject[key]} {
+    const resp: {[key in keyof InputObject]?: OutputObject[key]} = {};
     for(let key in obj) {
         resp[key] = translator(obj[key], key);
     }
-    return resp;
+    return resp as {[key in keyof InputObject]: OutputObject[key]};
 }
 
 /**

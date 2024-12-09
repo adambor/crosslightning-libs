@@ -24,20 +24,21 @@ export class SolanaLpVault extends SolanaSwapModule {
     /**
      * Action for withdrawing funds from the LP vault
      *
+     * @param signer
      * @param token
      * @param amount
      * @constructor
      * @private
      */
-    private async Withdraw(token: PublicKey, amount: BN): Promise<SolanaAction> {
-        const ata = getAssociatedTokenAddressSync(token, this.provider.publicKey);
-        return new SolanaAction(this.root,
+    private async Withdraw(signer: PublicKey, token: PublicKey, amount: BN): Promise<SolanaAction> {
+        const ata = getAssociatedTokenAddressSync(token, signer);
+        return new SolanaAction(signer, this.root,
             await this.program.methods
                 .withdraw(new BN(amount))
                 .accounts({
-                    signer: this.provider.publicKey,
+                    signer,
                     signerAta: ata,
-                    userData: this.root.SwapUserVault(this.provider.publicKey, token),
+                    userData: this.root.SwapUserVault(signer, token),
                     vault: this.root.SwapVault(token),
                     vaultAuthority: this.root.SwapVaultAuthority,
                     mint: token,
@@ -51,20 +52,21 @@ export class SolanaLpVault extends SolanaSwapModule {
     /**
      * Action for depositing funds to the LP vault
      *
+     * @param signer
      * @param token
      * @param amount
      * @constructor
      * @private
      */
-    private async Deposit(token: PublicKey, amount: BN): Promise<SolanaAction> {
-        const ata = getAssociatedTokenAddressSync(token, this.provider.publicKey);
-        return new SolanaAction(this.root,
+    private async Deposit(signer: PublicKey, token: PublicKey, amount: BN): Promise<SolanaAction> {
+        const ata = getAssociatedTokenAddressSync(token, signer);
+        return new SolanaAction(signer, this.root,
             await this.program.methods
                 .deposit(new BN(amount))
                 .accounts({
-                    signer: this.provider.publicKey,
+                    signer,
                     signerAta: ata,
-                    userData: this.root.SwapUserVault(this.provider.publicKey, token),
+                    userData: this.root.SwapUserVault(signer, token),
                     vault: this.root.SwapVault(token),
                     vaultAuthority: this.root.SwapVaultAuthority,
                     mint: token,
@@ -82,12 +84,12 @@ export class SolanaLpVault extends SolanaSwapModule {
      * @param address
      * @param token
      */
-    public async getIntermediaryData(address: string, token: PublicKey): Promise<{
+    public async getIntermediaryData(address: PublicKey, token: PublicKey): Promise<{
         balance: BN,
         reputation: IntermediaryReputationType
     }> {
         const data: IdlAccounts<SwapProgram>["userAccount"] = await this.program.account.userAccount.fetchNullable(
-            this.root.SwapUserVault(new PublicKey(address), token)
+            this.root.SwapUserVault(address, token)
         );
 
         if(data==null) return null;
@@ -117,7 +119,7 @@ export class SolanaLpVault extends SolanaSwapModule {
      * @param address
      * @param token
      */
-    public async getIntermediaryReputation(address: string, token: PublicKey): Promise<IntermediaryReputationType> {
+    public async getIntermediaryReputation(address: PublicKey, token: PublicKey): Promise<IntermediaryReputationType> {
         const intermediaryData = await this.getIntermediaryData(address, token);
         return intermediaryData?.reputation;
     }
@@ -128,7 +130,7 @@ export class SolanaLpVault extends SolanaSwapModule {
      * @param address
      * @param token
      */
-    public async getIntermediaryBalance(address: string, token: PublicKey): Promise<BN> {
+    public async getIntermediaryBalance(address: PublicKey, token: PublicKey): Promise<BN> {
         const intermediaryData = await this.getIntermediaryData(address, token);
         const balance: BN = intermediaryData?.balance;
 
@@ -142,22 +144,23 @@ export class SolanaLpVault extends SolanaSwapModule {
      * Creates transactions for withdrawing funds from the LP vault, creates ATA if it doesn't exist and unwraps
      *  WSOL to SOL if required
      *
+     * @param signer
      * @param token
      * @param amount
      * @param feeRate
      */
-    public async txsWithdraw(token: PublicKey, amount: BN, feeRate?: string): Promise<SolanaTx[]> {
-        const ata = await getAssociatedTokenAddress(token, this.provider.publicKey);
+    public async txsWithdraw(signer: PublicKey, token: PublicKey, amount: BN, feeRate?: string): Promise<SolanaTx[]> {
+        const ata = await getAssociatedTokenAddress(token, signer);
 
-        feeRate = feeRate || await this.getFeeRate(token);
+        feeRate = feeRate || await this.getFeeRate(signer, token);
 
-        const action = new SolanaAction(this.root);
+        const action = new SolanaAction(signer, this.root);
         if(!await this.root.Tokens.ataExists(ata)) {
-            action.add(this.root.Tokens.InitAta(this.provider.publicKey, token));
+            action.add(this.root.Tokens.InitAta(signer, signer, token));
         }
-        action.add(await this.Withdraw(token, amount));
+        action.add(await this.Withdraw(signer, token, amount));
         const shouldUnwrap = token.equals(this.root.Tokens.WSOL_ADDRESS);
-        if(shouldUnwrap) action.add(this.root.Tokens.Unwrap(this.provider.publicKey));
+        if(shouldUnwrap) action.add(this.root.Tokens.Unwrap(signer));
 
         this.logger.debug("txsWithdraw(): withdraw TX created, token: "+token.toString()+
             " amount: "+amount.toString(10)+" unwrapping: "+shouldUnwrap);
@@ -168,16 +171,17 @@ export class SolanaLpVault extends SolanaSwapModule {
     /**
      * Creates transaction for depositing funds into the LP vault, wraps SOL to WSOL if required
      *
+     * @param signer
      * @param token
      * @param amount
      * @param feeRate
      */
-    public async txsDeposit(token: PublicKey, amount: BN, feeRate?: string): Promise<SolanaTx[]> {
-        const ata = getAssociatedTokenAddressSync(token, this.provider.publicKey);
+    public async txsDeposit(signer: PublicKey, token: PublicKey, amount: BN, feeRate?: string): Promise<SolanaTx[]> {
+        const ata = getAssociatedTokenAddressSync(token, signer);
 
-        feeRate = feeRate || await this.getFeeRate(token);
+        feeRate = feeRate || await this.getFeeRate(signer, token);
 
-        const action = new SolanaAction(this.root);
+        const action = new SolanaAction(signer, this.root);
 
         let wrapping: boolean = false;
         if(token.equals(this.root.Tokens.WSOL_ADDRESS)) {
@@ -187,11 +191,11 @@ export class SolanaLpVault extends SolanaSwapModule {
             );
             let balance: BN = account==null ? new BN(0) : new BN(account.amount.toString());
             if(balance.lt(amount)) {
-                action.add(this.root.Tokens.Wrap(this.provider.publicKey, amount.sub(balance), account==null));
+                action.add(this.root.Tokens.Wrap(signer, amount.sub(balance), account==null));
                 wrapping = true;
             }
         }
-        action.addAction(await this.Deposit(token, amount));
+        action.addAction(await this.Deposit(signer, token, amount));
 
         this.logger.debug("txsDeposit(): deposit TX created, token: "+token.toString()+
             " amount: "+amount.toString(10)+" wrapping: "+wrapping);
@@ -199,12 +203,12 @@ export class SolanaLpVault extends SolanaSwapModule {
         return [await action.tx(feeRate)];
     }
 
-    public getFeeRate(token: PublicKey) {
-        const ata = getAssociatedTokenAddressSync(token, this.provider.publicKey);
+    public getFeeRate(signer: PublicKey, token: PublicKey) {
+        const ata = getAssociatedTokenAddressSync(token, signer);
         return this.root.Fees.getFeeRate([
-            this.provider.publicKey,
+            signer,
             ata,
-            this.root.SwapUserVault(this.provider.publicKey, token),
+            this.root.SwapUserVault(signer, token),
             this.root.SwapVault(token)
         ])
     }

@@ -1,6 +1,6 @@
 {
   "name": "crosslightning-server-base",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Base for server-side crosslightning, features command & config parser",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",

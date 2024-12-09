@@ -2,10 +2,12 @@ import {SwapType} from "./SwapType";
 import {EventEmitter} from "events";
 import * as BN from "bn.js";
 import {Buffer} from "buffer";
-import {ISwapWrapper, ISwapWrapperOptions} from "./ISwapWrapper";
-import {SwapCommitStatus, SwapData, TokenAddress} from "crosslightning-base";
+import {ISwapWrapper} from "./ISwapWrapper";
+import {ChainType, SignatureData, SignatureVerificationError, SwapCommitStatus, SwapData} from "crosslightning-base";
 import {isPriceInfoType, PriceInfoType} from "../prices/abstract/ISwapPrice";
-import {getLogger, LoggerType, timeoutPromise} from "../utils/Utils";
+import {getLogger, LoggerType, timeoutPromise, tryWithRetries} from "../utils/Utils";
+import {Token, TokenAmount} from "./Tokens";
+import {SwapDirection} from "./SwapDirection";
 
 export type ISwapInit<T extends SwapData> = {
     pricingInfo: PriceInfoType,
@@ -14,10 +16,9 @@ export type ISwapInit<T extends SwapData> = {
     swapFee: BN,
     swapFeeBtc?: BN,
     feeRate: any,
-    prefix?: string,
-    timeout?: string,
-    signature?: string,
-    data?: T
+    signatureData?: SignatureData,
+    data?: T,
+    exactIn: boolean
 };
 
 export function isISwapInit<T extends SwapData>(obj: any): obj is ISwapInit<T> {
@@ -29,37 +30,40 @@ export function isISwapInit<T extends SwapData>(obj: any): obj is ISwapInit<T> {
         BN.isBN(obj.swapFee) &&
         (obj.swapFeeBtc == null || BN.isBN(obj.swapFeeBtc)) &&
         obj.feeRate != null &&
-        (obj.prefix == null || typeof obj.prefix === 'string') &&
-        (obj.timeout == null || typeof obj.timeout === 'string') &&
-        (obj.signature == null || typeof obj.signature === 'string') &&
-        (obj.data == null || typeof obj.data === 'object');
+        (obj.signatureData == null || (
+            typeof(obj.signatureData) === 'object' &&
+            typeof(obj.signatureData.prefix)==="string" &&
+            typeof(obj.signatureData.timeout)==="string" &&
+            typeof(obj.signatureData.signature)==="string"
+        )) &&
+        (obj.data == null || typeof obj.data === 'object') &&
+        (typeof obj.exactIn === 'boolean');
 }
 
-export type Fee = {
-    amountInSrcToken: BN;
-    amountInDstToken: BN;
+export type Fee<
+    ChainIdentifier extends string = string,
+    TSrc extends Token<ChainIdentifier> = Token<ChainIdentifier>,
+    TDst extends Token<ChainIdentifier> = Token<ChainIdentifier>
+> = {
+    amountInSrcToken: TokenAmount<ChainIdentifier, TSrc>;
+    amountInDstToken: TokenAmount<ChainIdentifier, TDst>;
+    usdValue: (abortSignal?: AbortSignal, preFetchedUsdPrice?: number) => Promise<number>;
 }
-
-export type BtcToken<L = boolean> = {
-    chain: "BTC",
-    lightning: L
-};
-
-export type SCToken<T = TokenAddress> = {
-    chain: "SC",
-    address: T
-}
-
-export type Token = BtcToken | SCToken;
 
 export abstract class ISwap<
-    T extends SwapData = SwapData,
-    S extends number = number,
-    TXType = any
+    T extends ChainType = ChainType,
+    S extends number = number
 > {
+    readonly chainIdentifier: string;
+    readonly exactIn: boolean;
+    readonly createdAt: number;
+
+    protected readonly currentVersion: number = 1;
+    protected version: number;
+    protected initiated: boolean = false;
     protected logger: LoggerType;
     protected readonly abstract TYPE: SwapType;
-    protected readonly wrapper: ISwapWrapper<T, ISwap<T, S, TXType>, ISwapWrapperOptions, TXType>;
+    protected readonly wrapper: ISwapWrapper<T, ISwap<T, S>>;
     expiry?: number;
     readonly url: string;
 
@@ -67,10 +71,8 @@ export abstract class ISwap<
 
     pricingInfo: PriceInfoType;
 
-    data: T;
-    prefix?: string;
-    timeout?: string;
-    signature?: string;
+    data: T["Data"];
+    signatureData?: SignatureData;
     feeRate?: any;
 
     protected swapFee: BN;
@@ -89,14 +91,17 @@ export abstract class ISwap<
     events: EventEmitter = new EventEmitter();
 
     protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>>, obj: any);
-    protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>>, swapInit: ISwapInit<T>);
+    protected constructor(wrapper: ISwapWrapper<T, ISwap<T, S>>, swapInit: ISwapInit<T["Data"]>);
     protected constructor(
         wrapper: ISwapWrapper<T, ISwap<T, S>>,
-        swapInitOrObj: ISwapInit<T> | any,
+        swapInitOrObj: ISwapInit<T["Data"]> | any,
     ) {
+        this.chainIdentifier = wrapper.chainIdentifier;
         this.wrapper = wrapper;
         if(isISwapInit(swapInitOrObj)) {
             Object.assign(this, swapInitOrObj);
+            this.version = this.currentVersion;
+            this.createdAt = Date.now();
         } else {
             this.expiry = swapInitOrObj.expiry;
             this.url = swapInitOrObj.url;
@@ -110,21 +115,54 @@ export abstract class ISwap<
                 feePPM: swapInitOrObj._feePPM==null ? null : new BN(swapInitOrObj._feePPM),
                 realPriceUSatPerToken: swapInitOrObj._realPriceUSatPerToken==null ? null : new BN(swapInitOrObj._realPriceUSatPerToken),
                 swapPriceUSatPerToken: swapInitOrObj._swapPriceUSatPerToken==null ? null : new BN(swapInitOrObj._swapPriceUSatPerToken),
-            }
+            };
 
             this.data = swapInitOrObj.data!=null ? new wrapper.swapDataDeserializer(swapInitOrObj.data) : null;
             this.swapFee = swapInitOrObj.swapFee==null ? null : new BN(swapInitOrObj.swapFee);
             this.swapFeeBtc = swapInitOrObj.swapFeeBtc==null ? null : new BN(swapInitOrObj.swapFeeBtc);
-            this.prefix = swapInitOrObj.prefix;
-            this.timeout = swapInitOrObj.timeout;
-            this.signature = swapInitOrObj.signature;
+            this.signatureData = swapInitOrObj.signature==null ? null : {
+                prefix: swapInitOrObj.prefix,
+                timeout: swapInitOrObj.timeout,
+                signature: swapInitOrObj.signature
+            };
             this.feeRate = swapInitOrObj.feeRate;
 
             this.commitTxId = swapInitOrObj.commitTxId;
             this.claimTxId = swapInitOrObj.claimTxId;
             this.refundTxId = swapInitOrObj.refundTxId;
+
+            this.version = swapInitOrObj.version;
+            this.initiated = swapInitOrObj.initiated;
+            this.exactIn = swapInitOrObj.exactIn;
+            this.createdAt = swapInitOrObj.createdAt ?? swapInitOrObj.expiry;
         }
         this.logger = getLogger(this.constructor.name+"("+this.getPaymentHashString()+"): ");
+        if(this.version!==this.currentVersion) {
+            this.upgradeVersion();
+        }
+        if(this.initiated==null) this.initiated = true;
+    }
+
+    protected abstract upgradeVersion(): void;
+
+    /**
+     * Periodically checks for init signature's expiry
+     *
+     * @param abortSignal
+     * @param interval How often to check (in seconds), default to 5s
+     * @protected
+     */
+    protected async watchdogWaitTillSignatureExpiry(abortSignal?: AbortSignal, interval: number = 5): Promise<void> {
+        let expired = false
+        while(!expired) {
+            await timeoutPromise(interval*1000, abortSignal);
+            try {
+                expired = await this.wrapper.contract.isInitAuthorizationExpired(this.data, this.signatureData);
+            } catch (e) {
+                this.logger.error("watchdogWaitTillSignatureExpiry(): Error when checking signature expiry: ", e);
+            }
+        }
+        if(abortSignal!=null) abortSignal.throwIfAborted();
     }
 
     /**
@@ -134,17 +172,22 @@ export abstract class ISwap<
      * @param interval How often to check (in seconds), default to 5s
      * @protected
      */
-    protected async watchdogWaitTillCommited(abortSignal?: AbortSignal, interval: number = 5): Promise<void> {
+    protected async watchdogWaitTillCommited(abortSignal?: AbortSignal, interval: number = 5): Promise<boolean> {
         let status: SwapCommitStatus = SwapCommitStatus.NOT_COMMITED;
         while(status===SwapCommitStatus.NOT_COMMITED) {
             await timeoutPromise(interval*1000, abortSignal);
             try {
-                status = await this.wrapper.contract.getCommitStatus(this.data);
+                status = await this.wrapper.contract.getCommitStatus(this.getInitiator(), this.data);
+                if(
+                    status===SwapCommitStatus.NOT_COMMITED &&
+                    await this.wrapper.contract.isInitAuthorizationExpired(this.data, this.signatureData)
+                ) return false;
             } catch (e) {
-                this.logger.error("watchdogWaitTillCommited(): Error when fetching commit status: ", e);
+                this.logger.error("watchdogWaitTillCommited(): Error when fetching commit status or signature expiry: ", e);
             }
         }
         if(abortSignal!=null) abortSignal.throwIfAborted();
+        return true;
     }
 
     /**
@@ -161,7 +204,7 @@ export abstract class ISwap<
         while(status===SwapCommitStatus.COMMITED || status===SwapCommitStatus.REFUNDABLE) {
             await timeoutPromise(interval*1000, abortSignal);
             try {
-                status = await this.wrapper.contract.getCommitStatus(this.data);
+                status = await this.wrapper.contract.getCommitStatus(this.getInitiator(), this.data);
             } catch (e) {
                 this.logger.error("watchdogWaitTillResult(): Error when fetching commit status: ", e);
             }
@@ -265,20 +308,17 @@ export abstract class ISwap<
     }
 
     /**
-     * Returns the input token for the swap
-     */
-    abstract getInToken(): Token;
-
-    /**
-     * Returns the output token for the swap
-     */
-    abstract getOutToken(): Token;
-
-    /**
      * Returns the type of the swap
      */
     getType(): SwapType {
         return this.TYPE;
+    }
+
+    /**
+     * Returns the direction of the swap
+     */
+    getDirection(): SwapDirection {
+        return this.TYPE===SwapType.FROM_BTCLN || this.TYPE===SwapType.FROM_BTC ? SwapDirection.FROM_BTC : SwapDirection.TO_BTC;
     }
 
     /**
@@ -294,9 +334,15 @@ export abstract class ISwap<
     abstract isFinished(): boolean;
 
     /**
-     * Checks whether the swap's quote has expired and cannot be committed anymore, we can remove such swap
+     * Checks whether the swap's quote has definitely expired and cannot be committed anymore, we can remove such swap
      */
     abstract isQuoteExpired(): boolean;
+
+    /**
+     * Checks whether the swap's quote is soft expired (this means there is not enough time buffer for it to commit,
+     *  but it still can happen)
+     */
+    abstract isQuoteSoftExpired(): boolean;
 
     /**
      * Returns whether the swap finished successful
@@ -309,9 +355,46 @@ export abstract class ISwap<
     abstract isFailed(): boolean;
 
     /**
+     * Returns the intiator address of the swap - address that created this swap
+     */
+    abstract getInitiator(): string;
+
+    /**
+     * @param signer Signer to check with this swap's initiator
+     * @throws {Error} When signer's address doesn't match with the swap's initiator one
+     */
+    checkSigner(signer: T["Signer"] | string): void {
+        if((typeof(signer)==="string" ? signer : signer.getAddress())!==this.getInitiator()) throw new Error("Invalid signer provided!");
+    }
+
+    /**
      * Checks if the swap's quote is still valid
      */
-    abstract isQuoteValid(): Promise<boolean>;
+    async isQuoteValid(): Promise<boolean> {
+        try {
+            await tryWithRetries(
+                () => this.wrapper.contract.isValidInitAuthorization(
+                    this.data, this.signatureData, this.feeRate
+                ),
+                null,
+                SignatureVerificationError
+            );
+            return true;
+        } catch (e) {
+            if(e instanceof SignatureVerificationError) {
+                return false;
+            }
+        }
+    }
+
+    isInitiated(): boolean {
+        return this.initiated;
+    }
+
+    /**
+     * Checks whether there is some action required from the user for this swap - can mean either refundable or claimable
+     */
+    abstract isActionable(): boolean;
 
     //////////////////////////////
     //// Amounts & fees
@@ -326,17 +409,17 @@ export abstract class ISwap<
     /**
      * Returns output amount of the swap, user receives this much
      */
-    abstract getOutAmount(): BN;
+    abstract getOutput(): TokenAmount;
 
     /**
      * Returns input amount of the swap, user needs to pay this much
      */
-    abstract getInAmount(): BN;
+    abstract getInput(): TokenAmount;
 
     /**
      * Returns input amount if the swap without the fees (swap fee, network fee)
      */
-    abstract getInAmountWithoutFee(): BN;
+    abstract getInputWithoutFee(): TokenAmount;
 
     /**
      * Returns total fee for the swap, the fee is represented in source currency & destination currency, but is
@@ -370,20 +453,31 @@ export abstract class ISwap<
             data: this.data!=null ? this.data.serialize() : null,
             swapFee: this.swapFee==null ? null : this.swapFee.toString(10),
             swapFeeBtc: this.swapFeeBtc==null ? null : this.swapFeeBtc.toString(10),
-            prefix: this.prefix,
-            timeout: this.timeout,
-            signature: this.signature,
+            prefix: this.signatureData?.prefix,
+            timeout: this.signatureData?.timeout,
+            signature: this.signatureData?.signature,
             feeRate: this.feeRate==null ? null : this.feeRate.toString(),
             commitTxId: this.commitTxId,
             claimTxId: this.claimTxId,
             refundTxId: this.refundTxId,
-            expiry: this.expiry
+            expiry: this.expiry,
+            version: this.version,
+            initiated: this.initiated,
+            exactIn: this.exactIn,
+            createdAt: this.createdAt
         }
     }
 
     _save(): Promise<void> {
-        this.wrapper.swapData.set(this.getPaymentHashString(), this);
-        return this.wrapper.storage.saveSwapData(this);
+        if(this.isQuoteExpired()) {
+            this.wrapper.swapData.delete(this.getPaymentHashString());
+            if(!this.initiated) return Promise.resolve();
+            return this.wrapper.storage.removeSwapData(this).then(() => {});
+        } else {
+            this.wrapper.swapData.set(this.getPaymentHashString(), this);
+            if(!this.initiated) return Promise.resolve();
+            return this.wrapper.storage.saveSwapData(this);
+        }
     }
 
     async _saveAndEmit(state?: S): Promise<void> {

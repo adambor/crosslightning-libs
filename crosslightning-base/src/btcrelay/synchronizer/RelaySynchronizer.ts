@@ -4,7 +4,7 @@ import {BtcBlock} from "../types/BtcBlock";
 
 export interface RelaySynchronizer<V extends BtcStoredHeader<any>, T, B extends BtcBlock> {
 
-    syncToLatestTxs(): Promise<{
+    syncToLatestTxs(signer: string): Promise<{
         txs: T[]
         targetCommitedHeader: V,
         computedHeaderMap: {[blockheight: number]: V},

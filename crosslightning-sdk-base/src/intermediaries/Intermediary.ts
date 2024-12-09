@@ -9,7 +9,7 @@ export type ServicesType = {
     [key in SwapType]?: SwapHandlerInfoType
 };
 
-export type ReputationType = {
+export type SingleChainReputationType = {
     [token: string]: {
         [key in ChainSwapType]: {
             successVolume: BN,
@@ -29,15 +29,20 @@ export type SCLiquidity = {
 export class Intermediary {
 
     readonly url: string;
-    readonly address: string;
+    readonly addresses: {[chainIdentifier: string]: string};
     readonly services: ServicesType;
-    reputation: ReputationType;
-    liquidity: SCLiquidity = {};
+    reputation: { [chainIdentifier: string]: SingleChainReputationType } = {};
+    liquidity: { [chainIdentifier: string]: SCLiquidity } = {};
     lnData: LNNodeLiquidity;
 
-    constructor(url: string, address: string, services: ServicesType, reputation: ReputationType = {}) {
+    constructor(
+        url: string,
+        addresses: {[chainIdentifier: string]: string},
+        services: ServicesType,
+        reputation: { [chainIdentifier: string]: SingleChainReputationType } = {}
+    ) {
         this.url = url;
-        this.address = address;
+        this.addresses = addresses;
         this.services = services;
         this.reputation = reputation;
     }
@@ -45,10 +50,11 @@ export class Intermediary {
     /**
      * Returns tokens supported by the intermediary, optionally constrained to the specific swap types
      *
+     * @param chainIdentifier
      * @param swapTypesArr
      * @private
      */
-    private getSupportedTokens(swapTypesArr: SwapType[] = [
+    private getSupportedTokens(chainIdentifier: string, swapTypesArr: SwapType[] = [
         SwapType.TO_BTC,
         SwapType.TO_BTCLN,
         SwapType.FROM_BTC,
@@ -57,8 +63,11 @@ export class Intermediary {
         const swapTypes = new Set(swapTypesArr);
         let tokens: Set<string> = new Set<string>();
         swapTypes.forEach((swapType) => {
-            if(this.services[swapType]!=null && this.services[swapType].tokens!=null)
-                this.services[swapType].tokens.forEach(token => tokens.add(token));
+            if(
+                this.services[swapType]!=null &&
+                this.services[swapType].chainTokens!=null &&
+                this.services[swapType].chainTokens[chainIdentifier]!=null
+            ) this.services[swapType].chainTokens[chainIdentifier].forEach(token => tokens.add(token));
         });
         return tokens;
     }
@@ -66,32 +75,78 @@ export class Intermediary {
     /**
      * Fetches, returns and saves the reputation of the intermediary, either for all or just for a single token
      *
+     * @param chainIdentifier
      * @param swapContract
      * @param tokens
+     * @param abortSignal
      */
-    async getReputation(swapContract: SwapContract<any, any, any, any>, tokens?: string[]): Promise<ReputationType> {
+    async getReputation(
+        chainIdentifier: string,
+        swapContract: SwapContract<any>,
+        tokens?: string[],
+        abortSignal?: AbortSignal
+    ): Promise<SingleChainReputationType> {
         const checkReputationTokens: Set<string> = tokens==null ?
-            this.getSupportedTokens([SwapType.TO_BTC, SwapType.TO_BTCLN]) :
+            this.getSupportedTokens(chainIdentifier, [SwapType.TO_BTC, SwapType.TO_BTCLN]) :
             new Set<string>(tokens);
 
         const promises: Promise<void>[] = [];
-        const reputation: ReputationType = {};
+        const reputation: SingleChainReputationType = {};
         for(let token of checkReputationTokens) {
-            promises.push(tryWithRetries(() => swapContract.getIntermediaryReputation(this.address, swapContract.toTokenAddress(token))).then(result => {
-                reputation[token] = result;
-            }));
+            promises.push(
+                tryWithRetries(() =>
+                    swapContract.getIntermediaryReputation(this.getAddress(chainIdentifier), token),
+                    null, null, abortSignal
+                ).then(result => {
+                    reputation[token] = result;
+                })
+            );
         }
         await Promise.all(promises);
 
-        if(this.reputation==null) {
-            this.reputation = reputation;
-        } else {
-            for(let key in reputation) {
-                this.reputation[key] = reputation[key];
-            }
+        this.reputation ??= {};
+        this.reputation[chainIdentifier] ??= {};
+        for(let key in reputation) {
+            this.reputation[chainIdentifier][key] = reputation[key];
         }
 
         return reputation;
+    }
+
+    /**
+     * Fetches, returns and saves the liquidity of the intermediaryfor a specific token
+     *
+     * @param chainIdentifier
+     * @param swapContract
+     * @param token
+     * @param abortSignal
+     */
+    async getLiquidity(
+        chainIdentifier: string,
+        swapContract: SwapContract<any>,
+        token: string,
+        abortSignal?: AbortSignal
+    ): Promise<BN> {
+        const result = await tryWithRetries(() =>
+            swapContract.getBalance(this.getAddress(chainIdentifier), token, true),
+            null, null, abortSignal
+        );
+
+        this.liquidity ??= {};
+        this.liquidity[chainIdentifier] ??= {};
+        this.liquidity[chainIdentifier][token] = result;
+
+        return result;
+    }
+
+
+    supportsChain(chainIdentifier: string): boolean {
+        if(this.addresses[chainIdentifier]==null) return false;
+        return this.getSupportedTokens(chainIdentifier).size!==0;
+    }
+
+    getAddress(chainIdentifier: string) {
+        return this.addresses[chainIdentifier];
     }
 
 }

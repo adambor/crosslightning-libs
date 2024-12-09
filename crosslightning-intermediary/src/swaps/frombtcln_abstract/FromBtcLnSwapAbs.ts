@@ -1,7 +1,7 @@
 import * as BN from "bn.js";
 import {SwapData} from "crosslightning-base";
 import {SwapHandlerType} from "../..";
-import * as bolt11 from "bolt11";
+import * as bolt11 from "@atomiqlabs/bolt11";
 import {FromBtcBaseSwap} from "../FromBtcBaseSwap";
 
 export enum FromBtcLnSwapState {
@@ -14,7 +14,7 @@ export enum FromBtcLnSwapState {
     SETTLED = 4,
 }
 
-export class FromBtcLnSwapAbs<T extends SwapData> extends FromBtcBaseSwap<T, FromBtcLnSwapState> {
+export class FromBtcLnSwapAbs<T extends SwapData = SwapData> extends FromBtcBaseSwap<T, FromBtcLnSwapState> {
 
     readonly pr: string;
 
@@ -26,23 +26,23 @@ export class FromBtcLnSwapAbs<T extends SwapData> extends FromBtcBaseSwap<T, Fro
 
     secret: string;
 
-    constructor(pr: string, swapFee: BN, swapFeeInToken: BN);
+    constructor(chainIdentifier: string, pr: string, swapFee: BN, swapFeeInToken: BN);
     constructor(obj: any);
 
-    constructor(prOrObj: string | any, swapFee?: BN, swapFeeInToken?: BN) {
-        if(typeof(prOrObj)==="string") {
-            super(swapFee, swapFeeInToken);
+    constructor(chainIdOrObj: string | any, pr?: string, swapFee?: BN, swapFeeInToken?: BN) {
+        if(typeof(chainIdOrObj)==="string") {
+            super(chainIdOrObj, swapFee, swapFeeInToken);
             this.state = FromBtcLnSwapState.CREATED;
-            this.pr = prOrObj;
+            this.pr = pr;
         } else {
-            super(prOrObj);
-            this.pr = prOrObj.pr;
-            this.secret = prOrObj.secret;
-            this.nonce = prOrObj.nonce;
-            this.prefix = prOrObj.prefix;
-            this.timeout = prOrObj.timeout;
-            this.signature = prOrObj.signature;
-            this.feeRate = prOrObj.feeRate;
+            super(chainIdOrObj);
+            this.pr = chainIdOrObj.pr;
+            this.secret = chainIdOrObj.secret;
+            this.nonce = chainIdOrObj.nonce;
+            this.prefix = chainIdOrObj.prefix;
+            this.timeout = chainIdOrObj.timeout;
+            this.signature = chainIdOrObj.signature;
+            this.feeRate = chainIdOrObj.feeRate;
         }
         this.type = SwapHandlerType.FROM_BTCLN;
     }

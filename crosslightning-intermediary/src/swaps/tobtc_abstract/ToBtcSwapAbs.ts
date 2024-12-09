@@ -15,7 +15,7 @@ export enum ToBtcSwapState {
     CLAIMED = 4
 }
 
-export class ToBtcSwapAbs<T extends SwapData> extends ToBtcBaseSwap<T, ToBtcSwapState> {
+export class ToBtcSwapAbs<T extends SwapData = SwapData> extends ToBtcBaseSwap<T, ToBtcSwapState> {
 
     readonly address: string;
     readonly amount: BN;
@@ -26,32 +26,56 @@ export class ToBtcSwapAbs<T extends SwapData> extends ToBtcBaseSwap<T, ToBtcSwap
 
     txId: string;
 
-    constructor(address: string, amount: BN, swapFee: BN, swapFeeInToken: BN, networkFee: BN, networkFeeInToken: BN, satsPerVbyte: BN, nonce: BN, preferedConfirmationTarget: number, signatureExpiry: BN);
+    constructor(
+        chainIdentifier: string,
+        address: string,
+        amount: BN,
+        swapFee: BN,
+        swapFeeInToken: BN,
+        networkFee: BN,
+        networkFeeInToken: BN,
+        satsPerVbyte: BN,
+        nonce: BN,
+        preferedConfirmationTarget: number,
+        signatureExpiry: BN
+    );
     constructor(obj: any);
 
-    constructor(prOrObj: string | any, amount?: BN, swapFee?: BN, swapFeeInToken?: BN, networkFee?: BN, networkFeeInToken?: BN, satsPerVbyte?: BN, nonce?: BN, preferedConfirmationTarget?: number, signatureExpiry?: BN) {
-        if(typeof(prOrObj)==="string") {
-            super(swapFee, swapFeeInToken, networkFee, networkFeeInToken);
+    constructor(
+        chainIdOrObj: string | any,
+        address?: string,
+        amount?: BN,
+        swapFee?: BN,
+        swapFeeInToken?: BN,
+        networkFee?: BN,
+        networkFeeInToken?: BN,
+        satsPerVbyte?: BN,
+        nonce?: BN,
+        preferedConfirmationTarget?: number,
+        signatureExpiry?: BN
+    ) {
+        if(typeof(chainIdOrObj)==="string") {
+            super(chainIdOrObj, swapFee, swapFeeInToken, networkFee, networkFeeInToken);
             this.state = ToBtcSwapState.SAVED;
-            this.address = prOrObj;
+            this.address = address;
             this.amount = amount;
             this.satsPerVbyte = satsPerVbyte;
             this.nonce = nonce;
             this.preferedConfirmationTarget = preferedConfirmationTarget;
             this.signatureExpiry = signatureExpiry;
         } else {
-            super(prOrObj);
-            this.address = prOrObj.address;
-            this.amount = new BN(prOrObj.amount);
-            this.satsPerVbyte = new BN(prOrObj.satsPerVbyte);
-            this.nonce = new BN(prOrObj.nonce);
-            this.preferedConfirmationTarget = prOrObj.preferedConfirmationTarget;
-            this.signatureExpiry = deserializeBN(prOrObj.signatureExpiry);
+            super(chainIdOrObj);
+            this.address = chainIdOrObj.address;
+            this.amount = new BN(chainIdOrObj.amount);
+            this.satsPerVbyte = new BN(chainIdOrObj.satsPerVbyte);
+            this.nonce = new BN(chainIdOrObj.nonce);
+            this.preferedConfirmationTarget = chainIdOrObj.preferedConfirmationTarget;
+            this.signatureExpiry = deserializeBN(chainIdOrObj.signatureExpiry);
 
-            this.txId = prOrObj.txId;
+            this.txId = chainIdOrObj.txId;
 
             //Compatibility
-            this.quotedNetworkFee ??= deserializeBN(prOrObj.networkFee);
+            this.quotedNetworkFee ??= deserializeBN(chainIdOrObj.networkFee);
         }
         this.type = SwapHandlerType.TO_BTC;
     }

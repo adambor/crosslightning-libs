@@ -4,19 +4,19 @@ import * as BN from "bn.js";
 import {deserializeBN, serializeBN} from "../utils/Utils";
 
 
-export abstract class ToBtcBaseSwap<T extends SwapData, S> extends SwapHandlerSwap<T, S> {
+export abstract class ToBtcBaseSwap<T extends SwapData = SwapData, S = any> extends SwapHandlerSwap<T, S> {
 
     quotedNetworkFee: BN;
     readonly quotedNetworkFeeInToken: BN;
     realNetworkFee: BN;
     realNetworkFeeInToken: BN;
 
-    protected constructor(swapFee: BN, swapFeeInToken: BN, quotedNetworkFee: BN, quotedNetworkFeeInToken: BN);
+    protected constructor(chainIdentifier: string, swapFee: BN, swapFeeInToken: BN, quotedNetworkFee: BN, quotedNetworkFeeInToken: BN);
     protected constructor(obj: any);
 
-    protected constructor(obj?: any | BN, swapFeeInToken?: BN, quotedNetworkFee?: BN, quotedNetworkFeeInToken?: BN) {
-        if(BN.isBN(obj) && BN.isBN(swapFeeInToken) && BN.isBN(quotedNetworkFee) && BN.isBN(quotedNetworkFeeInToken)) {
-            super(obj, swapFeeInToken);
+    protected constructor(obj?: any | string, swapFee?: BN, swapFeeInToken?: BN, quotedNetworkFee?: BN, quotedNetworkFeeInToken?: BN) {
+        if(typeof(obj)==="string" && BN.isBN(swapFee) && BN.isBN(swapFeeInToken) && BN.isBN(quotedNetworkFee) && BN.isBN(quotedNetworkFeeInToken)) {
+            super(obj, swapFee, swapFeeInToken);
             this.quotedNetworkFee = quotedNetworkFee;
             this.quotedNetworkFeeInToken = quotedNetworkFeeInToken;
             return;

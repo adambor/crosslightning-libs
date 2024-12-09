@@ -6,6 +6,7 @@ import {SolanaBase} from "./SolanaBase";
 export class SolanaAction {
 
     computeBudget: number;
+    readonly mainSigner: PublicKey;
     private readonly root: SolanaBase;
     private readonly instructions: TransactionInstruction[];
     private feeRate: string;
@@ -13,6 +14,7 @@ export class SolanaAction {
     private firstIxBeforeComputeBudget: boolean = false;
 
     constructor(
+        mainSigner: PublicKey,
         root: SolanaBase,
         instructions: TransactionInstruction[] | TransactionInstruction = [],
         computeBudget: number = 0,
@@ -20,6 +22,7 @@ export class SolanaAction {
         signers?: Signer[],
         firstIxBeforeComputeBudget?: boolean
     ) {
+        this.mainSigner = mainSigner;
         this.root = root;
         this.instructions = Array.isArray(instructions) ? instructions : [instructions];
         this.computeBudget = computeBudget;
@@ -59,6 +62,7 @@ export class SolanaAction {
         }
         if(this.firstIxBeforeComputeBudget && this.instructions.length>0 && index===0)
             throw new Error("Tried adding to firstIxBeforeComputeBudget action on 0th index");
+        if(!action.mainSigner.equals(this.mainSigner)) throw new Error("Actions need to have the same signer!");
         if(this.computeBudget==null && action.computeBudget!=null) this.computeBudget = action.computeBudget;
         if(this.computeBudget!=null && action.computeBudget!=null) this.computeBudget += action.computeBudget;
         this.instructions.splice(index, 0, ...action.instructions);
@@ -69,7 +73,7 @@ export class SolanaAction {
 
     public async tx(feeRate?: string, block?: {blockhash: string, blockHeight: number}): Promise<SolanaTx> {
         const tx = new Transaction();
-        tx.feePayer = this.root.provider.publicKey;
+        tx.feePayer = this.mainSigner;
 
         if(feeRate==null) feeRate = this.feeRate;
         if(feeRate==null) feeRate = await this.estimateFee();

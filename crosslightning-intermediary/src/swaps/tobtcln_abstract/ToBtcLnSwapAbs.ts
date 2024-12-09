@@ -1,5 +1,5 @@
 import * as BN from "bn.js";
-import * as bolt11 from "bolt11";
+import * as bolt11 from "@atomiqlabs/bolt11";
 import {SwapData} from "crosslightning-base";
 import {SwapHandlerType} from "../..";
 import {deserializeBN, serializeBN} from "../../utils/Utils";
@@ -15,31 +15,39 @@ export enum ToBtcLnSwapState {
     CLAIMED = 3
 }
 
-export class ToBtcLnSwapAbs<T extends SwapData> extends ToBtcBaseSwap<T, ToBtcLnSwapState> {
+export class ToBtcLnSwapAbs<T extends SwapData = SwapData> extends ToBtcBaseSwap<T, ToBtcLnSwapState> {
 
     readonly pr: string;
     readonly signatureExpiry: BN;
 
     secret: string;
 
-    constructor(pr: string, swapFee: BN, swapFeeInToken: BN, quotedNetworkFee: BN, quotedNetworkFeeInToken: BN, signatureExpiry: BN);
+    constructor(
+        chainIdentifier: string,
+        pr: string,
+        swapFee: BN,
+        swapFeeInToken: BN,
+        quotedNetworkFee: BN,
+        quotedNetworkFeeInToken: BN,
+        signatureExpiry: BN
+    );
     constructor(obj: any);
 
-    constructor(prOrObj: string | any, swapFee?: BN, swapFeeInToken?: BN, quotedNetworkFee?: BN, quotedNetworkFeeInToken?: BN, signatureExpiry?: BN) {
-        if(typeof(prOrObj)==="string") {
-            super(swapFee, swapFeeInToken, quotedNetworkFee, quotedNetworkFeeInToken);
+    constructor(chainIdOrObj: string | any, pr?: string, swapFee?: BN, swapFeeInToken?: BN, quotedNetworkFee?: BN, quotedNetworkFeeInToken?: BN, signatureExpiry?: BN) {
+        if(typeof(chainIdOrObj)==="string") {
+            super(chainIdOrObj, swapFee, swapFeeInToken, quotedNetworkFee, quotedNetworkFeeInToken);
             this.state = ToBtcLnSwapState.SAVED;
-            this.pr = prOrObj;
+            this.pr = pr;
             this.signatureExpiry = signatureExpiry;
         } else {
-            super(prOrObj);
-            this.pr = prOrObj.pr;
-            this.signatureExpiry = deserializeBN(prOrObj.signatureExpiry);
-            this.secret = prOrObj.secret;
+            super(chainIdOrObj);
+            this.pr = chainIdOrObj.pr;
+            this.signatureExpiry = deserializeBN(chainIdOrObj.signatureExpiry);
+            this.secret = chainIdOrObj.secret;
 
             //Compatibility with older versions
-            this.quotedNetworkFee ??= deserializeBN(prOrObj.maxFee);
-            this.realNetworkFee ??= deserializeBN(prOrObj.realRoutingFee);
+            this.quotedNetworkFee ??= deserializeBN(chainIdOrObj.maxFee);
+            this.realNetworkFee ??= deserializeBN(chainIdOrObj.realRoutingFee);
         }
         this.type = SwapHandlerType.TO_BTCLN;
     }

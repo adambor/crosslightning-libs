@@ -3,6 +3,7 @@ import * as createHash from "create-hash";
 import {sign} from "tweetnacl";
 import {PublicKey} from "@solana/web3.js";
 import {Buffer} from "buffer";
+import {SolanaSigner} from "../../wallet/SolanaSigner";
 
 export class SolanaSignatures extends SolanaModule {
 
@@ -12,12 +13,13 @@ export class SolanaSignatures extends SolanaModule {
      * Produces an ed25519 signature over the sha256 of a specified data Buffer, only works with providers which
      *  expose their private key (i.e. backend based, not browser wallet based)
      *
+     * @param signer
      * @param data data to sign
      */
-    getDataSignature(data: Buffer): Promise<string> {
-        if(this.provider.signer==null) throw new Error("Unsupported");
+    getDataSignature(signer: SolanaSigner, data: Buffer): Promise<string> {
+        if(signer.keypair==null) throw new Error("Unsupported");
         const buff = createHash("sha256").update(data).digest();
-        const signature = sign.detached(buff, this.provider.signer.secretKey);
+        const signature = sign.detached(buff, signer.keypair.secretKey);
 
         return Promise.resolve(Buffer.from(signature).toString("hex"));
     }

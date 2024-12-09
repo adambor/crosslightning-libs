@@ -1,13 +1,13 @@
-import {Express} from "express";
+import {Express, Request, Response} from "express";
 import {ISwapPrice} from "./ISwapPrice";
 import {
-    ChainEvents,
+    AbstractSigner,
+    ChainType,
     ClaimEvent,
     InitializeEvent, RefundEvent,
     SwapContract,
     SwapData,
-    SwapEvent,
-    TokenAddress
+    SwapEvent
 } from "crosslightning-base";
 import {AuthenticatedLnd} from "lightning";
 import {SwapHandlerSwap} from "./SwapHandlerSwap";
@@ -20,6 +20,7 @@ import {
     isQuoteAmountTooLow,
     isQuoteThrow,
 } from "../plugins/IPlugin";
+import {IParamReader} from "../utils/paramcoders/IParamReader";
 
 export enum SwapHandlerType {
     TO_BTC = "TO_BTC",
@@ -34,6 +35,7 @@ export type SwapHandlerInfoType = {
     min: number,
     max: number,
     tokens: string[],
+    chainTokens: {[chainId: string]: string[]};
     data?: any,
 };
 
@@ -49,19 +51,40 @@ export type SwapBaseConfig = {
     swapCheckInterval: number
 };
 
+export type MultichainData = {
+    chains: {
+        [identifier: string]: ChainData
+    },
+    default: string
+};
+
+export type ChainData<T extends ChainType = ChainType> = {
+    signer: T["Signer"],
+    swapContract: T["Contract"],
+    chainEvents: T["Events"],
+    allowedTokens: string[],
+    btcRelay?: T["BtcRelay"]
+}
+
+export type RequestData<T> = {
+    chainIdentifier: string,
+    raw: Request & {paramReader: IParamReader},
+    parsed: T,
+    metadata: any
+};
+
 /**
  * An abstract class defining a singular swap service
  */
-export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends SwapData, S = any> {
+export abstract class SwapHandler<V extends SwapHandlerSwap<SwapData, S> = SwapHandlerSwap, S = any> {
 
     abstract readonly type: SwapHandlerType;
 
     readonly storageManager: IIntermediaryStorage<V>;
     readonly path: string;
 
-    readonly swapContract: SwapContract<T, any, any, any>;
-    readonly chainEvents: ChainEvents<T>;
-    readonly allowedTokens: Set<string>;
+    readonly chains: MultichainData;
+    readonly allowedTokens: {[chainId: string]: Set<string>};
     readonly swapPricing: ISwapPrice;
     readonly LND: AuthenticatedLnd;
 
@@ -75,20 +98,42 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
     };
 
     protected swapLogger = {
-        debug: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg: string, ...args: any) => this.logger.debug(this.getIdentifier(swap)+": "+msg, ...args),
-        info: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg: string, ...args: any) => this.logger.info(this.getIdentifier(swap)+": "+msg, ...args),
-        warn: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg: string, ...args: any) => this.logger.warn(this.getIdentifier(swap)+": "+msg, ...args),
-        error: (swap: SwapHandlerSwap<T> | SwapEvent<T> | T, msg: string, ...args: any) => this.logger.error(this.getIdentifier(swap)+": "+msg, ...args)
+        debug: (swap: SwapHandlerSwap | SwapEvent<SwapData> | SwapData, msg: string, ...args: any) => this.logger.debug(this.getIdentifier(swap)+": "+msg, ...args),
+        info: (swap: SwapHandlerSwap | SwapEvent<SwapData> | SwapData, msg: string, ...args: any) => this.logger.info(this.getIdentifier(swap)+": "+msg, ...args),
+        warn: (swap: SwapHandlerSwap | SwapEvent<SwapData> | SwapData, msg: string, ...args: any) => this.logger.warn(this.getIdentifier(swap)+": "+msg, ...args),
+        error: (swap: SwapHandlerSwap | SwapEvent<SwapData> | SwapData, msg: string, ...args: any) => this.logger.error(this.getIdentifier(swap)+": "+msg, ...args)
     };
 
-    protected constructor(storageDirectory: IIntermediaryStorage<V>, path: string, swapContract: SwapContract<T, any, any, any>, chainEvents: ChainEvents<T>, allowedTokens: TokenAddress[], lnd: AuthenticatedLnd, swapPricing: ISwapPrice) {
+    protected constructor(
+        storageDirectory: IIntermediaryStorage<V>,
+        path: string,
+        chainsData: MultichainData,
+        lnd: AuthenticatedLnd,
+        swapPricing: ISwapPrice
+    ) {
         this.storageManager = storageDirectory;
-        this.swapContract = swapContract;
-        this.chainEvents = chainEvents;
+        this.chains = chainsData;
+        if(this.chains.chains[this.chains.default]==null) throw new Error("Invalid default chain specified");
         this.path = path;
-        this.allowedTokens = new Set<string>(allowedTokens.map(e => e.toString()));
         this.LND = lnd;
         this.swapPricing = swapPricing;
+        this.allowedTokens = {};
+        for(let chainId in chainsData.chains) {
+            this.allowedTokens[chainId] = new Set<string>(chainsData.chains[chainId].allowedTokens.map(e => e.toString()));
+        }
+    }
+
+    protected getDefaultChain(): ChainData {
+        return this.chains.chains[this.chains.default];
+    }
+
+    protected getChain(identifier: string): ChainData {
+        if(this.chains.chains[identifier]==null)
+            throw {
+                code: 20200,
+                msg: "Invalid chain specified!"
+            };
+        return this.chains.chains[identifier];
     }
 
     protected abstract processPastSwaps(): Promise<void>;
@@ -105,26 +150,27 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
         await rerun();
     }
 
-    protected abstract processInitializeEvent(event: InitializeEvent<T>): Promise<void>;
-    protected abstract processClaimEvent(event: ClaimEvent<T>): Promise<void>;
-    protected abstract processRefundEvent(event: RefundEvent<T>): Promise<void>;
+    protected abstract processInitializeEvent(chainIdentifier: string, event: InitializeEvent<SwapData>): Promise<void>;
+    protected abstract processClaimEvent(chainIdentifier: string, event: ClaimEvent<SwapData>): Promise<void>;
+    protected abstract processRefundEvent(chainIdentifier: string, event: RefundEvent<SwapData>): Promise<void>;
 
     /**
      * Chain event processor
      *
+     * @param chainIdentifier
      * @param eventData
      */
-    protected async processEvent(eventData: SwapEvent<T>[]): Promise<boolean> {
+    protected async processEvent(chainIdentifier: string, eventData: SwapEvent<SwapData>[]): Promise<boolean> {
         for(let event of eventData) {
             if(event instanceof InitializeEvent) {
                 // this.swapLogger.debug(event, "SC: InitializeEvent: swap type: "+event.swapType);
-                await this.processInitializeEvent(event);
+                await this.processInitializeEvent(chainIdentifier, event);
             } else if(event instanceof ClaimEvent) {
                 // this.swapLogger.debug(event, "SC: ClaimEvent: swap secret: "+event.secret);
-                await this.processClaimEvent(event);
+                await this.processClaimEvent(chainIdentifier, event);
             } else if(event instanceof RefundEvent) {
                 // this.swapLogger.debug(event, "SC: RefundEvent");
-                await this.processRefundEvent(event);
+                await this.processRefundEvent(chainIdentifier, event);
             }
         }
 
@@ -135,7 +181,9 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
      * Initializes chain events subscription
      */
     protected subscribeToEvents() {
-        this.chainEvents.registerListener(this.processEvent.bind(this));
+        for(let key in this.chains.chains) {
+            this.chains.chains[key].chainEvents.registerListener((events: SwapEvent<SwapData>[]) => this.processEvent(key, events));
+        }
         this.logger.info("SC: Events: subscribed to smartchain events");
     }
 
@@ -152,9 +200,9 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
     abstract startRestServer(restServer: Express): void;
 
     /**
-     * Returns swap handler info
+     * Returns data to be returned in swap handler info
      */
-    abstract getInfo(): SwapHandlerInfoType;
+    abstract getInfoData(): any;
 
     /**
      * Remove swap data
@@ -181,7 +229,7 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
             swap = hashOrSwap;
             if(sequenceOrUltimateState!=null && !BN.isBN(sequenceOrUltimateState)) await swap.setState(sequenceOrUltimateState);
         }
-        if(swap!=null) await PluginManager.swapRemove<T>(swap);
+        if(swap!=null) await PluginManager.swapRemove(swap);
         this.swapLogger.debug(swap, "removeSwapData(): removing swap final state: "+swap.state);
         await this.storageManager.removeData(swap.getHash(), swap.getSequence());
     }
@@ -262,11 +310,13 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
     /**
      * Starts a pre-fetch for signature data
      *
+     * @param chainIdentifier
      * @param abortController
      * @param responseStream
      */
-    protected getSignDataPrefetch(abortController: AbortController, responseStream?: ServerParamEncoder): Promise<any> {
-        let signDataPrefetchPromise: Promise<any> = this.swapContract.preFetchBlockDataForSignatures!=null ? this.swapContract.preFetchBlockDataForSignatures().catch(e => {
+    protected getSignDataPrefetch(chainIdentifier: string, abortController: AbortController, responseStream?: ServerParamEncoder): Promise<any> {
+        const {swapContract} = this.getChain(chainIdentifier);
+        let signDataPrefetchPromise: Promise<any> = swapContract.preFetchBlockDataForSignatures!=null ? swapContract.preFetchBlockDataForSignatures().catch(e => {
             this.logger.error("getSignDataPrefetch(): signDataPrefetch: ", e);
             abortController.abort(e);
             return null;
@@ -285,17 +335,17 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
         return signDataPrefetchPromise;
     }
 
-    protected getIdentifierFromEvent(event: SwapEvent<T>): string {
+    protected getIdentifierFromEvent(event: SwapEvent<SwapData>): string {
         if(event.sequence.isZero()) return event.paymentHash;
         return event.paymentHash+"_"+event.sequence.toString(16);
     }
 
-    protected getIdentifierFromSwapData(swapData: T): string {
+    protected getIdentifierFromSwapData(swapData: SwapData): string {
         if(swapData.getSequence().isZero()) return swapData.getHash();
         return swapData.getHash()+"_"+swapData.getSequence().toString(16);
     }
 
-    protected getIdentifier(swap: SwapHandlerSwap<T> | SwapEvent<T> | T) {
+    protected getIdentifier(swap: SwapHandlerSwap | SwapEvent<SwapData> | SwapData) {
         if(swap instanceof SwapHandlerSwap) {
             return swap.getIdentifier();
         }
@@ -318,6 +368,35 @@ export abstract class SwapHandler<V extends SwapHandlerSwap<T, S>, T extends Swa
                 msg: "Invalid sequence"
             };
         }
+    }
+
+    /**
+     * Checks whether a given token is supported on a specified chain
+     *
+     * @param chainId
+     * @param token
+     * @protected
+     */
+    protected isTokenSupported(chainId: string, token: string): boolean {
+        const chainTokens = this.allowedTokens[chainId];
+        if(chainTokens==null) return false;
+        return chainTokens.has(token);
+    }
+
+    getInfo(): SwapHandlerInfoType {
+        const chainTokens: {[chainId: string]: string[]} = {};
+        for(let chainId in this.allowedTokens) {
+            chainTokens[chainId] = Array.from<string>(this.allowedTokens[chainId]);
+        }
+        return {
+            swapFeePPM: this.config.feePPM.toNumber(),
+            swapBaseFee: this.config.baseFee.toNumber(),
+            min: this.config.min.toNumber(),
+            max: this.config.max.toNumber(),
+            data: this.getInfoData(),
+            tokens: Array.from<string>(this.allowedTokens[this.chains.default]),
+            chainTokens
+        };
     }
 
 }

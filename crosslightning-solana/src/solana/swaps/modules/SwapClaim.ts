@@ -10,6 +10,7 @@ import {tryWithRetries} from "../../../utils/Utils";
 import {SolanaBtcRelay} from "../../btcrelay/SolanaBtcRelay";
 import {SolanaSwapProgram} from "../SolanaSwapProgram";
 import * as BN from "bn.js";
+import {SolanaSigner} from "../../wallet/SolanaSigner";
 
 export class SwapClaim extends SolanaSwapModule {
 
@@ -25,29 +26,32 @@ export class SwapClaim extends SolanaSwapModule {
     /**
      * Claim action which uses the provided hex encoded secret for claiming the swap
      *
+     * @param signer
      * @param swapData
      * @param secret
      * @constructor
      * @private
      */
-    private Claim(swapData: SolanaSwapData, secret: string): Promise<SolanaAction>;
+    private Claim(signer: PublicKey, swapData: SolanaSwapData, secret: string): Promise<SolanaAction>;
     /**
      * Claim action which uses data in the provided data ccount with dataKey to claim the swap
      *
+     * @param signer
      * @param swapData
      * @param dataKey
      * @constructor
      * @private
      */
-    private Claim(swapData: SolanaSwapData, dataKey: PublicKey): Promise<SolanaAction>;
+    private Claim(signer: PublicKey, swapData: SolanaSwapData, dataKey: PublicKey): Promise<SolanaAction>;
     private async Claim(
+        signer: PublicKey,
         swapData: SolanaSwapData,
         secretOrDataKey: string | PublicKey
     ): Promise<SolanaAction> {
         const isDataKey = typeof(secretOrDataKey)!=="string";
 
         const accounts = {
-            signer: this.provider.publicKey,
+            signer,
             initializer: swapData.isPayIn() ? swapData.offerer : swapData.claimer,
             escrowState: this.root.SwapEscrowState(Buffer.from(swapData.paymentHash, "hex")),
             ixSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
@@ -58,7 +62,7 @@ export class SwapClaim extends SolanaSwapModule {
             Buffer.from(secretOrDataKey, "hex");
 
         if(swapData.isPayOut()) {
-            return new SolanaAction(this.root,
+            return new SolanaAction(signer, this.root,
                 await this.program.methods
                     .claimerClaimPayOut(secretBuffer)
                     .accounts({
@@ -72,7 +76,7 @@ export class SwapClaim extends SolanaSwapModule {
                 this.getComputeBudget(swapData)
             );
         } else {
-            return new SolanaAction(this.root,
+            return new SolanaAction(signer, this.root,
                 await this.program.methods
                     .claimerClaim(secretBuffer)
                     .accounts({
@@ -90,6 +94,7 @@ export class SwapClaim extends SolanaSwapModule {
      *  instruction to the 0th index in the transaction, also intentionally sets compute budget to null such that no
      *  compute budget instruction is added, since that takes up too much space and txs are limited to 1232 bytes
      *
+     * @param signer
      * @param swapData
      * @param storeDataKey
      * @param merkleProof
@@ -98,19 +103,21 @@ export class SwapClaim extends SolanaSwapModule {
      * @private
      */
     private async VerifyAndClaim(
+        signer: PublicKey,
         swapData: SolanaSwapData,
         storeDataKey: PublicKey,
         merkleProof: {reversedTxId: Buffer, pos: number, merkle: Buffer[]},
         commitedHeader: SolanaBtcStoredHeader
     ): Promise<SolanaAction> {
         const action = await this.btcRelay.Verify(
+            signer,
             merkleProof.reversedTxId,
             swapData.confirmations,
             merkleProof.pos,
             merkleProof.merkle,
             commitedHeader
         );
-        action.addAction(await this.Claim(swapData, storeDataKey));
+        action.addAction(await this.Claim(signer, swapData, storeDataKey));
         action.computeBudget = null;
         return action;
     }
@@ -140,6 +147,7 @@ export class SwapClaim extends SolanaSwapModule {
      * If synchronizer is passed & blockhash is not found, it produces transactions to sync up the btc relay to the
      *  current chain tip & adds them to the txs array
      *
+     * @param signer
      * @param txBlockheight transaction blockheight
      * @param requiredConfirmations required confirmation for the swap to be claimable with that TX
      * @param blockhash blockhash of the block which includes the transaction
@@ -150,6 +158,7 @@ export class SwapClaim extends SolanaSwapModule {
      * @private
      */
     private async getCommitedHeaderAndSynchronize(
+        signer: PublicKey,
         txBlockheight: number,
         requiredConfirmations: number,
         blockhash: string,
@@ -171,7 +180,7 @@ export class SwapClaim extends SolanaSwapModule {
         if(synchronizer==null) return null;
 
         //TODO: We don't have to synchronize to tip, only to our required blockheight
-        const resp = await synchronizer.syncToLatestTxs();
+        const resp = await synchronizer.syncToLatestTxs(signer.toString());
         this.logger.debug("getCommitedHeaderAndSynchronize(): BTC Relay not synchronized to required blockheight, "+
             "synchronizing ourselves in "+resp.txs.length+" txs");
         this.logger.debug("getCommitedHeaderAndSynchronize(): BTC Relay computed header map: ",resp.computedHeaderMap);
@@ -184,6 +193,7 @@ export class SwapClaim extends SolanaSwapModule {
     /**
      * Adds the transactions required for initialization and writing of transaction data to the data account
      *
+     * @param signer
      * @param tx transaction to be written
      * @param vout vout of the transaction to use to satisfy swap conditions
      * @param feeRate fee rate for the transactions
@@ -192,6 +202,7 @@ export class SwapClaim extends SolanaSwapModule {
      * @returns {Promise<PublicKey>} publicKey/address of the data account
      */
     private addTxsWriteTransactionData(
+        signer: PublicKey | SolanaSigner,
         tx: {hex: string, txid: string},
         vout: number,
         feeRate: string,
@@ -204,24 +215,26 @@ export class SwapClaim extends SolanaSwapModule {
         ]);
         this.logger.debug("addTxsWriteTransactionData(): writing transaction data: ", writeData.toString("hex"));
 
-        return this.root.DataAccount.addTxsWriteData(reversedTxId, writeData, txs, feeRate);
+        return this.root.DataAccount.addTxsWriteData(signer, reversedTxId, writeData, txs, feeRate);
     }
 
     /**
      * Checks whether we should unwrap the WSOL to SOL when claiming the swap
      *
+     * @param signer
      * @param swapData
      * @private
      */
-    private shouldUnwrap(swapData: SolanaSwapData): boolean {
+    private shouldUnwrap(signer: PublicKey, swapData: SolanaSwapData): boolean {
         return swapData.isPayOut() &&
             swapData.token.equals(this.root.Tokens.WSOL_ADDRESS) &&
-            swapData.claimer.equals(this.provider.publicKey);
+            swapData.claimer.equals(signer);
     }
 
     /**
      * Creates transactions claiming the swap using a secret (for HTLC swaps)
      *
+     * @param signer
      * @param swapData swap to claim
      * @param secret hex encoded secret pre-image to the HTLC hash
      * @param checkExpiry whether to check if the swap is already expired (trying to claim an expired swap with a secret
@@ -230,27 +243,35 @@ export class SwapClaim extends SolanaSwapModule {
      * @param feeRate fee rate to use for the transaction
      * @param skipAtaCheck whether to check if ATA exists
      */
-    async txsClaimWithSecret(swapData: SolanaSwapData, secret: string, checkExpiry?: boolean, initAta?: boolean, feeRate?: string, skipAtaCheck?: boolean): Promise<SolanaTx[]> {
+    async txsClaimWithSecret(
+        signer: PublicKey,
+        swapData: SolanaSwapData,
+        secret: string,
+        checkExpiry?: boolean,
+        initAta?: boolean,
+        feeRate?: string,
+        skipAtaCheck?: boolean
+    ): Promise<SolanaTx[]> {
         //We need to be sure that this transaction confirms in time, otherwise we reveal the secret to the counterparty
         // and won't claim the funds
-        if(checkExpiry && this.root.isExpired(swapData)) {
+        if(checkExpiry && this.root.isExpired(swapData.claimer.toString(), swapData)) {
             throw new SwapDataVerificationError("Not enough time to reliably pay the invoice");
         }
         const shouldInitAta = !skipAtaCheck && swapData.isPayOut() && !await this.root.Tokens.ataExists(swapData.claimerAta);
         if(shouldInitAta && !initAta) throw new SwapDataVerificationError("ATA not initialized");
 
-        if(feeRate==null) feeRate = await this.root.getClaimFeeRate(swapData);
+        if(feeRate==null) feeRate = await this.getClaimFeeRate(signer, swapData);
 
-        const action = new SolanaAction(this.root);
+        const action = new SolanaAction(signer, this.root);
 
-        const shouldUnwrap = this.shouldUnwrap(swapData);
+        const shouldUnwrap = this.shouldUnwrap(signer, swapData);
         if(shouldInitAta) {
-            const initAction = this.root.Tokens.InitAta(swapData.claimer, swapData.token, swapData.claimerAta);
+            const initAction = this.root.Tokens.InitAta(signer, swapData.claimer, swapData.token, swapData.claimerAta);
             if(initAction==null) throw new SwapDataVerificationError("Invalid claimer token account address");
             action.add(initAction);
         }
-        action.add(await this.Claim(swapData, secret));
-        if(shouldUnwrap) action.add(this.root.Tokens.Unwrap(this.provider.publicKey));
+        action.add(await this.Claim(signer, swapData, secret));
+        if(shouldUnwrap) action.add(this.root.Tokens.Unwrap(signer));
 
         this.logger.debug("txsClaimWithSecret(): creating claim transaction, swap: "+swapData.getHash()+
             " initializingAta: "+shouldInitAta+" unwrapping: "+shouldUnwrap);
@@ -261,6 +282,7 @@ export class SwapClaim extends SolanaSwapModule {
     /**
      * Creates transaction claiming the swap using a confirmed transaction data (for BTC on-chain swaps)
      *
+     * @param signer
      * @param swapData swap to claim
      * @param blockheight blockheight of the bitcoin transaction
      * @param tx bitcoin transaction that satisfies the swap condition
@@ -272,6 +294,7 @@ export class SwapClaim extends SolanaSwapModule {
      * @param feeRate fee rate to be used for the transactions
      */
     async txsClaimWithTxData(
+        signer: PublicKey | SolanaSigner,
         swapData: SolanaSwapData,
         blockheight: number,
         tx: { blockhash: string, confirmations: number, txid: string, hex: string },
@@ -285,29 +308,31 @@ export class SwapClaim extends SolanaSwapModule {
         const shouldInitAta = swapData.isPayOut() && !await this.root.Tokens.ataExists(swapData.claimerAta);
         if(shouldInitAta && !initAta) throw new SwapDataVerificationError("ATA not initialized");
 
-        if(feeRate==null) feeRate = await this.root.getClaimFeeRate(swapData);
+        const signerKey = signer instanceof SolanaSigner ? signer.getPublicKey() : signer;
+
+        if(feeRate==null) feeRate = await this.getClaimFeeRate(signerKey, swapData);
 
         const merkleProof = await this.btcRelay.bitcoinRpc.getMerkleProof(tx.txid, tx.blockhash);
         this.logger.debug("txsClaimWithTxData(): merkle proof computed: ", merkleProof);
 
         const txs: SolanaTx[] = [];
         if(commitedHeader==null) commitedHeader = await this.getCommitedHeaderAndSynchronize(
-            blockheight, swapData.getConfirmations(),
+            signerKey, blockheight, swapData.getConfirmations(),
             tx.blockhash, txs, synchronizer
         );
 
-        const storeDataKey = await this.addTxsWriteTransactionData(tx, vout, feeRate, txs);
+        const storeDataKey = await this.addTxsWriteTransactionData(signer, tx, vout, feeRate, txs);
         if(storageAccHolder!=null) storageAccHolder.storageAcc = storeDataKey;
 
-        const shouldUnwrap = this.shouldUnwrap(swapData);
+        const shouldUnwrap = this.shouldUnwrap(signerKey, swapData);
         if(shouldInitAta) {
-            const initAction = this.root.Tokens.InitAta(swapData.claimer, swapData.token, swapData.claimerAta);
+            const initAction = this.root.Tokens.InitAta(signerKey, swapData.claimer, swapData.token, swapData.claimerAta);
             if(initAction==null) throw new SwapDataVerificationError("Invalid claimer token account address");
             await initAction.addToTxs(txs, feeRate);
         }
-        const claimAction = await this.VerifyAndClaim(swapData, storeDataKey, merkleProof, commitedHeader);
+        const claimAction = await this.VerifyAndClaim(signerKey, swapData, storeDataKey, merkleProof, commitedHeader);
         await claimAction.addToTxs(txs, feeRate);
-        if(shouldUnwrap) await this.root.Tokens.Unwrap(this.provider.publicKey).addToTxs(txs, feeRate);
+        if(shouldUnwrap) await this.root.Tokens.Unwrap(signerKey).addToTxs(txs, feeRate);
 
         this.logger.debug("txsClaimWithTxData(): creating claim transaction, swap: "+swapData.getHash()+
             " initializingAta: "+shouldInitAta+" unwrapping: "+shouldUnwrap+" num txns: "+txs.length);
@@ -315,8 +340,8 @@ export class SwapClaim extends SolanaSwapModule {
         return txs;
     }
 
-    public getClaimFeeRate(swapData: SolanaSwapData): Promise<string> {
-        const accounts: PublicKey[] = [this.provider.publicKey];
+    public getClaimFeeRate(signer: PublicKey, swapData: SolanaSwapData): Promise<string> {
+        const accounts: PublicKey[] = [signer];
         if(swapData.payOut) {
             if(swapData.token!=null) accounts.push(this.root.SwapVault(swapData.token));
             if(swapData.payIn) {
@@ -344,10 +369,10 @@ export class SwapClaim extends SolanaSwapModule {
      * Get the estimated solana transaction fee of the claim transaction, this fee might be negative since it
      *  includes the rebate for closing the swap PDA
      */
-    public async getClaimFee(swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
+    public async getClaimFee(signer: PublicKey, swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
         if(swapData==null) return new BN(-this.root.ESCROW_STATE_RENT_EXEMPT+5000);
 
-        feeRate = feeRate || await this.getClaimFeeRate(swapData);
+        feeRate = feeRate || await this.getClaimFeeRate(signer, swapData);
 
         return new BN(-this.root.ESCROW_STATE_RENT_EXEMPT+5000).add(
             this.root.Fees.getPriorityFee(this.getComputeBudget(swapData), feeRate)
@@ -358,10 +383,10 @@ export class SwapClaim extends SolanaSwapModule {
      * Get the estimated solana transaction fee of the claim transaction in the worst case scenario in case where the
      *  ATA needs to be initialized again (i.e. adding the ATA rent exempt lamports to the fee)
      */
-    public async getRawClaimFee(swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
+    public async getRawClaimFee(signer: PublicKey, swapData: SolanaSwapData, feeRate?: string): Promise<BN> {
         if(swapData==null) return new BN(5000);
 
-        feeRate = feeRate || await this.getClaimFeeRate(swapData);
+        feeRate = feeRate || await this.getClaimFeeRate(signer, swapData);
 
         //Include rent exempt in claim fee, to take into consideration worst case cost when user destroys ATA
         return new BN(this.root.Tokens.SPL_ATA_RENT_EXEMPT+5000).add(

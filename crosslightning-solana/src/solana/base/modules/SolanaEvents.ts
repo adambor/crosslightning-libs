@@ -17,11 +17,11 @@ export class SolanaEvents extends SolanaModule {
      */
     private getSignatures(topicKey: PublicKey, logFetchLimit: number, lastProcessedSignature?: string): Promise<ConfirmedSignatureInfo[]> {
         if(lastProcessedSignature==null) {
-            return this.provider.connection.getSignaturesForAddress(topicKey, {
+            return this.connection.getSignaturesForAddress(topicKey, {
                 limit: logFetchLimit,
             }, "confirmed");
         } else {
-            return this.provider.connection.getSignaturesForAddress(topicKey, {
+            return this.connection.getSignaturesForAddress(topicKey, {
                 before: lastProcessedSignature,
                 limit: logFetchLimit
             }, "confirmed");

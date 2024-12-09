@@ -1,5 +1,6 @@
 import {AnchorProvider} from "@coral-xyz/anchor";
 import {
+    Connection,
     PublicKey,
     Signer,
     SystemProgram,
@@ -16,6 +17,8 @@ import {SolanaAction} from "../base/SolanaAction";
 import {Buffer} from "buffer";
 import {SolanaFees} from "../base/modules/SolanaFees";
 import {SolanaTx} from "../base/modules/SolanaTransactions";
+import {SolanaSigner} from "../wallet/SolanaSigner";
+import {sign} from "tweetnacl";
 
 const BASE_FEE_SOL_PER_BLOCKHEADER = new BN(5000);
 
@@ -33,20 +36,21 @@ function serializeBlockHeader(e: BtcBlock): SolanaBtcHeader {
     });
 };
 
-export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> implements BtcRelay<SolanaBtcStoredHeader, {tx: Transaction, signers: Signer[]}, B> {
+export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> implements BtcRelay<SolanaBtcStoredHeader, {tx: Transaction, signers: Signer[]}, B, SolanaSigner> {
 
     /**
      * Creates initialization action for initializing the btc relay
      *
+     * @param signer
      * @param header
      * @param epochStart
      * @param pastBlocksTimestamps
      * @constructor
      * @private
      */
-    private async Initialize(header: B, epochStart: number, pastBlocksTimestamps: number[]): Promise<SolanaAction> {
+    private async Initialize(signer: PublicKey, header: B, epochStart: number, pastBlocksTimestamps: number[]): Promise<SolanaAction> {
         const serializedBlock = serializeBlockHeader(header);
-        return new SolanaAction(this,
+        return new SolanaAction(signer, this,
             await this.program.methods
                 .initialize(
                     serializedBlock,
@@ -56,7 +60,7 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
                     pastBlocksTimestamps
                 )
                 .accounts({
-                    signer: this.provider.publicKey,
+                    signer,
                     mainState: this.BtcRelayMainState,
                     headerTopic: this.BtcRelayHeader(serializedBlock.hash),
                     systemProgram: SystemProgram.programId
@@ -70,6 +74,7 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
      *  such that the verify instruction will always be the 0th in the transaction, this is required because
      *  swap program expects the verify instruction to be at the 0th position
      *
+     * @param signer
      * @param reversedTxId
      * @param confirmations
      * @param position
@@ -77,13 +82,14 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
      * @param committedHeader
      */
     public async Verify(
+        signer: PublicKey,
         reversedTxId: Buffer,
         confirmations: number,
         position: number,
         reversedMerkleProof: Buffer[],
         committedHeader: SolanaBtcStoredHeader
     ): Promise<SolanaAction> {
-        return new SolanaAction(this,
+        return new SolanaAction(signer, this,
             await this.program.methods
                 .verifyTransaction(
                     reversedTxId,
@@ -93,7 +99,7 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
                     committedHeader
                 )
                 .accounts({
-                    signer: this.provider.publicKey,
+                    signer,
                     mainState: this.BtcRelayMainState
                 })
                 .instruction(),
@@ -104,15 +110,15 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
         );
     }
 
-    public async CloseForkAccount(forkId: number): Promise<SolanaAction> {
-        return new SolanaAction(this,
+    public async CloseForkAccount(signer: PublicKey, forkId: number): Promise<SolanaAction> {
+        return new SolanaAction(signer, this,
             await this.program.methods
                 .closeForkAccount(
                     new BN(forkId)
                 )
                 .accounts({
-                    signer: this.provider.publicKey,
-                    forkState: this.BtcRelayFork(forkId, this.provider.publicKey),
+                    signer,
+                    forkState: this.BtcRelayFork(forkId, signer),
                     systemProgram: SystemProgram.programId,
                 })
                 .instruction(),
@@ -133,12 +139,12 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
     readonly maxShortForkHeadersPerTx: number = 4;
 
     constructor(
-        provider: AnchorProvider,
+        connection: Connection,
         bitcoinRpc: BitcoinRpc<B>,
         programAddress?: string,
-        solanaFeeEstimator: SolanaFees = new SolanaFees(provider.connection)
+        solanaFeeEstimator: SolanaFees = new SolanaFees(connection)
     ) {
-        super(provider, programIdl, programAddress, null, solanaFeeEstimator);
+        super(connection, programIdl, programAddress, null, solanaFeeEstimator);
         this.bitcoinRpc = bitcoinRpc;
     }
 
@@ -175,6 +181,7 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
     /**
      * A common logic for submitting blockheaders in a transaction
      *
+     * @param signer
      * @param headers headers to sync to the btc relay
      * @param storedHeader current latest stored block header for a given fork
      * @param tipWork work of the current tip in a given fork
@@ -184,6 +191,7 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
      * @private
      */
     private async _saveHeaders(
+        signer: PublicKey,
         headers: BtcBlock[],
         storedHeader: SolanaBtcStoredHeader,
         tipWork: Buffer,
@@ -202,7 +210,7 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
                 }
             }))
             .transaction();
-        tx.feePayer = this.provider.publicKey;
+        tx.feePayer = signer;
 
         this.Fees.applyFeeRateBegin(tx, null, feeRate);
         this.Fees.applyFeeRateEnd(tx, null, feeRate);
@@ -338,12 +346,14 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
     /**
      * Saves initial block header when the btc relay is in uninitialized state
      *
+     * @param signer
      * @param header a bitcoin blockheader to submit
      * @param epochStart timestamp of the start of the epoch (block timestamp at blockheight-(blockheight%2016))
      * @param pastBlocksTimestamps timestamp of the past 10 blocks
      * @param feeRate fee rate to use for the transaction
      */
     async saveInitialHeader(
+        signer: string,
         header: B,
         epochStart: number,
         pastBlocksTimestamps: number[],
@@ -351,7 +361,7 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
     ): Promise<{ tx: Transaction; signers: Signer[]; }> {
         if(pastBlocksTimestamps.length!==10) throw new Error("Invalid prevBlocksTimestamps");
 
-        const action = await this.Initialize(header, epochStart, pastBlocksTimestamps);
+        const action = await this.Initialize(new PublicKey(signer), header, epochStart, pastBlocksTimestamps);
 
         this.logger.debug("saveInitialHeader(): saving initial header, blockhash: "+header.getHash()+
             " blockheight: "+header.getHeight()+" epochStart: "+epochStart+" past block timestamps: "+pastBlocksTimestamps.join());
@@ -362,20 +372,22 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
     /**
      * Saves blockheaders as a bitcoin main chain to the btc relay
      *
+     * @param signer
      * @param mainHeaders
      * @param storedHeader
      * @param feeRate
      */
-    public saveMainHeaders(mainHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, feeRate?: string) {
+    public saveMainHeaders(signer: string, mainHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, feeRate?: string) {
         this.logger.debug("saveMainHeaders(): submitting main blockheaders, count: "+mainHeaders.length);
-        return this._saveHeaders(mainHeaders, storedHeader, null, 0, feeRate,
+        const _signer = new PublicKey(signer);
+        return this._saveHeaders(_signer, mainHeaders, storedHeader, null, 0, feeRate,
             (blockHeaders) => this.program.methods
                 .submitBlockHeaders(
                     blockHeaders,
                     storedHeader
                 )
                 .accounts({
-                    signer: this.provider.publicKey,
+                    signer: _signer,
                     mainState: this.BtcRelayMainState,
                 })
         );
@@ -384,18 +396,21 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
     /**
      * Creates a new long fork and submits the headers to it
      *
+     * @param signer
      * @param forkHeaders
      * @param storedHeader
      * @param tipWork
      * @param feeRate
      */
-    public async saveNewForkHeaders(forkHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, tipWork: Buffer, feeRate?: string) {
+    public async saveNewForkHeaders(signer: string, forkHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, tipWork: Buffer, feeRate?: string) {
         const mainState: any = await this.program.account.mainState.fetch(this.BtcRelayMainState);
         let forkId: BN = mainState.forkCounter;
 
+        const _signer = new PublicKey(signer);
+
         this.logger.debug("saveNewForkHeaders(): submitting new fork & blockheaders," +
             " count: "+forkHeaders.length+" forkId: "+forkId.toString(10));
-        return await this._saveHeaders(forkHeaders, storedHeader, tipWork, forkId.toNumber(), feeRate,
+        return await this._saveHeaders(_signer, forkHeaders, storedHeader, tipWork, forkId.toNumber(), feeRate,
             (blockHeaders) => this.program.methods
                 .submitForkHeaders(
                     blockHeaders,
@@ -404,9 +419,9 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
                     true
                 )
                 .accounts({
-                    signer: this.provider.publicKey,
+                    signer: _signer,
                     mainState: this.BtcRelayMainState,
-                    forkState: this.BtcRelayFork(forkId.toNumber(), this.provider.publicKey),
+                    forkState: this.BtcRelayFork(forkId.toNumber(), _signer),
                     systemProgram: SystemProgram.programId,
                 })
         );
@@ -415,16 +430,20 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
     /**
      * Continues submitting blockheaders to a given fork
      *
+     * @param signer
      * @param forkHeaders
      * @param storedHeader
      * @param forkId
      * @param tipWork
      * @param feeRate
      */
-    public saveForkHeaders(forkHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, forkId: number, tipWork: Buffer, feeRate?: string) {
+    public saveForkHeaders(signer: string, forkHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, forkId: number, tipWork: Buffer, feeRate?: string) {
         this.logger.debug("saveForkHeaders(): submitting blockheaders to existing fork," +
             " count: "+forkHeaders.length+" forkId: "+forkId.toString(10));
-        return this._saveHeaders(forkHeaders, storedHeader, tipWork, forkId, feeRate,
+
+        const _signer = new PublicKey(signer);
+
+        return this._saveHeaders(_signer, forkHeaders, storedHeader, tipWork, forkId, feeRate,
             (blockHeaders) => this.program.methods
                 .submitForkHeaders(
                     blockHeaders,
@@ -433,9 +452,9 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
                     false
                 )
                 .accounts({
-                    signer: this.provider.publicKey,
+                    signer: _signer,
                     mainState: this.BtcRelayMainState,
-                    forkState: this.BtcRelayFork(forkId, this.provider.publicKey),
+                    forkState: this.BtcRelayFork(forkId, _signer),
                     systemProgram: SystemProgram.programId,
                 })
         )
@@ -444,22 +463,26 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
     /**
      * Submits short fork with given blockheaders
      *
+     * @param signer
      * @param forkHeaders
      * @param storedHeader
      * @param tipWork
      * @param feeRate
      */
-    public saveShortForkHeaders(forkHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, tipWork: Buffer, feeRate?: string) {
+    public saveShortForkHeaders(signer: string, forkHeaders: BtcBlock[], storedHeader: SolanaBtcStoredHeader, tipWork: Buffer, feeRate?: string) {
         this.logger.debug("saveShortForkHeaders(): submitting short fork blockheaders," +
             " count: "+forkHeaders.length);
-        return this._saveHeaders(forkHeaders, storedHeader, tipWork, -1, feeRate,
+
+        const _signer = new PublicKey(signer);
+
+        return this._saveHeaders(_signer, forkHeaders, storedHeader, tipWork, -1, feeRate,
             (blockHeaders) => this.program.methods
                 .submitShortForkHeaders(
                     blockHeaders,
                     storedHeader
                 )
                 .accounts({
-                    signer: this.provider.publicKey,
+                    signer: _signer,
                     mainState: this.BtcRelayMainState
                 })
         );
@@ -468,15 +491,16 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
     /**
      * Sweeps fork data PDAs back to self
      *
+     * @param signer
      * @param lastSweepId lastCheckedId returned from the previous sweepForkData() call
      * @returns {number} lastCheckedId that should be passed to the next call of sweepForkData()
      */
-    public async sweepForkData(lastSweepId?: number): Promise<number | null> {
+    public async sweepForkData(signer: SolanaSigner, lastSweepId?: number): Promise<number | null> {
         const mainState: any = await this.program.account.mainState.fetch(this.BtcRelayMainState);
         let forkId: number = mainState.forkCounter.toNumber();
 
         const txs: SolanaTx[] = [];
-        let action = new SolanaAction(this);
+        let action = new SolanaAction(signer.getPublicKey(), this);
 
         let lastCheckedId = lastSweepId;
         for(
@@ -485,16 +509,16 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
         ) {
             lastCheckedId = i;
 
-            const accountAddr = this.BtcRelayFork(i, this.provider.publicKey);
+            const accountAddr = this.BtcRelayFork(i, signer.getPublicKey());
             let forkState: any = await this.program.account.forkState.fetchNullable(accountAddr);
             if(forkState==null) continue;
 
             this.logger.info("sweepForkData(): sweeping forkId: "+i);
-            action.add(await this.CloseForkAccount(i));
+            action.add(await this.CloseForkAccount(signer.getPublicKey(), i));
 
             if(action.ixsLength()>=MAX_CLOSE_IX_PER_TX) {
                 await action.addToTxs(txs);
-                action = new SolanaAction(this);
+                action = new SolanaAction(signer.getPublicKey(), this);
             }
         }
 
@@ -503,7 +527,7 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
         }
 
         if(txs.length>0) {
-            const signatures = await this.Transactions.sendAndConfirm(txs, true);
+            const signatures = await this.Transactions.sendAndConfirm(signer, txs, true);
             this.logger.info("sweepForkData(): forks swept, signatures: "+signatures.join());
         }
 
@@ -537,16 +561,17 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
      * @param feeRate
      */
     public async getFeePerBlock(feeRate?: string): Promise<BN> {
-        feeRate = feeRate || await this.getMainFeeRate();
+        feeRate = feeRate || await this.getMainFeeRate(null);
         return BASE_FEE_SOL_PER_BLOCKHEADER.add(this.Fees.getPriorityFee(200000, feeRate, false));
     }
 
     /**
      * Gets fee rate required for submitting blockheaders to the main chain
      */
-    public getMainFeeRate(): Promise<string> {
-        return this.Fees.getFeeRate([
-            this.provider.publicKey,
+    public getMainFeeRate(signer: string | null): Promise<string> {
+        const _signer = signer==null ? null : new PublicKey(signer);
+        return this.Fees.getFeeRate(_signer==null ? [this.BtcRelayMainState] : [
+            _signer,
             this.BtcRelayMainState
         ]);
     }
@@ -554,11 +579,12 @@ export class SolanaBtcRelay<B extends BtcBlock> extends SolanaProgramBase<any> i
     /**
      * Gets fee rate required for submitting blockheaders to the specific fork
      */
-    public getForkFeeRate(forkId: number): Promise<string> {
+    public getForkFeeRate(signer: string, forkId: number): Promise<string> {
+        const _signer = new PublicKey(signer);
         return this.Fees.getFeeRate([
-            this.provider.publicKey,
+            _signer,
             this.BtcRelayMainState,
-            this.BtcRelayFork(forkId, this.provider.publicKey)
+            this.BtcRelayFork(forkId, _signer)
         ]);
     }
 

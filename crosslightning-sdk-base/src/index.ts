@@ -29,14 +29,17 @@ export * from "./prices/providers/CoinPaprikaPriceProvider";
 export * from "./prices/providers/OKXPriceProvider";
 export * from "./prices/RedundantSwapPrice";
 export * from "./prices/SingleSwapPrice";
+export * from "./prices/SwapPriceWithChain";
 
 export * from "./storage/IndexedDBStorageManager";
 export * from "./storage/LocalStorageManager";
 
+export * from "./swaps/Tokens";
 export * from "./swaps/ISwap";
 export * from "./swaps/ISwapWrapper";
 export * from "./swaps/Swapper";
 export * from "./swaps/SwapType";
+export * from "./swaps/SwapDirection";
 export * from "./swaps/tobtc/IToBTCSwap";
 export * from "./swaps/tobtc/IToBTCWrapper";
 export * from "./swaps/tobtc/ln/ToBTCLNSwap";

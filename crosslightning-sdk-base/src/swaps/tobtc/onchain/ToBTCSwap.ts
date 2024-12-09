@@ -2,10 +2,10 @@ import {ToBTCWrapper} from "./ToBTCWrapper";
 import {isIToBTCSwapInit, IToBTCSwap, IToBTCSwapInit} from "../IToBTCSwap";
 import {SwapType} from "../../SwapType";
 import * as BN from "bn.js";
-import {SwapData} from "crosslightning-base";
-import {Token} from "../../ISwap";
+import {ChainType, SwapData} from "crosslightning-base";
 import {Buffer} from "buffer";
 import {IntermediaryError} from "../../../errors/IntermediaryError";
+import {BtcToken, TokenAmount, Token, BitcoinTokens, toTokenAmount} from "../../Tokens";
 
 
 export type ToBTCSwapInit<T extends SwapData> = IToBTCSwapInit<T> & {
@@ -16,17 +16,18 @@ export type ToBTCSwapInit<T extends SwapData> = IToBTCSwapInit<T> & {
 };
 
 export function isToBTCSwapInit<T extends SwapData>(obj: any): obj is ToBTCSwapInit<T> {
-    return typeof(obj.address)==="string" &&
+    return typeof (obj.address) === "string" &&
         BN.isBN(obj.amount) &&
-        typeof(obj.confirmationTarget)==="number" &&
-        typeof(obj.satsPerVByte)==="number" &&
+        typeof (obj.confirmationTarget) === "number" &&
+        typeof (obj.satsPerVByte) === "number" &&
         isIToBTCSwapInit<T>(obj);
 }
 
-export class ToBTCSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T, TXType> {
+export class ToBTCSwap<T extends ChainType = ChainType> extends IToBTCSwap<T> {
+    protected readonly outputToken: BtcToken<false> = BitcoinTokens.BTC;
     protected readonly TYPE = SwapType.TO_BTC;
 
-    protected readonly wrapper: ToBTCWrapper<T, TXType>;
+    protected readonly wrapper: ToBTCWrapper<T>;
 
     private readonly address: string;
     private readonly amount: BN;
@@ -35,15 +36,15 @@ export class ToBTCSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T, T
 
     private txId?: string;
 
-    constructor(wrapper: ToBTCWrapper<T, TXType>, serializedObject: any);
-    constructor(wrapper: ToBTCWrapper<T, TXType>, init: ToBTCSwapInit<T>);
+    constructor(wrapper: ToBTCWrapper<T>, serializedObject: any);
+    constructor(wrapper: ToBTCWrapper<T>, init: ToBTCSwapInit<T["Data"]>);
     constructor(
-        wrapper: ToBTCWrapper<T, TXType>,
-        initOrObject: ToBTCSwapInit<T> | any
+        wrapper: ToBTCWrapper<T>,
+        initOrObject: ToBTCSwapInit<T["Data"]> | any
     ) {
         if(isToBTCSwapInit(initOrObject)) initOrObject.url += "/tobtc";
         super(wrapper, initOrObject);
-        if(!isToBTCSwapInit<T>(initOrObject)) {
+        if(!isToBTCSwapInit(initOrObject)) {
             this.address = initOrObject.address;
             this.amount = new BN(initOrObject.amount);
             this.confirmationTarget = initOrObject.confirmationTarget;
@@ -76,15 +77,8 @@ export class ToBTCSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T, T
     //////////////////////////////
     //// Amounts & fees
 
-    getOutAmount(): BN {
-        return this.amount
-    }
-
-    getOutToken(): {chain: "BTC", lightning: false} {
-        return {
-            chain: "BTC",
-            lightning: false
-        };
+    getOutput(): TokenAmount<T["ChainId"], BtcToken<false>> {
+        return toTokenAmount(this.amount, this.outputToken, this.wrapper.prices);
     }
 
 
@@ -110,6 +104,10 @@ export class ToBTCSwap<T extends SwapData, TXType = any> extends IToBTCSwap<T, T
      */
     getBitcoinTxId(): string | null {
         return this.txId;
+    }
+
+    getRecipient(): string {
+        return this.address;
     }
 
 
